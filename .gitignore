@@ -1,0 +1,11 @@
+node_modules/
+frontend/dist/
+__pycache__/
+*.pyc
+.venv/
+backend/models/*.tflite
+backend/models/*.onnx
+backend/data/
+*.log
+.DS_Store
+*.tsbuildinfo
