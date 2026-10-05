@@ -1,11 +1,24 @@
 node_modules/
-frontend/dist/
+dist/
 __pycache__/
 *.pyc
 .venv/
-backend/models/*.tflite
-backend/models/*.onnx
-backend/data/
+*.tsbuildinfo
 *.log
 .DS_Store
-*.tsbuildinfo
+# downloaded models (fetched by scripts, never committed)
+desktop/backend/models/*.tflite
+desktop/backend/models/*.onnx
+android/app/src/main/assets/models/
+models/cache/
+desktop/backend/data/
+# android / gradle
+.gradle/
+build/
+local.properties
+*.apk
+*.aab
+.idea/
+*.iml
+.kotlin/
+.pytest_cache/

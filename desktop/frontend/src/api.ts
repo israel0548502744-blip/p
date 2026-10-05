@@ -24,6 +24,12 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ video_id, settings }),
     }).then((r) => json<Job>(r)),
+  rerender: (id: string, overrides: Record<string, string>) =>
+    fetch(`/api/jobs/${id}/render`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ overrides }),
+    }).then((r) => json<Job>(r)),
   control: (id: string, action: "pause" | "resume" | "cancel") =>
     fetch(`/api/jobs/${id}/${action}`, { method: "POST" }).then((r) => json<Job>(r)),
 

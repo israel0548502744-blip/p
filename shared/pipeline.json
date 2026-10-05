@@ -1,0 +1,47 @@
+{
+  "$comment": "Single source of truth for pipeline constants shared by desktop (Python) and Android (Kotlin). Desktop tests assert parity with these values; the Android build copies this file into its assets.",
+  "version": 2,
+  "defaults": {
+    "color": "#1E4DFF",
+    "sensitivity": 60,
+    "softness": 35,
+    "aggressive": false,
+    "animated": false,
+    "include_face": false,
+    "target": "female",
+    "gender_threshold": 70,
+    "uncertain_policy": "censor"
+  },
+  "thresholds": {
+    "skin_on": { "strict": 0.72, "sensitive": 0.30, "aggressive_bonus": 0.08 },
+    "nudenet_min_score": { "strict": 0.50, "sensitive": 0.20 },
+    "person_min_score": { "strict": 0.45, "sensitive": 0.25 },
+    "face_min_score": 0.5,
+    "min_face_px": 14
+  },
+  "gender": {
+    "vote_factor": 0.35,
+    "max_logit": 6.0,
+    "min_votes": 3,
+    "votes_before_slowdown": 12,
+    "reclassify_seconds": 1.0
+  },
+  "tracking": {
+    "fuser_release": 0.35,
+    "fuser_release_aggressive": 0.2,
+    "hysteresis_off_ratio": 0.6,
+    "person_lost_seconds": 1.5,
+    "reid_gallery_seconds": 12,
+    "reid_min_similarity": 0.72,
+    "region_max_misses": 3,
+    "scene_cut_threshold": 0.45
+  },
+  "speed_presets": {
+    "quality": { "seg_stride": 1, "det_stride": 2 },
+    "balanced": { "seg_stride": 2, "det_stride": 3 },
+    "fast": { "seg_stride": 4, "det_stride": 6 }
+  },
+  "sensitive_labels": ["BUTTOCKS_EXPOSED", "FEMALE_BREAST_EXPOSED", "FEMALE_GENITALIA_EXPOSED", "ANUS_EXPOSED", "MALE_GENITALIA_EXPOSED"],
+  "aggressive_extra_labels": ["MALE_BREAST_EXPOSED", "BELLY_EXPOSED", "ARMPITS_EXPOSED", "FEMALE_BREAST_COVERED", "FEMALE_GENITALIA_COVERED", "BUTTOCKS_COVERED"],
+  "ownership_box_pad": 0.06
+}

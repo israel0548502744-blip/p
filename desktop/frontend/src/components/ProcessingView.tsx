@@ -5,7 +5,7 @@ import { cx, formatDuration, formatEta } from "../format";
 
 const STEPS = [
   { key: "analyzing", label: "Analyzing video…", sub: "Reading frames, loading models" },
-  { key: "detecting", label: "Detecting sensitive regions…", sub: "Segmentation + tracking" },
+  { key: "detecting", label: "Detecting sensitive regions…", sub: "People · gender · skin · tracking" },
   { key: "applying", label: "Applying censorship…", sub: "Feathered blue masks" },
   { key: "encoding", label: "Encoding final video…", sub: "H.264 · original FPS · audio" },
 ] as const;

@@ -1,6 +1,6 @@
-import { Flame, Play, RotateCcw, ScanFace, Sparkles, Volume2 } from "lucide-react";
+import { Flame, Play, RotateCcw, ScanFace, ShieldQuestion, Sparkles, Users, Volume2 } from "lucide-react";
 import type { ReactNode } from "react";
-import type { CensorSettings, Quality, Speed } from "../types";
+import type { CensorSettings, Quality, Speed, Target, UncertainPolicy } from "../types";
 import { DEFAULT_SETTINGS } from "../types";
 import { cx } from "../format";
 
@@ -26,6 +26,9 @@ function Slider({
   hint,
   left,
   rightLabel,
+  min = 0,
+  max = 100,
+  suffix = "",
 }: {
   label: string;
   value: number;
@@ -34,21 +37,28 @@ function Slider({
   hint?: string;
   left: string;
   rightLabel: string;
+  min?: number;
+  max?: number;
+  suffix?: string;
 }) {
+  const fill = ((value - min) / (max - min)) * 100;
   return (
     <div className="mb-4 last:mb-0">
       <div className="mb-1 flex items-baseline justify-between">
         <label className="text-[13.5px] font-medium text-ink-100">{label}</label>
-        <span className="rounded-md bg-white/5 px-1.5 py-0.5 font-mono text-[11.5px] text-ink-200">{value}</span>
+        <span className="rounded-md bg-white/5 px-1.5 py-0.5 font-mono text-[11.5px] text-ink-200">
+          {value}
+          {suffix}
+        </span>
       </div>
       <input
         type="range"
         className="slider"
-        min={0}
-        max={100}
+        min={min}
+        max={max}
         value={value}
         disabled={disabled}
-        style={{ ["--fill" as string]: `${value}%` }}
+        style={{ ["--fill" as string]: `${fill}%` }}
         onChange={(e) => onChange(Number(e.target.value))}
       />
       <div className="flex justify-between text-[11px] text-ink-400">
@@ -234,6 +244,52 @@ export function SettingsPanel({
               disabled={disabled}
             />
           </div>
+        </Section>
+
+        <Section title="Who to censor" right={<Users className="h-3.5 w-3.5 text-ink-400" />}>
+          <Segmented<Target>
+            value={settings.target}
+            disabled={disabled}
+            onChange={(v) => set("target", v)}
+            options={[
+              { value: "female", label: "Women only", title: "Censor only people classified as female" },
+              { value: "everyone", label: "Everyone", title: "Censor every detected person" },
+            ]}
+          />
+          {settings.target === "female" ? (
+            <div className="mt-4">
+              <Slider
+                label="Gender confidence"
+                value={settings.gender_threshold}
+                min={51}
+                max={99}
+                suffix="%"
+                onChange={(v) => set("gender_threshold", v)}
+                disabled={disabled}
+                left="Decide quickly"
+                rightLabel="Must be very sure"
+                hint="A person counts as female or male only above this confidence; anyone below it is “unsure”."
+              />
+              <div className="mb-1.5 flex items-center gap-1.5 text-[13.5px] font-medium text-ink-100">
+                <ShieldQuestion className="h-4 w-4 text-ink-300" /> When unsure
+              </div>
+              <Segmented<UncertainPolicy>
+                value={settings.uncertain_policy}
+                disabled={disabled}
+                onChange={(v) => set("uncertain_policy", v)}
+                options={[
+                  { value: "censor", label: "Censor (safe)", title: "Censor people the classifier is unsure about" },
+                  { value: "keep", label: "Don't censor", title: "Leave uncertain people uncensored" },
+                ]}
+              />
+              <p className="mt-2 text-[11.5px] leading-snug text-ink-400">
+                Gender is estimated from faces and is not always right. Review the people list after processing — you can
+                override anyone and re-render instantly.
+              </p>
+            </div>
+          ) : (
+            <p className="mt-2 text-[11.5px] leading-snug text-ink-400">Every detected person is censored.</p>
+          )}
         </Section>
 
         <Section title="Detection">

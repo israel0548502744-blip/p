@@ -1,0 +1,35 @@
+{
+  "$comment": "Every model BlueShield uses. fetch_models.py downloads/copies them; desktop also does this lazily at start-up.",
+  "models": [
+    {
+      "id": "segmenter", "file": "selfie_multiclass_256x256.tflite", "stage": "skin segmentation",
+      "url": "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite",
+      "license": "Apache-2.0 (Google MediaPipe)", "used_by": ["desktop", "android"]
+    },
+    {
+      "id": "persons", "file": "efficientdet_lite0_float32.tflite", "stage": "person detection",
+      "url": "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float32/latest/efficientdet_lite0.tflite",
+      "license": "Apache-2.0 (Google MediaPipe)", "used_by": ["desktop"]
+    },
+    {
+      "id": "persons_int8", "file": "efficientdet_lite0_int8.tflite", "stage": "person detection (quantized)",
+      "url": "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/int8/latest/efficientdet_lite0.tflite",
+      "license": "Apache-2.0 (Google MediaPipe)", "used_by": ["android"]
+    },
+    {
+      "id": "faces", "file": "blaze_face_short_range.tflite", "stage": "face detection (for gender)",
+      "url": "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/latest/blaze_face_short_range.tflite",
+      "license": "Apache-2.0 (Google MediaPipe)", "used_by": ["desktop", "android"]
+    },
+    {
+      "id": "gender", "file": "gender_faceres_fp16.tflite", "stage": "gender classification",
+      "repo_path": "models/gender_faceres_fp16.tflite",
+      "license": "see models/README.md", "used_by": ["desktop", "android"]
+    },
+    {
+      "id": "nudenet", "file": "nudenet_320n.onnx", "stage": "sensitive-region detection",
+      "pypi": { "package": "nudenet", "member": "nudenet/320n.onnx" },
+      "license": "MIT (notAI-tech/NudeNet)", "used_by": ["desktop", "android"]
+    }
+  ]
+}

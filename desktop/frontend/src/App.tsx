@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, ImageIcon, Loader2, Lock, X } from "lucide-react";
 import { api } from "./api";
-import type { CensorSettings, Health, Job, VideoMeta } from "./types";
+import type { CensorSettings, Health, Job, Override, VideoMeta } from "./types";
 import { DEFAULT_SETTINGS } from "./types";
 import { Header } from "./components/Header";
 import { Dropzone } from "./components/Dropzone";
@@ -95,6 +95,8 @@ export default function App() {
         if (!alive) return;
         setJob(j);
         if (j.stage === "complete") {
+          if (j.kind === "render" && j.message.startsWith("Re-render cancelled"))
+            setNotice({ kind: "info", text: j.message });
           setView("result");
           setMode("split");
         } else if (j.stage === "error") {
@@ -151,6 +153,21 @@ export default function App() {
       if (!job) return;
       try {
         setJob(await api.control(job.id, action));
+      } catch (e) {
+        setNotice({ kind: "error", text: (e as Error).message });
+      }
+    },
+    [job],
+  );
+
+  const rerender = useCallback(
+    async (overrides: Record<string, Override>) => {
+      if (!job) return;
+      setNotice(null);
+      try {
+        const j = await api.rerender(job.id, overrides);
+        setJob(j);
+        setView("processing");
       } catch (e) {
         setNotice({ kind: "error", text: (e as Error).message });
       }
@@ -234,7 +251,7 @@ export default function App() {
         {/* Sidebar */}
         <div className="flex min-h-0 w-full shrink-0 flex-col lg:w-[360px]">
           {view === "result" && job && video ? (
-            <ResultPanel job={job} video={video} onAdjust={() => setView("edit")} onNew={clear} />
+            <ResultPanel job={job} video={video} onAdjust={() => setView("edit")} onNew={clear} onRerender={rerender} />
           ) : (
             <SettingsPanel
               settings={settings}

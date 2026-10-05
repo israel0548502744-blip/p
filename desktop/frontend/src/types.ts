@@ -25,6 +25,25 @@ export interface VideoMeta {
 export type Speed = "quality" | "balanced" | "fast";
 export type Quality = "high" | "balanced" | "small";
 
+export type Target = "female" | "everyone";
+export type UncertainPolicy = "censor" | "keep";
+export type Override = "auto" | "censor" | "keep";
+
+export interface PersonInfo {
+  id: number;
+  gender: "female" | "male" | "uncertain";
+  p_female: number;
+  confidence: number;
+  votes: number;
+  censored: boolean;
+  override: Override;
+  frames: number;
+  start: number;
+  end: number;
+  has_thumbnail: boolean;
+  thumbnail_url: string | null;
+}
+
 export interface CensorSettings {
   color: string;
   sensitivity: number;
@@ -35,6 +54,9 @@ export interface CensorSettings {
   speed: Speed;
   quality: Quality;
   keep_audio: boolean;
+  target: Target;
+  gender_threshold: number;
+  uncertain_policy: UncertainPolicy;
 }
 
 export type Stage =
@@ -74,6 +96,10 @@ export interface Job {
   output_url: string | null;
   download_url: string | null;
   has_preview: boolean;
+  people: PersonInfo[];
+  overrides: Record<string, Override>;
+  can_rerender: boolean;
+  kind: "full" | "render";
 }
 
 export interface Health {
@@ -96,4 +122,7 @@ export const DEFAULT_SETTINGS: CensorSettings = {
   speed: "balanced",
   quality: "balanced",
   keep_audio: true,
+  target: "female",
+  gender_threshold: 70,
+  uncertain_policy: "censor",
 };

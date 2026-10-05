@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import __version__, media, models
-from .config import ALLOWED_EXTENSIONS, FRONTEND_DIST
+from .config import ALLOWED_EXTENSIONS, FRONTEND_DIST, WORK_DIR
 from .jobs import Manager, new_upload_path
 from .pipeline import CensorSettings
 
@@ -30,6 +30,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 manager = Manager()
+# analysis mask files from a previous run of the server are no longer referenced
+for _stale in WORK_DIR.glob("*.masks"):
+    _stale.unlink(missing_ok=True)
 
 
 class SettingsIn(BaseModel):
@@ -42,6 +45,14 @@ class SettingsIn(BaseModel):
     speed: str = "balanced"
     quality: str = "balanced"
     keep_audio: bool = True
+    target: str = "female"
+    gender_threshold: int = Field(70, ge=51, le=99)
+    uncertain_policy: str = "censor"
+
+
+class RenderIn(BaseModel):
+    overrides: dict[str, str] = {}
+    settings: SettingsIn | None = None
 
 
 class JobIn(BaseModel):
@@ -158,9 +169,30 @@ def resume_job(job_id: str) -> dict:
 def cancel_job(job_id: str) -> dict:
     job = _job(job_id)
     job.control.cancel()
-    if job.progress.stage == "queued":
+    if job.progress.stage == "queued" and job.kind == "full":
         job.progress.stage = "cancelled"
     return job.to_dict()
+
+
+@app.post("/api/jobs/{job_id}/render")
+def rerender_job(job_id: str, body: RenderIn) -> dict:
+    """Re-render with manual per-person overrides (and/or new render settings) — no re-analysis."""
+    job = _job(job_id)
+    try:
+        overrides = {int(k): v for k, v in body.overrides.items()}
+        settings = CensorSettings(**body.settings.model_dump()).validate() if body.settings else None
+        return manager.rerender(job, overrides, settings).to_dict()
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+@app.get("/api/jobs/{job_id}/people/{person_id}.jpg")
+def person_thumbnail(job_id: str, person_id: int) -> Response:
+    job = _job(job_id)
+    t = job.analysis.people.get(person_id) if job.analysis else None
+    if t is None or t.thumb is None:
+        raise HTTPException(404, "No thumbnail")
+    return Response(t.thumb, media_type="image/jpeg", headers={"Cache-Control": "max-age=3600"})
 
 
 @app.get("/api/jobs/{job_id}/preview.jpg")

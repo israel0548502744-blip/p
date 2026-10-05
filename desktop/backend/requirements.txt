@@ -1,0 +1,14 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+numpy>=1.26
+opencv-python-headless>=4.9
+onnxruntime>=1.17
+# NudeNet ships the open-source 320n ONNX detector we load directly.
+nudenet>=3.4
+# LiteRT (TensorFlow Lite runtime): segmentation, person, face and gender models.
+# Wheels exist for Linux (x86_64/aarch64), Windows (x86_64) and Apple-silicon macOS.
+ai-edge-litert>=1.0; platform_system != "Darwin" or platform_machine == "arm64"
+# Intel Macs: MediaPipe runs segmentation / person detection, TensorFlow provides the TFLite interpreter.
+mediapipe>=0.10.14; platform_system == "Darwin" and platform_machine == "x86_64"
+tensorflow-cpu>=2.15; platform_system == "Darwin" and platform_machine == "x86_64"

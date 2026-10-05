@@ -1,5 +1,6 @@
 import { CheckCircle2, Download, FileVideo, RefreshCcw, ShieldCheck, Upload } from "lucide-react";
-import type { Job, VideoMeta } from "../types";
+import type { Job, Override, VideoMeta } from "../types";
+import { PeoplePanel } from "./PeoplePanel";
 import { formatDuration } from "../format";
 
 export function ResultPanel({
@@ -7,11 +8,13 @@ export function ResultPanel({
   video,
   onAdjust,
   onNew,
+  onRerender,
 }: {
   job: Job;
   video: VideoMeta;
   onAdjust: () => void;
   onNew: () => void;
+  onRerender: (o: Record<string, Override>) => void;
 }) {
   const r = job.result;
   const pct = r ? Math.round((r.censored_frames / Math.max(1, r.frames)) * 100) : 0;
@@ -41,6 +44,8 @@ export function ResultPanel({
           <Download className="h-5 w-5" />
           Export MP4
         </a>
+
+        {job.can_rerender || job.people.length > 0 ? <PeoplePanel job={job} onApply={onRerender} /> : null}
 
         <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3.5">
           <div className="mb-2.5 flex items-center gap-2 text-[13px] font-medium text-white">

@@ -1,0 +1,270 @@
+"""Stage 2 — gender classification (per tracked person, with explicit uncertainty).
+
+Pipeline for one person on a classification keyframe::
+
+    person box ─► upper-body crop ─► face detection (BlazeFace) ─► eye-aligned face crop
+               ─► gender model (FaceRes MobileNet) ─► P(male) ─► weighted log-odds vote
+
+Why it's built this way
+-----------------------
+* Gender is inferred from the **face** only. Body-based cues (e.g. NudeNet's
+  gendered labels) proved unreliable in testing and are *not* used here — that
+  detector is only used for sensitive-region detection.
+* A single frame is never trusted. Each frame's prediction becomes a vote
+  (weighted by face size and detector confidence) that accumulates on the
+  person's track for the whole time they are on screen.
+* The decision uses a user-set **confidence threshold**:
+  ``P(female) >= t`` → female, ``P(female) <= 1-t`` → male, otherwise — or
+  with fewer than ``MIN_VOTES`` usable face observations (back turned, face too
+  small) — **uncertain**, which follows a user-chosen fallback (default: censor).
+* Users can override any person manually and re-render without re-analysis.
+
+The model predicts *apparent* gender presentation from a face; it is not
+identity, and it can be wrong (see README "Limitations").
+"""
+
+from __future__ import annotations
+
+import math
+import os
+from dataclasses import dataclass, field
+from typing import Optional
+
+import cv2
+import numpy as np
+
+from . import models
+
+MAX_LOGIT = 6.0
+MIN_VOTES = 3
+FACE_INPUT = 128
+GENDER_INPUT = 224
+
+
+@dataclass
+class GenderEstimate:
+    logit: float = 0.0  # log-odds of "female"
+    votes: int = 0
+    weight: float = 0.0
+
+    def add(self, p_male: float, weight: float = 1.0) -> None:
+        p = float(np.clip(p_male, 0.02, 0.98))
+        frame_logit = math.log((1 - p) / p)  # towards female
+        # consecutive frames are correlated, so every vote counts only partially
+        self.logit = float(np.clip(self.logit + 0.35 * weight * frame_logit, -MAX_LOGIT, MAX_LOGIT))
+        self.votes += 1
+        self.weight += weight
+
+    @property
+    def p_female(self) -> float:
+        return 1.0 / (1.0 + math.exp(-self.logit))
+
+    def label(self, threshold: float) -> str:
+        """'female' | 'male' | 'uncertain' for a confidence threshold in (0.5, 1)."""
+        if self.votes < MIN_VOTES:
+            return "uncertain"
+        p = self.p_female
+        if p >= threshold:
+            return "female"
+        if p <= 1.0 - threshold:
+            return "male"
+        return "uncertain"
+
+    def confidence(self) -> float:
+        return max(self.p_female, 1.0 - self.p_female)
+
+
+def censor_decision(label: str, target: str, uncertain_policy: str, override: str = "auto") -> bool:
+    """Should this person be censored?
+
+    target: 'female' (only women) | 'everyone'
+    uncertain_policy: 'censor' (safe default) | 'keep'
+    override: 'auto' | 'censor' | 'keep'
+    """
+    if override == "censor":
+        return True
+    if override == "keep":
+        return False
+    if target == "everyone":
+        return True
+    if label == "female":
+        return True
+    if label == "male":
+        return False
+    return uncertain_policy == "censor"
+
+
+def _interpreter(path: str):
+    try:
+        from ai_edge_litert.interpreter import Interpreter  # type: ignore
+    except ImportError:  # e.g. Intel macOS, where LiteRT has no wheel
+        from tensorflow.lite import Interpreter  # type: ignore
+
+    it = Interpreter(model_path=path, num_threads=max(1, os.cpu_count() or 1))
+    it.allocate_tensors()
+    return it
+
+
+@dataclass
+class Face:
+    box: tuple[float, float, float, float]  # x1, y1, x2, y2 in crop pixels
+    score: float
+    right_eye: tuple[float, float]
+    left_eye: tuple[float, float]
+
+
+class FaceDetector:
+    """MediaPipe BlazeFace (short range) with SSD anchor decoding."""
+
+    def __init__(self) -> None:
+        self._it = _interpreter(str(models.ensure_face_detector()))
+        self._in = self._it.get_input_details()[0]["index"]
+        outs = {int(o["shape"][-1]): o["index"] for o in self._it.get_output_details()}
+        self._reg, self._cls = outs[16], outs[1]
+        anchors = []
+        for stride, per_cell in ((8, 2), (16, 6)):
+            g = FACE_INPUT // stride
+            for y in range(g):
+                for x in range(g):
+                    anchors += [((x + 0.5) / g, (y + 0.5) / g)] * per_cell
+        self._anchors = np.array(anchors, np.float32)
+
+    def detect(self, bgr: np.ndarray, min_score: float = 0.6) -> list[Face]:
+        h, w = bgr.shape[:2]
+        x = cv2.resize(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB), (FACE_INPUT, FACE_INPUT)).astype(np.float32)
+        self._it.set_tensor(self._in, (x / 127.5 - 1.0)[None])
+        self._it.invoke()
+        reg = self._it.get_tensor(self._reg)[0]
+        logits = np.clip(self._it.get_tensor(self._cls)[0][:, 0], -80, 80)
+        scores = 1 / (1 + np.exp(-logits))
+        keep = np.where(scores >= min_score)[0]
+        if keep.size == 0:
+            return []
+        faces, rects = [], []
+        for i in keep:
+            r, (ax, ay) = reg[i] / FACE_INPUT, self._anchors[i]
+            cx, cy, bw, bh = r[0] + ax, r[1] + ay, r[2], r[3]
+            box = ((cx - bw / 2) * w, (cy - bh / 2) * h, (cx + bw / 2) * w, (cy + bh / 2) * h)
+            reye = ((r[4] + ax) * w, (r[5] + ay) * h)
+            leye = ((r[6] + ax) * w, (r[7] + ay) * h)
+            faces.append(Face(box, float(scores[i]), reye, leye))
+            rects.append([box[0], box[1], box[2] - box[0], box[3] - box[1]])
+        idx = np.array(cv2.dnn.NMSBoxes(rects, [f.score for f in faces], min_score, 0.3)).reshape(-1)
+        return [faces[i] for i in idx]
+
+
+class GenderClassifier:
+    """FaceRes MobileNet gender head (outputs P(male)) on eye-aligned face crops."""
+
+    def __init__(self) -> None:
+        self.faces = FaceDetector()
+        self._it = _interpreter(str(models.ensure_gender_model()))
+        self._in = self._it.get_input_details()[0]["index"]
+        self._out = self._it.get_output_details()[0]["index"]
+
+    def aligned_face(self, img: np.ndarray, face: Face) -> np.ndarray:
+        (rx, ry), (lx, ly) = face.right_eye, face.left_eye
+        angle = math.degrees(math.atan2(ly - ry, lx - rx))
+        if abs(angle) > 90:  # eyes reported mirrored
+            angle -= 180 * math.copysign(1, angle)
+        x1, y1, x2, y2 = face.box
+        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+        side = max(x2 - x1, y2 - y1) * 1.4
+        scale = GENDER_INPUT / side
+        M = cv2.getRotationMatrix2D((cx, cy), angle, scale)
+        M[0, 2] += GENDER_INPUT / 2 - cx
+        M[1, 2] += GENDER_INPUT / 2 - cy
+        return cv2.warpAffine(img, M, (GENDER_INPUT, GENDER_INPUT), flags=cv2.INTER_LINEAR,
+                              borderMode=cv2.BORDER_REPLICATE)
+
+    def p_male(self, face_bgr: np.ndarray) -> float:
+        x = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2RGB).astype(np.float32)  # model expects 0..255 RGB
+        self._it.set_tensor(self._in, x[None])
+        self._it.invoke()
+        return float(self._it.get_tensor(self._out).ravel()[0])
+
+    def classify_person(self, frame: np.ndarray, box: tuple[float, float, float, float],
+                        face_map: Optional[np.ndarray] = None) -> Optional[tuple[float, float]]:
+        """Return (P(male), vote weight) for the person in ``box``, or None if no usable face.
+
+        ``face_map`` (facial-skin probability from the segmentation model, frame-sized)
+        lets us find the head even when the person box is wide (outstretched arms)
+        or the face is in profile.
+        """
+        crops = []
+        head = head_crop(frame, box, face_map) if face_map is not None else None
+        if head is not None:
+            crops.append(head)
+        ub = upper_body_crop(frame, box, 256)
+        if ub is not None:
+            crops.append((ub, crop_scale(frame, box, 256)))
+        for crop, scale in crops:
+            faces = [f for f in self.faces.detect(crop, 0.5) if (f.box[1] + f.box[3]) / 2 < 0.75 * crop.shape[0]]
+            if not faces:
+                continue
+            face = max(faces, key=lambda f: f.score * (f.box[2] - f.box[0]))
+            face_px = (face.box[2] - face.box[0]) * scale
+            if face_px < 14:
+                continue  # too small to classify meaningfully
+            weight = face.score * min(1.0, face_px / 48.0)
+            return self.p_male(self.aligned_face(crop, face)), weight
+        return None
+
+
+def head_crop(frame: np.ndarray, box, face_map: np.ndarray, size: int = 256):
+    """Square crop centred on the largest facial-skin blob in the top part of the person box."""
+    h, w = frame.shape[:2]
+    x1, y1, x2, y2 = (int(round(v)) for v in box)
+    x1, y1 = max(0, x1), max(0, y1)
+    x2, y2 = min(w, x2), min(h, y1 + max(8, int((y2 - y1) * 0.6)))
+    if x2 - x1 < 8 or y2 - y1 < 8:
+        return None
+    region = (face_map[y1:y2, x1:x2] > 0.4).astype(np.uint8)
+    n, _, stats, _ = cv2.connectedComponentsWithStats(region)
+    if n <= 1:
+        return None
+    k = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    fx, fy, fw, fh, area = stats[k]
+    if area < 30:
+        return None
+    cx, cy = x1 + fx + fw / 2, y1 + fy + fh / 2
+    side = max(fw, fh) * 2.4
+    a, b = int(round(cx - side / 2)), int(round(cy - side / 2))
+    c, d = a + int(round(side)), b + int(round(side))
+    pad = [max(0, -b), max(0, d - h), max(0, -a), max(0, c - w)]
+    crop = frame[max(0, b):min(h, d), max(0, a):min(w, c)]
+    if crop.size == 0:
+        return None
+    crop = cv2.copyMakeBorder(crop, *pad, cv2.BORDER_REPLICATE)
+    return cv2.resize(crop, (size, size), interpolation=cv2.INTER_LINEAR), side / size
+
+
+def _ub_rect(frame_shape, box):
+    h, w = frame_shape[:2]
+    x1, y1, x2, y2 = box
+    bw, bh = x2 - x1, y2 - y1
+    side = max(bw * 1.1, min(bh, bw * 1.6) * 0.75)
+    cx = (x1 + x2) / 2
+    top = y1 - 0.05 * bh
+    return (int(max(0, cx - side / 2)), int(max(0, top)), int(min(w, cx + side / 2)), int(min(h, top + side)))
+
+
+def crop_scale(frame: np.ndarray, box, size: int) -> float:
+    """Original-pixels-per-crop-pixel factor of ``upper_body_crop``."""
+    a, b, c, d = _ub_rect(frame.shape, box)
+    return max(c - a, d - b) / size
+
+
+def upper_body_crop(frame: np.ndarray, box: tuple[float, float, float, float], size: int = 256) -> Optional[np.ndarray]:
+    """Square crop of a person's head/torso region, resized for the face detector."""
+    x1, y1, x2, y2 = box
+    if x2 - x1 < 12 or y2 - y1 < 24:
+        return None
+    a, b, c, d = _ub_rect(frame.shape, box)
+    if c - a < 12 or d - b < 12:
+        return None
+    crop = frame[b:d, a:c]
+    # pad to square so faces keep their aspect ratio
+    side = max(crop.shape[0], crop.shape[1])
+    crop = cv2.copyMakeBorder(crop, 0, side - crop.shape[0], 0, side - crop.shape[1], cv2.BORDER_REPLICATE)
+    return cv2.resize(crop, (size, size), interpolation=cv2.INTER_LINEAR if side < size else cv2.INTER_AREA)

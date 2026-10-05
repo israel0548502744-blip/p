@@ -19,7 +19,7 @@ for _d in (UPLOAD_DIR, OUTPUT_DIR, WORK_DIR, MODELS_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 # Analysis frames are downscaled so their long side is at most this many pixels.
-ANALYSIS_MAX_SIDE = int(os.environ.get("BLUESHIELD_ANALYSIS_SIDE", 640))
+ANALYSIS_MAX_SIDE = int(os.environ.get("BLUESHIELD_ANALYSIS_SIDE", 768))
 # Masks are stored on disk at this (long side) resolution between the two passes.
 MASK_MAX_SIDE = int(os.environ.get("BLUESHIELD_MASK_SIDE", 480))
 
