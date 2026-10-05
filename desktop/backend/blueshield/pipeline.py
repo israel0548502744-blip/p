@@ -418,30 +418,34 @@ def decisions_for(analysis: Analysis, settings: CensorSettings, overrides: dict[
             for tid, t in analysis.people.items()}
 
 
+UNASSIGNED_MIN_AREA = 0.001  # fraction of the frame; smaller unattributed blobs are noise, not people
+
+
 def compose_mask(skin: np.ndarray, rec: FrameRecord, decisions: dict[int, bool], unassigned_censor: bool,
-                 box_pad: float = 0.06) -> np.ndarray:
+                 box_pad: float = 0.06, unassigned_min_area: float = UNASSIGNED_MIN_AREA) -> np.ndarray:
     """Censor mask for one frame: only skin / sensitive regions owned by people who are censored.
 
     Ownership: each skin pixel belongs to the person whose (slightly padded) box
     contains it. Where boxes overlap, or a pixel lies outside every box (e.g. an
     outstretched arm), the pixel adopts the owner of the majority of its connected
     skin component; failing that, the nearest box centre wins. Skin that can't be
-    attributed to any detected person follows ``unassigned_censor``.
+    attributed to any detected person follows ``unassigned_censor`` — but only blobs of at
+    least ``unassigned_min_area`` of the frame, so stray false-positive specks (lamps, wood
+    grain…) never get censored on their own.
     """
     mh, mw = skin.shape
     persons = rec.persons
     out = np.zeros_like(skin)
     n = len(persons)
     if skin.any():
+        min_area = unassigned_min_area * mh * mw
         if n == 0:
             if unassigned_censor:
-                out = skin.copy()
+                out = _drop_small_blobs(skin, min_area)
         else:
             flags = np.array([decisions.get(int(p[0]), unassigned_censor) for p in persons], bool)
-            if flags.all() and unassigned_censor:
-                out = skin.copy()
-            elif flags.any() or unassigned_censor:
-                out = _owned_skin(skin, persons, flags, unassigned_censor, box_pad)
+            if flags.any() or unassigned_censor:
+                out = _owned_skin(skin, persons, flags, unassigned_censor, box_pad, min_area)
     for r in rec.regions:
         owner = int(r[0])
         allowed = decisions.get(owner, unassigned_censor) if owner >= 0 else unassigned_censor
@@ -455,8 +459,15 @@ def compose_mask(skin: np.ndarray, rec: FrameRecord, decisions: dict[int, bool],
     return out
 
 
+def _drop_small_blobs(skin: np.ndarray, min_area: float) -> np.ndarray:
+    count, comp, stats, _ = cv2.connectedComponentsWithStats((skin > 0).astype(np.uint8), connectivity=8)
+    keep = stats[:, cv2.CC_STAT_AREA] >= min_area
+    keep[0] = False
+    return np.where(keep[comp], 255, 0).astype(np.uint8)
+
+
 def _owned_skin(skin: np.ndarray, persons: np.ndarray, flags: np.ndarray, unassigned_censor: bool,
-                pad: float) -> np.ndarray:
+                pad: float, min_area: float = 0.0) -> np.ndarray:
     mh, mw = skin.shape
     n = len(persons)
     best_d = np.full((mh, mw), np.inf, np.float32)
@@ -487,7 +498,13 @@ def _owned_skin(skin: np.ndarray, persons: np.ndarray, flags: np.ndarray, unassi
     # ambiguous pixels with no component majority fall back to the nearest box (if any)
     owner = np.where((owner == 0) & (cover > 0), nearest, owner)
     lut = np.concatenate([[unassigned_censor], flags]).astype(np.uint8) * 255
-    return np.where(on, lut[owner], 0).astype(np.uint8)
+    out = np.where(on, lut[owner], 0).astype(np.uint8)
+    if unassigned_censor and min_area > 0:
+        # unattributed pixels only count if their whole blob is big enough to be part of a person
+        areas = np.bincount(comp.ravel(), minlength=count)
+        orphan_small = (owner == 0) & (areas[comp] < min_area)
+        out[orphan_small] = 0
+    return out
 
 
 def render(analysis: Analysis, settings: CensorSettings, overrides: dict[int, str], out_path: Path,

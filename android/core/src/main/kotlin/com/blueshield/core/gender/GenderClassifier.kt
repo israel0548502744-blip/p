@@ -1,0 +1,89 @@
+package com.blueshield.core.gender
+
+import com.blueshield.core.image.Box
+import com.blueshield.core.image.FloatMask
+import com.blueshield.core.image.MaskOps
+import com.blueshield.core.image.RgbImage
+import com.blueshield.core.ml.FaceDetector
+import com.blueshield.core.ml.GenderModel
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.roundToInt
+
+/**
+ * Stage 2 — classify one person: locate the head (facial-skin blob from segmentation,
+ * else an upper-body crop), detect the face, align it by the eyes, run the gender model.
+ * Returns (P(male), vote weight) or null when there is no usable face.
+ */
+class GenderClassifier(private val faces: FaceDetector, private val model: GenderModel, private val minFaceScore: Float, private val minFacePx: Float) {
+
+    fun classify(frame: RgbImage, box: Box, faceMap: FloatMask?): Pair<Float, Float>? {
+        val crops = ArrayList<Pair<RgbImage, Float>>()
+        if (faceMap != null) headCrop(frame, box, faceMap)?.let { crops += it }
+        upperBodyCrop(frame, box)?.let { crops += it }
+        for ((crop, scale) in crops) {
+            val found = faces.detect(crop, minFaceScore).filter { it.box.cy < 0.75f * crop.height }
+            val face = found.maxByOrNull { it.score * it.box.w } ?: continue
+            val facePx = face.box.w * scale
+            if (facePx < minFacePx) continue
+            val weight = face.score * min(1f, facePx / 48f)
+            return model.pMale(model.align(crop, face)) to weight
+        }
+        return null
+    }
+
+    companion object {
+        const val CROP = 256
+
+        /** Square crop around the largest facial-skin blob in the top 60 % of the person box. */
+        fun headCrop(frame: RgbImage, box: Box, faceMap: FloatMask): Pair<RgbImage, Float>? {
+            val x0 = max(0, box.x1.roundToInt())
+            val y0 = max(0, box.y1.roundToInt())
+            val x1 = min(frame.width, box.x2.roundToInt())
+            val y1 = min(frame.height, y0 + max(8, ((box.y2 - box.y1) * 0.6f).toInt()))
+            val w = x1 - x0
+            val h = y1 - y0
+            if (w < 8 || h < 8) return null
+            val on = BooleanArray(w * h) { faceMap[x0 + it % w, y0 + it / w] > 0.4f }
+            val (labels, count) = MaskOps.connectedComponents(on, w, h)
+            if (count <= 1) return null
+            val area = IntArray(count)
+            val minX = IntArray(count) { Int.MAX_VALUE }
+            val minY = IntArray(count) { Int.MAX_VALUE }
+            val maxX = IntArray(count) { -1 }
+            val maxY = IntArray(count) { -1 }
+            for (i in labels.indices) {
+                val l = labels[i]
+                if (l == 0) continue
+                area[l]++
+                val x = i % w
+                val y = i / w
+                minX[l] = min(minX[l], x); maxX[l] = max(maxX[l], x)
+                minY[l] = min(minY[l], y); maxY[l] = max(maxY[l], y)
+            }
+            val k = (1 until count).maxByOrNull { area[it] } ?: return null
+            if (area[k] < 30) return null
+            val fw = maxX[k] - minX[k] + 1
+            val fh = maxY[k] - minY[k] + 1
+            val cx = x0 + minX[k] + fw / 2f
+            val cy = y0 + minY[k] + fh / 2f
+            val side = max(fw, fh) * 2.4f
+            val crop = frame.crop((cx - side / 2).roundToInt(), (cy - side / 2).roundToInt(), side.roundToInt(), side.roundToInt())
+            return crop.resize(CROP, CROP) to side / CROP
+        }
+
+        /** Square head/torso crop (padded with edge pixels), for when no facial-skin blob was found. */
+        fun upperBodyCrop(frame: RgbImage, box: Box): Pair<RgbImage, Float>? {
+            if (box.w < 12 || box.h < 24) return null
+            val side = max(box.w * 1.1f, min(box.h, box.w * 1.6f) * 0.75f)
+            val top = box.y1 - 0.05f * box.h
+            val a = max(0f, box.cx - side / 2).toInt()
+            val b = max(0f, top).toInt()
+            val c = min(frame.width.toFloat(), box.cx + side / 2).toInt()
+            val d = min(frame.height.toFloat(), top + side).toInt()
+            if (c - a < 12 || d - b < 12) return null
+            val s = max(c - a, d - b)
+            return frame.crop(a, b, s, s).resize(CROP, CROP) to s.toFloat() / CROP
+        }
+    }
+}

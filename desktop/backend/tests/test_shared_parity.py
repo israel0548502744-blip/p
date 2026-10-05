@@ -26,6 +26,13 @@ def test_presets_and_labels_match():
     assert AGGRESSIVE_LABELS == SENSITIVE_LABELS | set(SPEC["aggressive_extra_labels"])
 
 
+def test_mask_constants_match():
+    from blueshield import config, pipeline
+    assert pipeline.UNASSIGNED_MIN_AREA == SPEC["unassigned_min_area"]
+    assert config.ANALYSIS_MAX_SIDE == SPEC["analysis_max_side"]
+    assert config.MASK_MAX_SIDE == SPEC["mask_max_side"]
+
+
 def test_gender_constants_match():
     g = SPEC["gender"]
     assert gender.MAX_LOGIT == g["max_logit"] and gender.MIN_VOTES == g["min_votes"]

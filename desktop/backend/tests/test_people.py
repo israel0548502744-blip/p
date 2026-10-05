@@ -70,6 +70,18 @@ def test_compose_mask_outstretched_arm_follows_its_body():
     assert m.max() == 0  # whole component belongs to the (uncensored) person, not "unassigned"
 
 
+def test_tiny_unassigned_blobs_are_ignored():
+    skin = np.zeros((100, 200), np.uint8)
+    skin[2:5, 150:154] = 255  # 12 px speck far from anyone (e.g. a lamp)
+    skin[40:60, 20:60] = 255  # a real arm inside person 1
+    rec = FrameRecord(np.array([[1, 0.05, 0.1, 0.4, 0.9]], np.float32), np.zeros((0, 6), np.float32))
+    m = compose_mask(skin, rec, {1: True}, unassigned_censor=True)
+    assert m[50, 40] == 255 and m[3, 152] == 0
+    big = np.zeros((100, 200), np.uint8)
+    big[10:40, 120:160] = 255  # a large unattributed blob (an undetected person) stays censored
+    assert compose_mask(big, FrameRecord(np.zeros((0, 5), np.float32), np.zeros((0, 6), np.float32)), {}, True)[20, 140] == 255
+
+
 def test_unassigned_skin_follows_fallback():
     skin = np.full((20, 20), 255, np.uint8)
     empty = FrameRecord(np.zeros((0, 5), np.float32), np.zeros((0, 6), np.float32))

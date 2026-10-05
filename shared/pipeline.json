@@ -43,5 +43,8 @@
   },
   "sensitive_labels": ["BUTTOCKS_EXPOSED", "FEMALE_BREAST_EXPOSED", "FEMALE_GENITALIA_EXPOSED", "ANUS_EXPOSED", "MALE_GENITALIA_EXPOSED"],
   "aggressive_extra_labels": ["MALE_BREAST_EXPOSED", "BELLY_EXPOSED", "ARMPITS_EXPOSED", "FEMALE_BREAST_COVERED", "FEMALE_GENITALIA_COVERED", "BUTTOCKS_COVERED"],
-  "ownership_box_pad": 0.06
+  "ownership_box_pad": 0.06,
+  "unassigned_min_area": 0.001,
+  "analysis_max_side": 768,
+  "mask_max_side": 480
 }
