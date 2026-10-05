@@ -12,7 +12,7 @@ import kotlin.math.min
 import kotlin.math.sqrt
 
 /** Skin segmentation (MediaPipe Selfie Multiclass): body skin, face skin and person probability maps. */
-class SkinSegmenter(private val models: ModelStore) {
+class SkinSegmenter(private val models: ModelStore, private val faceExclusion: Float = 0.35f) {
     class Result(val skin: FloatMask, val person: FloatMask, val face: FloatMask)
 
     fun segment(img: RgbImage, includeFace: Boolean, tiled: Boolean = false): Result {
@@ -59,7 +59,8 @@ class SkinSegmenter(private val models: ModelStore) {
             val bodySkin = p[2] / s
             val faceSkin = p[3] / s
             face.data[i] = faceSkin
-            skin.data[i] = if (includeFace) max(bodySkin, faceSkin) else bodySkin
+            // the body-skin class sometimes bleeds onto faces (glasses, side light): keep faces clear
+            skin.data[i] = if (includeFace) max(bodySkin, faceSkin) else if (faceSkin >= faceExclusion) 0f else bodySkin
             person.data[i] = 1f - p[0] / s
         }
         return Result(skin.resize(img.width, img.height), person.resize(img.width, img.height), face.resize(img.width, img.height))

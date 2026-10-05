@@ -37,16 +37,18 @@ class CoreTest {
     }
 
     @Test fun genderNeedsVotesAndConfidence() {
-        fun est() = GenderEstimate(spec.gender.voteFactor, spec.gender.maxLogit, spec.gender.minVotes)
+        fun est() = GenderEstimate(spec.gender.voteFactor, spec.gender.maxLogit, spec.gender.minVotes, spec.gender.minWeight)
         val g = est()
         assertEquals(GenderEstimate.Label.UNCERTAIN, g.label(0.7))
-        repeat(2) { g.add(0.1f) }
+        repeat(5) { g.add(0.1f) }
         assertEquals(GenderEstimate.Label.UNCERTAIN, g.label(0.7))
         g.add(0.1f)
         assertEquals(GenderEstimate.Label.FEMALE, g.label(0.7))
-        val m = est().apply { repeat(5) { add(0.95f) } }
+        val m = est().apply { repeat(6) { add(0.95f) } }
         assertEquals(GenderEstimate.Label.MALE, m.label(0.7))
-        val mixed = est().apply { listOf(0.2f, 0.8f, 0.3f, 0.7f).forEach { add(it) } }
+        val weak = est().apply { repeat(10) { add(0.05f, 0.2f) } }
+        assertEquals(GenderEstimate.Label.UNCERTAIN, weak.label(0.7))
+        val mixed = est().apply { listOf(0.2f, 0.8f, 0.3f, 0.7f, 0.25f, 0.75f).forEach { add(it) } }
         assertEquals(GenderEstimate.Label.UNCERTAIN, mixed.label(0.7))
         // one vote = factor * ln(0.8/0.2), identical to the desktop maths
         val one = est().apply { add(0.2f) }
@@ -177,6 +179,26 @@ class CoreTest {
         val mask = FloatMask(128, 72).also { for (y in 30 until 40) for (x in 50 until 60) it[x, y] = 1f }
         val warped = flow.warp(mask)
         assertTrue(warped[56, 35] > 0.5f && warped[51, 35] < 0.5f)
+    }
+
+    @Test fun orientationMappingsAreInverse() {
+        val cw = 16
+        val ch = 9
+        for (rot in listOf(0, 90, 180, 270)) {
+            val dw = if (rot % 180 == 0) cw else ch
+            val dh = if (rot % 180 == 0) ch else cw
+            val seen = HashSet<Pair<Int, Int>>()
+            for (dy in 0 until dh) for (dx in 0 until dw) {
+                val (x, y) = com.blueshield.core.image.Orientation.displayToCoded(dx, dy, rot, cw, ch)
+                assertTrue(x in 0 until cw && y in 0 until ch, "rot=$rot out of range")
+                seen += x to y
+                // the shader's mapping must send this coded pixel's centre back to the same display pixel
+                val (u, v) = com.blueshield.core.image.Orientation.codedToDisplayUv((x + 0.5f) / cw, (y + 0.5f) / ch, rot)
+                assertEquals(dx, (u * dw).toInt(), "rot=$rot dx")
+                assertEquals(dy, (v * dh).toInt(), "rot=$rot dy")
+            }
+            assertEquals(cw * ch, seen.size, "rot=$rot must be a bijection")
+        }
     }
 
     @Test fun anchorsMatchModelOutputs() {

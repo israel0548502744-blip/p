@@ -20,6 +20,7 @@ from . import models
 
 # Selfie multiclass category indices.
 CAT_BACKGROUND, CAT_HAIR, CAT_BODY_SKIN, CAT_FACE_SKIN, CAT_CLOTHES, CAT_OTHERS = range(6)
+FACE_EXCLUSION = 0.35  # facial-skin probability above which a pixel is never treated as body skin
 
 
 @dataclass
@@ -107,6 +108,9 @@ class SkinSegmenter:
         face = np.ascontiguousarray(m[..., CAT_FACE_SKIN])
         if include_face:
             skin = np.maximum(skin, face)
+        else:
+            # the body-skin class sometimes bleeds onto faces (glasses, side light): keep faces clear
+            skin[face >= FACE_EXCLUSION] = 0.0
         person = 1.0 - m[..., CAT_BACKGROUND]
         return skin, np.ascontiguousarray(person), face
 
@@ -119,6 +123,8 @@ NUDENET_LABELS = [
     "BELLY_EXPOSED", "MALE_GENITALIA_EXPOSED", "ANUS_COVERED", "FEMALE_BREAST_COVERED",
     "BUTTOCKS_COVERED",
 ]
+# Face boxes (any gender label) — used only to keep faces *un*censored when face censoring is off.
+FACE_LABELS = {"FACE_FEMALE", "FACE_MALE"}
 # Always censored when detected.
 SENSITIVE_LABELS = {
     "BUTTOCKS_EXPOSED", "FEMALE_BREAST_EXPOSED", "FEMALE_GENITALIA_EXPOSED",

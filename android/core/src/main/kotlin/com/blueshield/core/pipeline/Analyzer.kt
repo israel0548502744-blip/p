@@ -117,7 +117,7 @@ class Analyzer(
     private val labels = spec.sensitiveLabels.toSet() + if (settings.aggressive) spec.aggressiveExtraLabels else emptyList()
     private val reclassifyEvery = max(detStride, (spec.gender.reclassifySeconds * fps).roundToInt())
 
-    private val segmenter = SkinSegmenter(models)
+    private val segmenter = SkinSegmenter(models, spec.thresholds.faceExclusion)
     private val personDetector = PersonDetector(models)
     private val nudeNet = NudeNet(models)
     private val classifier = GenderClassifier(FaceDetector(models), GenderModel(models), spec.thresholds.faceMinScore, spec.thresholds.minFacePx)
@@ -125,11 +125,13 @@ class Analyzer(
     private val flow = OpticalFlow(width, height)
     private val sceneCut = SceneCutDetector(spec.tracking.sceneCutThreshold)
     private val regions = RegionTracker(if (settings.aggressive) 5 else spec.tracking.regionMaxMisses)
+    /** NudeNet face boxes (any gender label), only used to keep faces *un*censored. */
+    private val faces = RegionTracker(maxMisses = 2, smooth = 0.6f)
     private val people = PersonTracker(
         maxMisses = max(3, (spec.tracking.personLostSeconds * fps / detStride).roundToInt()),
         galleryFrames = (spec.tracking.reidGallerySeconds * fps).roundToInt(),
         reidMinSimilarity = spec.tracking.reidMinSimilarity,
-    ) { GenderEstimate(spec.gender.voteFactor, spec.gender.maxLogit, spec.gender.minVotes) }
+    ) { GenderEstimate(spec.gender.voteFactor, spec.gender.maxLogit, spec.gender.minVotes, spec.gender.minWeight) }
     private val fuser = TemporalFuser(
         if (settings.aggressive) spec.tracking.fuserReleaseAggressive else spec.tracking.fuserRelease,
         skinOn, spec.tracking.hysteresisOffRatio,
@@ -160,6 +162,7 @@ class Analyzer(
                 flow.reset()
                 fuser.reset()
                 regions.reset()
+                faces.reset()
                 people.reset(idx)
             }
             flow.update(frame)
@@ -191,9 +194,11 @@ class Analyzer(
 
             people.predict(flow, width, height)
             regions.predict(flow, width, height)
+            faces.predict(flow, width, height)
             nude[k]?.let { dets ->
                 people.update(frame, personDetector.detect(frame, personMin), idx)
                 regions.update(dets.filter { it.label in labels })
+                faces.update(dets.filter { it.label in FACE_LABELS })
                 for (t in people.visible()) {
                     if (t.misses != 0) continue
                     val need = t.gender.votes < spec.gender.votesBeforeSlowdown || idx - t.lastClassified >= reclassifyEvery
@@ -201,6 +206,11 @@ class Analyzer(
                     t.lastClassified = idx
                     classifier.classify(frame, t.box, faceMap)?.let { (pMale, weight) -> t.gender.add(pMale, weight) }
                 }
+            }
+            if (!settings.includeFace) {
+                // Faces are never censored unless asked. The segmenter sometimes labels a whole face as
+                // body skin, so clear every tracked face box (forehead to chin, not the neck).
+                for (f in faces.tracks) clearFace(skinBin, f.box)
             }
             people.markFrame(frame, idx)
 
@@ -236,9 +246,28 @@ class Analyzer(
         }
     }
 
+    private fun clearFace(skin: BooleanArray, b: com.blueshield.core.image.Box) {
+        val cx = b.cx
+        val cy = b.cy - 0.12f * b.h
+        val ax = 0.65f * b.w
+        val ay = 0.78f * b.h
+        if (ax < 1f || ay < 1f) return
+        val y0 = max(0, (cy - ay).toInt())
+        val y1 = minOf(height - 1, (cy + ay).toInt() + 1)
+        val x0 = max(0, (cx - ax).toInt())
+        val x1 = minOf(width - 1, (cx + ax).toInt() + 1)
+        for (y in y0..y1) for (x in x0..x1) {
+            val dx = (x + 0.5f - cx) / ax
+            val dy = (y + 0.5f - cy) / ay
+            if (dx * dx + dy * dy <= 1f) skin[y * width + x] = false
+        }
+    }
+
     fun finish(): Analysis = Analysis(settings, spec, fps, store, records.toList(), people.all.filterValues { it.frames > 0 })
 
     companion object {
+        val FACE_LABELS = setOf("FACE_FEMALE", "FACE_MALE")
+
         /** Size with long side ≤ maxSide and even dimensions (same as desktop `scaled_size`). */
         fun scaledSize(w: Int, h: Int, maxSide: Int): Pair<Int, Int> {
             val s = minOf(1f, maxSide.toFloat() / max(w, h))

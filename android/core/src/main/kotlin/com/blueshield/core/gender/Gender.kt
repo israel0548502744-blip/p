@@ -12,7 +12,12 @@ import kotlin.math.max
  * the person is "uncertain" and follows the fallback policy. (Same maths as the
  * desktop `GenderEstimate`; constants from shared/pipeline.json.)
  */
-class GenderEstimate(private val voteFactor: Double, private val maxLogit: Double, private val minVotes: Int) {
+class GenderEstimate(
+    private val voteFactor: Double,
+    private val maxLogit: Double,
+    private val minVotes: Int,
+    private val minWeight: Double = 0.0,
+) {
     var logit = 0.0
         private set
     var votes = 0
@@ -31,7 +36,7 @@ class GenderEstimate(private val voteFactor: Double, private val maxLogit: Doubl
     val confidence: Double get() = max(pFemale, 1 - pFemale)
 
     fun label(threshold: Double): Label = when {
-        votes < minVotes -> Label.UNCERTAIN
+        votes < minVotes || weight < minWeight -> Label.UNCERTAIN
         pFemale >= threshold -> Label.FEMALE
         pFemale <= 1 - threshold -> Label.MALE
         else -> Label.UNCERTAIN

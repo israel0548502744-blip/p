@@ -24,17 +24,21 @@ MEN = FIXTURES / "men_classroom.mp4"
 def test_gender_estimate_needs_votes_and_confidence():
     g = GenderEstimate()
     assert g.label(0.7) == "uncertain"  # no evidence at all
-    g.add(0.1)
-    g.add(0.1)
+    for _ in range(5):
+        g.add(0.1)
     assert g.label(0.7) == "uncertain"  # still fewer than MIN_VOTES
     g.add(0.1)
     assert g.label(0.7) == "female" and g.p_female > 0.7
     m = GenderEstimate()
-    for _ in range(5):
+    for _ in range(6):
         m.add(0.95)
     assert m.label(0.7) == "male"
+    weak = GenderEstimate()  # many votes from tiny / low-confidence faces are not enough
+    for _ in range(10):
+        weak.add(0.05, weight=0.2)
+    assert weak.label(0.7) == "uncertain"
     mixed = GenderEstimate()
-    for p in (0.2, 0.8, 0.3, 0.7):
+    for p in (0.2, 0.8, 0.3, 0.7, 0.25, 0.75):
         mixed.add(p)
     assert mixed.label(0.7) == "uncertain"
 

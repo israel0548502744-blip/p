@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">BlueShield</string>
+    <string name="notif_channel">Video processing</string>
+    <string name="notif_title">BlueShield is censoring your video</string>
+    <string name="notif_starting">Starting…</string>
+    <string name="stage_analyzing">Analyzing video…</string>
+    <string name="stage_detecting">Detecting sensitive regions…</string>
+    <string name="stage_applying">Applying censorship…</string>
+    <string name="stage_encoding">Encoding final video…</string>
+    <string name="notif_done">Censorship complete.</string>
+    <string name="notif_done_text">Tap to review, save or share your video.</string>
+</resources>

@@ -17,12 +17,14 @@
     "nudenet_min_score": { "strict": 0.50, "sensitive": 0.20 },
     "person_min_score": { "strict": 0.45, "sensitive": 0.25 },
     "face_min_score": 0.5,
-    "min_face_px": 14
+    "min_face_px": 14,
+    "face_exclusion": 0.35
   },
   "gender": {
     "vote_factor": 0.35,
     "max_logit": 6.0,
-    "min_votes": 3,
+    "min_votes": 6,
+    "min_weight": 3.0,
     "votes_before_slowdown": 12,
     "reclassify_seconds": 1.0
   },

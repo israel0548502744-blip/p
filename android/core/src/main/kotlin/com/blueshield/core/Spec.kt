@@ -37,6 +37,8 @@ data class PipelineSpec(
         @SerialName("person_min_score") val personMinScore: Range,
         @SerialName("face_min_score") val faceMinScore: Float,
         @SerialName("min_face_px") val minFacePx: Float,
+        /** Facial-skin probability above which a pixel is never body skin (unless faces are censored). */
+        @SerialName("face_exclusion") val faceExclusion: Float,
     )
 
     @Serializable
@@ -44,6 +46,7 @@ data class PipelineSpec(
         @SerialName("vote_factor") val voteFactor: Double,
         @SerialName("max_logit") val maxLogit: Double,
         @SerialName("min_votes") val minVotes: Int,
+        @SerialName("min_weight") val minWeight: Double,
         @SerialName("votes_before_slowdown") val votesBeforeSlowdown: Int,
         @SerialName("reclassify_seconds") val reclassifySeconds: Double,
     )

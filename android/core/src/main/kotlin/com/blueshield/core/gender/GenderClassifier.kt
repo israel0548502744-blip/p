@@ -20,6 +20,7 @@ class GenderClassifier(private val faces: FaceDetector, private val model: Gende
     fun classify(frame: RgbImage, box: Box, faceMap: FloatMask?): Pair<Float, Float>? {
         val crops = ArrayList<Pair<RgbImage, Float>>()
         if (faceMap != null) headCrop(frame, box, faceMap)?.let { crops += it }
+        topCrop(frame, box)?.let { crops += it }
         upperBodyCrop(frame, box)?.let { crops += it }
         for ((crop, scale) in crops) {
             val found = faces.detect(crop, minFaceScore).filter { it.box.cy < 0.75f * crop.height }
@@ -69,6 +70,16 @@ class GenderClassifier(private val faces: FaceDetector, private val model: Gende
             val cy = y0 + minY[k] + fh / 2f
             val side = max(fw, fh) * 2.4f
             val crop = frame.crop((cx - side / 2).roundToInt(), (cy - side / 2).roundToInt(), side.roundToInt(), side.roundToInt())
+            return crop.resize(CROP, CROP) to side / CROP
+        }
+
+        /** Head-sized square at the top centre of a tall (full-body) box — faces of distant, standing people. */
+        fun topCrop(frame: RgbImage, box: Box): Pair<RgbImage, Float>? {
+            if (box.h < 2.2f * box.w * 0.6f || box.h < 40f) return null
+            val side = min(box.w, 0.36f * box.h)
+            if (side < 12f) return null
+            val cy = box.y1 + 0.42f * side
+            val crop = frame.crop((box.cx - side / 2).roundToInt(), (cy - side / 2).roundToInt(), side.roundToInt(), side.roundToInt())
             return crop.resize(CROP, CROP) to side / CROP
         }
 

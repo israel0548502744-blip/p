@@ -35,7 +35,9 @@ def test_mask_constants_match():
 
 def test_gender_constants_match():
     g = SPEC["gender"]
-    assert gender.MAX_LOGIT == g["max_logit"] and gender.MIN_VOTES == g["min_votes"]
+    assert gender.MAX_LOGIT == g["max_logit"] and gender.MIN_VOTES == g["min_votes"] and gender.MIN_WEIGHT == g["min_weight"]
+    from blueshield.detectors import FACE_EXCLUSION
+    assert FACE_EXCLUSION == SPEC["thresholds"]["face_exclusion"]
     est = gender.GenderEstimate()
     est.add(0.2)  # one vote: logit = factor * ln(0.8/0.2)
     import math

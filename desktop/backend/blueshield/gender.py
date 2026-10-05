@@ -15,8 +15,9 @@ Why it's built this way
   person's track for the whole time they are on screen.
 * The decision uses a user-set **confidence threshold**:
   ``P(female) >= t`` → female, ``P(female) <= 1-t`` → male, otherwise — or
-  with fewer than ``MIN_VOTES`` usable face observations (back turned, face too
-  small) — **uncertain**, which follows a user-chosen fallback (default: censor).
+  with too little evidence (fewer than ``MIN_VOTES`` usable face observations or
+  less than ``MIN_WEIGHT`` total quality: back turned, faces small or blurry) —
+  **uncertain**, which follows a user-chosen fallback (default: censor).
 * Users can override any person manually and re-render without re-analysis.
 
 The model predicts *apparent* gender presentation from a face; it is not
@@ -36,7 +37,8 @@ import numpy as np
 from . import models
 
 MAX_LOGIT = 6.0
-MIN_VOTES = 3
+MIN_VOTES = 6  # face observations needed before calling anyone female or male
+MIN_WEIGHT = 3.0  # …and their summed quality weight (small / low-confidence faces count less)
 FACE_INPUT = 128
 GENDER_INPUT = 224
 
@@ -61,7 +63,7 @@ class GenderEstimate:
 
     def label(self, threshold: float) -> str:
         """'female' | 'male' | 'uncertain' for a confidence threshold in (0.5, 1)."""
-        if self.votes < MIN_VOTES:
+        if self.votes < MIN_VOTES or self.weight < MIN_WEIGHT:
             return "uncertain"
         p = self.p_female
         if p >= threshold:
@@ -183,32 +185,63 @@ class GenderClassifier:
         self._it.invoke()
         return float(self._it.get_tensor(self._out).ravel()[0])
 
-    def classify_person(self, frame: np.ndarray, box: tuple[float, float, float, float],
-                        face_map: Optional[np.ndarray] = None) -> Optional[tuple[float, float]]:
-        """Return (P(male), vote weight) for the person in ``box``, or None if no usable face.
+    def find_face(self, frame: np.ndarray, box: tuple[float, float, float, float],
+                  face_map: Optional[np.ndarray] = None) -> Optional[tuple[np.ndarray, Face, float, tuple[float, float]]]:
+        """Locate a person's face: (crop, face-in-crop, frame px per crop px, crop origin in frame) or None.
 
         ``face_map`` (facial-skin probability from the segmentation model, frame-sized)
         lets us find the head even when the person box is wide (outstretched arms)
         or the face is in profile.
         """
         crops = []
-        head = head_crop(frame, box, face_map) if face_map is not None else None
-        if head is not None:
-            crops.append(head)
+        if face_map is not None:
+            head = head_crop(frame, box, face_map)
+            if head is not None:
+                crops.append(head)
+        top = top_crop(frame, box)
+        if top is not None:
+            crops.append(top)
         ub = upper_body_crop(frame, box, 256)
         if ub is not None:
-            crops.append((ub, crop_scale(frame, box, 256)))
-        for crop, scale in crops:
+            a, b, _, _ = _ub_rect(frame.shape, box)
+            crops.append((ub, crop_scale(frame, box, 256), (float(a), float(b))))
+        for crop, scale, origin in crops:
             faces = [f for f in self.faces.detect(crop, 0.5) if (f.box[1] + f.box[3]) / 2 < 0.75 * crop.shape[0]]
-            if not faces:
-                continue
-            face = max(faces, key=lambda f: f.score * (f.box[2] - f.box[0]))
-            face_px = (face.box[2] - face.box[0]) * scale
-            if face_px < 14:
-                continue  # too small to classify meaningfully
-            weight = face.score * min(1.0, face_px / 48.0)
-            return self.p_male(self.aligned_face(crop, face)), weight
+            if faces:
+                return crop, max(faces, key=lambda f: f.score * (f.box[2] - f.box[0])), scale, origin
         return None
+
+    def classify_person(self, frame: np.ndarray, box: tuple[float, float, float, float],
+                        face_map: Optional[np.ndarray] = None, found=None) -> Optional[tuple[float, float]]:
+        """Return (P(male), vote weight) for the person in ``box``, or None if no usable face."""
+        found = found if found is not None else self.find_face(frame, box, face_map)
+        if found is None:
+            return None
+        crop, face, scale, _ = found
+        face_px = (face.box[2] - face.box[0]) * scale
+        if face_px < 14:
+            return None  # too small to classify meaningfully
+        weight = face.score * min(1.0, face_px / 48.0)
+        return self.p_male(self.aligned_face(crop, face)), weight
+
+
+def top_crop(frame: np.ndarray, box, size: int = 256):
+    """Head-sized square at the top centre of a full-body box (faces of distant, standing people)."""
+    x1, y1, x2, y2 = box
+    bw, bh = x2 - x1, y2 - y1
+    if bh < 2.2 * bw * 0.6 or bh < 40:  # only for tall (full-body) boxes
+        return None
+    side = min(bw, 0.36 * bh)
+    cx, cy = (x1 + x2) / 2, y1 + 0.42 * side
+    a, b = int(round(cx - side / 2)), int(round(cy - side / 2))
+    h, w = frame.shape[:2]
+    s_ = int(round(side))
+    pad = [max(0, -b), max(0, b + s_ - h), max(0, -a), max(0, a + s_ - w)]
+    crop = frame[max(0, b):min(h, b + s_), max(0, a):min(w, a + s_)]
+    if crop.size == 0 or s_ < 12:
+        return None
+    crop = cv2.copyMakeBorder(crop, *pad, cv2.BORDER_REPLICATE)
+    return cv2.resize(crop, (size, size), interpolation=cv2.INTER_LINEAR), side / size, (float(a), float(b))
 
 
 def head_crop(frame: np.ndarray, box, face_map: np.ndarray, size: int = 256):
@@ -236,7 +269,7 @@ def head_crop(frame: np.ndarray, box, face_map: np.ndarray, size: int = 256):
     if crop.size == 0:
         return None
     crop = cv2.copyMakeBorder(crop, *pad, cv2.BORDER_REPLICATE)
-    return cv2.resize(crop, (size, size), interpolation=cv2.INTER_LINEAR), side / size
+    return cv2.resize(crop, (size, size), interpolation=cv2.INTER_LINEAR), side / size, (float(a), float(b))
 
 
 def _ub_rect(frame_shape, box):

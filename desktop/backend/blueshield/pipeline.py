@@ -33,7 +33,7 @@ import numpy as np
 from . import media
 from .censor import BlueCensor, hex_to_bgr
 from .config import ANALYSIS_MAX_SIDE, MASK_MAX_SIDE, WORK_DIR
-from .detectors import (AGGRESSIVE_LABELS, SENSITIVE_LABELS, SensitiveRegionDetector, SkinSegmenter,
+from .detectors import (AGGRESSIVE_LABELS, FACE_LABELS, SENSITIVE_LABELS, SensitiveRegionDetector, SkinSegmenter,
                         color_skin_probability)
 from .gender import GenderClassifier, censor_decision
 from .maskstore import MaskStore
@@ -296,6 +296,7 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
     progress.message = "Detecting people and sensitive regions…"
     flow = FlowEstimator(aw, ah)
     regions = BoxTracker(max_misses=3 if not settings.aggressive else 5)
+    faces = BoxTracker(max_misses=2, smooth=0.6)  # face boxes, only used to keep faces uncensored
     people = PersonTracker(max_misses=max(3, int(round(1.5 * info.fps / det_stride))),
                            gallery_frames=int(round(12 * info.fps)))
     fuser = TemporalFuser(release=0.35 if not settings.aggressive else 0.2, on_threshold=skin_threshold)
@@ -316,6 +317,7 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
                 flow.reset()
                 fuser.reset()
                 regions.reset()
+                faces.reset()
                 people.reset(idx)
             flow.update(frame)
 
@@ -344,9 +346,11 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
             # ── stage 1+3: person detection & tracking ──
             people.predict(flow)
             regions.predict(flow)
+            faces.predict(flow)
             if k in nude:
                 people.update(frame, person_model.detect(frame, person_min_score), idx)
                 regions.update([d for d in nude[k] if d.label in labels])
+                faces.update([d for d in nude[k] if d.label in FACE_LABELS])
                 # ── stage 2: gender classification, only where it's still useful ──
                 for t in people.visible():
                     if t.misses:
@@ -357,6 +361,11 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
                         last_cls[t.tid] = idx
                         if res is not None:
                             t.gender.add(*res)
+            if not settings.include_face:
+                # Faces are never censored unless asked. The segmenter sometimes labels a whole face as
+                # body skin, so clear every tracked face box (NudeNet face detections, flow-tracked).
+                for f in faces.tracks:
+                    _clear_face(skin_bin, tuple(f.box))
             people.mark_frame(frame, idx)
 
             # ── per-frame record (normalised coordinates) ──
@@ -608,6 +617,18 @@ def run_pipeline(engine: Engine, info: media.VideoInfo, settings: CensorSettings
         return result, analysis
     analysis.close()
     return result
+
+
+def _clear_face(skin: np.ndarray, face: tuple[float, float, float, float]) -> None:
+    """Remove skin inside an ellipse around a face box — forehead to chin, not the neck."""
+    x1, y1, x2, y2 = face
+    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2 - 0.12 * (y2 - y1)
+    ax, ay = 0.65 * (x2 - x1), 0.78 * (y2 - y1)
+    if ax < 1 or ay < 1:
+        return
+    hole = np.zeros(skin.shape, np.uint8)
+    cv2.ellipse(hole, (int(cx), int(cy)), (int(ax), int(ay)), 0, 0, 360, 1, -1)
+    skin[hole.astype(bool)] = False
 
 
 def _timeline(s: np.ndarray, c: np.ndarray) -> list[float]:
