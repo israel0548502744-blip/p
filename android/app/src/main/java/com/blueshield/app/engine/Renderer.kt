@@ -27,8 +27,8 @@ import kotlin.math.max
 class Renderer(private val context: Context, private val meta: VideoMeta) {
 
     interface FrameSource {
-        /** Feathered 8-bit mask for frame [index] (display orientation) or null when nothing is censored. */
-        fun mask(index: Int): Mask?
+        /** Feathered 8-bit mask for the [index]-th decoded frame, shown at [ptsUs] (display orientation), or null when nothing is censored. */
+        fun mask(index: Int, ptsUs: Long): Mask?
     }
 
     class Mask(val width: Int, val height: Int, val data: ByteArray)
@@ -166,7 +166,7 @@ class Renderer(private val context: Context, private val meta: VideoMeta) {
                         cancelled = true
                         break@loop
                     }
-                    val m = source.mask(index)
+                    val m = source.mask(index, decInfo.presentationTimeUs)
                     if (m != null) shader.uploadMask(m.width, m.height, m.data) else shader.uploadMask(1, 1, ZERO)
                     shader.draw(evenUp(w), evenUp(h), st4, opts.rgb, (decInfo.presentationTimeUs / 1e6).toFloat(), opts.animated)
                     val now = System.nanoTime()

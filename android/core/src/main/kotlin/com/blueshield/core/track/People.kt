@@ -3,6 +3,7 @@ package com.blueshield.core.track
 import com.blueshield.core.gender.GenderEstimate
 import com.blueshield.core.image.Box
 import com.blueshield.core.image.RgbImage
+import com.blueshield.core.ml.PersonDetector.Companion.CONTAINED_MIN
 
 /** A person with a stable identity across frames (stage 3: tracking). */
 class PersonTrack(val id: Int, var box: Box, var score: Float, var appearance: FloatArray?, val gender: GenderEstimate) {
@@ -15,6 +16,8 @@ class PersonTrack(val id: Int, var box: Box, var score: Float, var appearance: F
     /** Best thumbnail so far (RGB crop) and its quality score. */
     var thumbnail: RgbImage? = null
     var thumbnailQuality = 0f
+    /** Other track id -> consecutive detection rounds this track looked like a duplicate of it. */
+    val dupRounds = HashMap<Int, Int>()
 }
 
 /**
@@ -30,6 +33,8 @@ class PersonTracker(
     val active = ArrayList<PersonTrack>()
     private val gallery = ArrayList<PersonTrack>()
     val all = LinkedHashMap<Int, PersonTrack>()
+    /** Merged-away track id -> surviving id (frames recorded before the merge still carry the old id). */
+    val aliases = HashMap<Int, Int>()
     private var nextId = 1
 
     fun reset(frameIndex: Int) {
@@ -91,9 +96,40 @@ class PersonTracker(
                 active += revived
                 continue
             }
+            // a partial box of someone already tracked (e.g. their upper body) is not a new person
+            if (active.any { it.misses == 0 && d.box.containedIn(it.box) > CONTAINED_MIN && Appearance.similarity(it.appearance, hists[di]) > 0.6f }) continue
             val t = PersonTrack(nextId++, d.box, d.score, hists[di], newEstimate())
             active += t
             all[t.id] = t
+        }
+        mergeDuplicates()
+    }
+
+    /**
+     * Two tracks on the same person (one box inside the other, same look, for several detection
+     * rounds) become one identity, so the gender evidence isn't split between them.
+     */
+    private fun mergeDuplicates() {
+        val pending = ArrayList<Pair<PersonTrack, PersonTrack>>()
+        for (small in active) for (big in active) {
+            if (small === big || small.misses != 0 || big.misses != 0) continue
+            if (small.box.area > big.box.area || (small.box.area == big.box.area && small.id >= big.id)) continue
+            val same = small.box.containedIn(big.box) > CONTAINED_MIN && Appearance.similarity(small.appearance, big.appearance) > 0.6f
+            val n = if (same) (small.dupRounds[big.id] ?: 0) + 1 else 0
+            small.dupRounds[big.id] = n
+            if (n >= 3) pending += small to big
+        }
+        for ((small, big) in pending) {
+            if (small !in active || big !in active) continue
+            val keepSmall = small.frames > big.frames || (small.frames == big.frames && small.id < big.id)
+            val keep = if (keepSmall) small else big
+            val drop = if (keepSmall) big else small
+            keep.box = big.box
+            keep.gender.absorb(drop.gender)
+            active.remove(drop)
+            all.remove(drop.id)
+            aliases[drop.id] = keep.id
+            for ((k, v) in aliases.entries.toList()) if (v == drop.id) aliases[k] = keep.id
         }
     }
 

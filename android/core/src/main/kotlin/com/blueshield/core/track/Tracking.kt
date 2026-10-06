@@ -4,13 +4,17 @@ import com.blueshield.core.image.Box
 import com.blueshield.core.image.FloatMask
 import com.blueshield.core.image.RgbImage
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sqrt
 
 /**
  * Anti-flicker fusion of per-frame soft skin masks (same algorithm as the desktop
- * `TemporalFuser`): motion-compensated state, fast attack, slow release, hysteresis.
+ * `TemporalFuser`): motion-compensated state, fast attack, hysteresis, and an
+ * evidence-anchored memory — on a freshly measured frame the past can only lift the
+ * current score by at most [lift], never keep a pixel on by itself, so skin that moved
+ * away is released at once and a moving arm leaves no trail.
  */
-class TemporalFuser(private val release: Float, onThreshold: Float, offRatio: Float) {
+class TemporalFuser(private val memory: Float, private val lift: Float, onThreshold: Float, offRatio: Float) {
     private val on = onThreshold
     private val off = onThreshold * offRatio
     private var state: FloatMask? = null
@@ -34,7 +38,7 @@ class TemporalFuser(private val release: Float, onThreshold: Float, offRatio: Fl
                 val c = current.data[i]
                 val w = warped.data[i]
                 next.data[i] = if (fresh) {
-                    if (c >= w) c else w * (1 - release) + c * release
+                    if (c >= w) c else c * (1 - memory) + min(w, c + lift) * memory
                 } else max(c, w * 0.97f)
             }
         }

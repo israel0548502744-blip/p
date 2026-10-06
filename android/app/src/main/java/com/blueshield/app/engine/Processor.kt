@@ -52,6 +52,8 @@ class Processor(private val context: Context) {
     var analysis: Analysis? = null
         private set
     private var meta: VideoMeta? = null
+    /** Presentation time (µs) of every analysed frame, in order — the render pass matches masks by time, not by count. */
+    private var analysedPts = LongArray(0)
     private var settings: CensorSettings = CensorSettings()
     private val cancelFlag = AtomicBoolean(false)
     private val pauseLock = Object()
@@ -131,8 +133,10 @@ class Processor(private val context: Context) {
                 }
                 chunk.clear()
             }
-            FrameExtractor(context, meta, aw, ah).run { _, _, frame ->
+            val pts = ArrayList<Long>()
+            FrameExtractor(context, meta, aw, ah).run { _, ptsUs, frame ->
                 chunk += frame
+                pts += ptsUs
                 if (chunk.size >= analyzer.detStride * 4) flush()
                 val ok = checkpoint(meter)
                 if (!ok) cancelled = true
@@ -145,6 +149,8 @@ class Processor(private val context: Context) {
             }
             if (analyzer.processed == 0) error("Could not decode any frames from this video.")
             analysis = analyzer.finish()
+            // decoders deliver frames in presentation order; if this one didn't, fall back to counting
+            analysedPts = pts.toLongArray().takeIf { arr -> (1 until arr.size).all { arr[it] > arr[it - 1] } } ?: LongArray(0)
             Breadcrumbs.mark("analysis: done, ${analysis?.people?.size ?: 0} people")
             return renderInternal(emptyMap(), state, ANALYSIS_SHARE, update)
         } catch (e: Renderer.CancelledException) {
@@ -183,10 +189,12 @@ class Processor(private val context: Context) {
         Breadcrumbs.mark("render: start (${m.width}x${m.height}, $total frames)")
         val version = start.version + 1
         val out = File(context.filesDir, "outputs/blueshield_${System.currentTimeMillis()}_v$version.mp4").also { it.parentFile?.mkdirs() }
+        val ptsIndex = analysedPts
         val source = object : Renderer.FrameSource {
-            override fun mask(index: Int): Renderer.Mask? {
-                if (index >= total) return null
-                val raw = a.maskFor(index, decisions, s, lookahead)
+            override fun mask(index: Int, ptsUs: Long): Renderer.Mask? {
+                val i = analysisIndex(ptsIndex, index, ptsUs, total)
+                if (i < 0) return null
+                val raw = a.maskFor(i, decisions, s, lookahead)
                 if (!raw.any()) return null
                 censored++
                 val f = Composer.feather(raw, m.width, m.height, s.softness, s.aggressive)
@@ -210,6 +218,23 @@ class Processor(private val context: Context) {
         state = state.copy(stage = JobState.Stage.COMPLETE, percent = 100f, etaSeconds = 0.0, output = out, censoredFrames = censored, version = version)
         update(state)
         return state
+    }
+
+    /**
+     * The analysed frame shown at [ptsUs]. Matching by timestamp keeps every mask on its own frame even
+     * when the two decoding passes don't deliver exactly the same frames (a dropped or extra frame would
+     * otherwise shift every following mask). Falls back to the running index when no timestamps exist.
+     */
+    private fun analysisIndex(pts: LongArray, index: Int, ptsUs: Long, total: Int): Int {
+        if (pts.size != total || total == 0) return if (index < total) index else -1
+        var lo = 0
+        var hi = pts.size - 1
+        while (lo < hi) {
+            val mid = (lo + hi) ushr 1
+            if (pts[mid] < ptsUs) lo = mid + 1 else hi = mid
+        }
+        val best = if (lo > 0 && kotlin.math.abs(pts[lo - 1] - ptsUs) <= kotlin.math.abs(pts[lo] - ptsUs)) lo - 1 else lo
+        return best
     }
 
     /** People summaries for a new set of overrides (no re-render). */

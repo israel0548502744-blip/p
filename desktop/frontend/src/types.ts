@@ -115,7 +115,7 @@ export interface Health {
 export const DEFAULT_SETTINGS: CensorSettings = {
   color: "#1E4DFF",
   sensitivity: 60,
-  softness: 35,
+  softness: 20,
   aggressive: false,
   animated: false,
   include_face: false,

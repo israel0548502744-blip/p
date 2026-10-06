@@ -70,8 +70,9 @@ data class PipelineSpec(
 
     @Serializable
     data class TrackingSpec(
-        @SerialName("fuser_release") val fuserRelease: Float,
-        @SerialName("fuser_release_aggressive") val fuserReleaseAggressive: Float,
+        @SerialName("fuser_memory") val fuserMemory: Float,
+        @SerialName("fuser_lift") val fuserLift: Float,
+        @SerialName("fuser_lift_aggressive") val fuserLiftAggressive: Float,
         @SerialName("hysteresis_off_ratio") val hysteresisOffRatio: Float,
         @SerialName("person_lost_seconds") val personLostSeconds: Double,
         @SerialName("reid_gallery_seconds") val reidGallerySeconds: Double,

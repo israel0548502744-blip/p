@@ -181,6 +181,77 @@ class CoreTest {
         assertTrue(warped[56, 35] > 0.5f && warped[51, 35] < 0.5f)
     }
 
+    @Test fun opticalFlowStaysCalmOnFlatSurfaces() {
+        // a textured object moving fast across a flat, slightly noisy surface (sky, wall, pool-table felt)
+        val rnd = java.util.Random(3)
+        val tex = FloatArray(40 * 40) { rnd.nextFloat() * 255f }
+        fun frame(objX: Int) = RgbImage(256, 144).also { img ->
+            for (y in 0 until 144) for (x in 0 until 256) {
+                val inObj = x - objX in 0 until 40 && y - 50 in 0 until 40
+                val v = if (inObj) tex[(y - 50) * 40 + (x - objX)].toInt() else 90 + rnd.nextInt(3)
+                val o = (y * 256 + x) * 3
+                img.data[o] = v.toByte(); img.data[o + 1] = (v + 40).coerceAtMost(255).toByte(); img.data[o + 2] = v.toByte()
+            }
+        }
+        val flow = OpticalFlow(256, 144)
+        flow.update(frame(30))
+        flow.update(frame(38))
+        // nothing on the flat surface far from the object may "move"
+        val mask = FloatMask(256, 144).also { for (y in 50 until 90) for (x in 30 until 70) it[x, y] = 1f }
+        val warped = flow.warp(mask)
+        var stray = 0
+        for (y in 0 until 144) for (x in 0 until 256) if (warped[x, y] > 0.5f && (x > 120 || y < 30 || y > 110)) stray++
+        assertEquals(0, stray, "mask leaked onto the flat surface")
+        val (dx, _) = flow.boxShift(Box(150f, 10f, 250f, 130f), 256, 144)
+        assertTrue(abs(dx) < 1f, "flat area moved by $dx")
+    }
+
+    @Test fun fuserLeavesNoTrail() {
+        val flow = OpticalFlow(32, 32)
+        val f = com.blueshield.core.track.TemporalFuser(spec.tracking.fuserMemory, spec.tracking.fuserLift, 0.5f, spec.tracking.hysteresisOffRatio)
+        assertTrue(f.update(FloatMask(32, 32, FloatArray(32 * 32) { 0.9f }), flow, true).all { it })
+        // a dip below the on-threshold but above the off-threshold stays censored (no flicker)
+        assertTrue(f.update(FloatMask(32, 32, FloatArray(32 * 32) { 0.35f }), flow, true).all { it })
+        // skin that is gone from the current measurement is released at once (no trail behind a moving arm)
+        assertTrue(f.update(FloatMask(32, 32), flow, true).none { it })
+    }
+
+    @Test fun partialDuplicateDetectionsAreDropped() {
+        val body = Detection("person", 0.8f, Box(100f, 50f, 260f, 400f))
+        val upper = Detection("person", 0.7f, Box(110f, 55f, 250f, 200f))
+        val other = Detection("person", 0.6f, Box(300f, 50f, 420f, 400f))
+        assertEquals(listOf(body, other), PersonDetector.suppressContained(listOf(upper, body, other)))
+        // a much more confident inner box is kept (could be someone standing in front)
+        val sure = Detection("person", 0.99f, Box(110f, 55f, 250f, 200f))
+        assertEquals(2, PersonDetector.suppressContained(listOf(body.copy(score = 0.5f), sure)).size)
+    }
+
+    @Test fun duplicateTracksMergeAndKeepTheirEvidence() {
+        val tracker = com.blueshield.core.track.PersonTracker(5, 300, 0.72f) {
+            GenderEstimate(spec.gender.voteFactor, spec.gender.maxLogit, spec.gender.minVotes, spec.gender.minWeight)
+        }
+        val img = RgbImage(400, 400).also { java.util.Arrays.fill(it.data, 120.toByte()) }
+        val body = Detection("person", 0.8f, Box(100f, 50f, 260f, 400f))
+        val upper = Detection("person", 0.9f, Box(105f, 55f, 255f, 210f))
+        // a partial box of someone already tracked never starts a new person
+        tracker.update(img, listOf(body, upper), 0)
+        assertEquals(1, tracker.active.size)
+        // …but if the partial box came first, the two tracks are merged after a few rounds
+        val t2 = com.blueshield.core.track.PersonTracker(5, 300, 0.72f) {
+            GenderEstimate(spec.gender.voteFactor, spec.gender.maxLogit, spec.gender.minVotes, spec.gender.minWeight)
+        }
+        t2.update(img, listOf(upper), 0)
+        t2.update(img, listOf(body, upper), 2)
+        assertEquals(2, t2.active.size)
+        t2.active.forEach { t -> repeat(3) { t.gender.add(0.1f) } }
+        for (k in 2..4) t2.update(img, listOf(body, upper), k * 2)
+        val tracker2 = t2
+        assertEquals(1, tracker2.active.size)
+        val survivor = tracker2.active.single()
+        assertEquals(6, survivor.gender.votes)
+        assertEquals(survivor.id, tracker2.aliases.values.single())
+    }
+
     @Test fun orientationMappingsAreInverse() {
         val cw = 16
         val ch = 9

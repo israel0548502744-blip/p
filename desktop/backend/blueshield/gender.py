@@ -57,6 +57,12 @@ class GenderEstimate:
         self.votes += 1
         self.weight += weight
 
+    def absorb(self, other: "GenderEstimate") -> None:
+        """Merge the evidence of a duplicate track of the same person."""
+        self.logit = float(np.clip(self.logit + other.logit, -MAX_LOGIT, MAX_LOGIT))
+        self.votes += other.votes
+        self.weight += other.weight
+
     @property
     def p_female(self) -> float:
         return 1.0 / (1.0 + math.exp(-self.logit))

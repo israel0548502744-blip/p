@@ -181,11 +181,27 @@ class PersonDetector(private val models: ModelStore) {
                 sc += s
             }
         }
-        return nms(boxes, sc, 0.5f).map { Detection("person", sc[it], boxes[it]) }
+        return suppressContained(nms(boxes, sc, 0.5f).map { Detection("person", sc[it], boxes[it]) })
     }
 
     companion object {
         const val INPUT = 320
+        /** A box this much inside a bigger one is a partial (e.g. upper-body) duplicate. */
+        const val CONTAINED_MIN = 0.8f
+
+        /**
+         * Drop partial duplicates: a detection lying almost entirely inside a bigger one of the same person.
+         * Plain NMS keeps them (small IoU); left alone they become a second "person" that splits the gender
+         * evidence. The smaller box survives only when the detector is clearly more confident about it.
+         */
+        fun suppressContained(dets: List<Detection>): List<Detection> {
+            val keep = ArrayList<Detection>()
+            for (d in dets.sortedByDescending { it.box.area }) {
+                if (keep.any { k -> d.box.containedIn(k.box) > CONTAINED_MIN && d.score < k.score + 0.15f }) continue
+                keep += d
+            }
+            return keep
+        }
 
         /** EfficientDet anchors: levels 3–7, 3 octaves × 3 aspect ratios, laid out (cy, cx, h, w). */
         fun buildAnchors(): FloatArray {
@@ -347,6 +363,22 @@ class NudeNet(private val models: ModelStore) {
 
     companion object {
         const val INPUT = 320
+        /** A box this much inside a bigger one is a partial (e.g. upper-body) duplicate. */
+        const val CONTAINED_MIN = 0.8f
+
+        /**
+         * Drop partial duplicates: a detection lying almost entirely inside a bigger one of the same person.
+         * Plain NMS keeps them (small IoU); left alone they become a second "person" that splits the gender
+         * evidence. The smaller box survives only when the detector is clearly more confident about it.
+         */
+        fun suppressContained(dets: List<Detection>): List<Detection> {
+            val keep = ArrayList<Detection>()
+            for (d in dets.sortedByDescending { it.box.area }) {
+                if (keep.any { k -> d.box.containedIn(k.box) > CONTAINED_MIN && d.score < k.score + 0.15f }) continue
+                keep += d
+            }
+            return keep
+        }
         val LABELS = listOf(
             "FEMALE_GENITALIA_COVERED", "FACE_FEMALE", "BUTTOCKS_EXPOSED", "FEMALE_BREAST_EXPOSED",
             "FEMALE_GENITALIA_EXPOSED", "MALE_BREAST_EXPOSED", "ANUS_EXPOSED", "FEET_EXPOSED",

@@ -8,7 +8,7 @@ import kotlinx.serialization.Serializable
 data class CensorSettings(
     val color: String = "#1E4DFF",
     val sensitivity: Int = 60,
-    val softness: Int = 35,
+    val softness: Int = 20,
     val aggressive: Boolean = false,
     val animated: Boolean = false,
     @SerialName("include_face") val includeFace: Boolean = false,

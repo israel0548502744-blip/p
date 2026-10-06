@@ -50,13 +50,19 @@ class Analysis(
     val store: MaskStore,
     val records: List<FrameRecord>,
     val people: Map<Int, PersonTrack>,
+    /** Merged duplicate track id -> surviving id. */
+    val aliases: Map<Int, Int> = emptyMap(),
 ) : AutoCloseable {
     val frameCount get() = records.size
 
-    fun decisions(settings: CensorSettings, overrides: Map<Int, Override>): Map<Int, Boolean> =
-        people.mapValues { (id, t) ->
+    fun decisions(settings: CensorSettings, overrides: Map<Int, Override>): Map<Int, Boolean> {
+        val out = HashMap(people.mapValues { (id, t) ->
             censorDecision(t.gender.label(settings.threshold01), settings.target, settings.uncertainPolicy, overrides[id] ?: Override.AUTO)
-        }
+        })
+        // frames recorded before two duplicate tracks were merged still carry the merged-away id
+        for ((old, new) in aliases) out[new]?.let { out[old] = it }
+        return out
+    }
 
     fun summaries(settings: CensorSettings, overrides: Map<Int, Override>): List<PersonSummary> =
         people.values.sortedWith(compareBy({ -it.frames }, { it.id })).map { t ->
@@ -133,7 +139,8 @@ class Analyzer(
         reidMinSimilarity = spec.tracking.reidMinSimilarity,
     ) { GenderEstimate(spec.gender.voteFactor, spec.gender.maxLogit, spec.gender.minVotes, spec.gender.minWeight) }
     private val fuser = TemporalFuser(
-        if (settings.aggressive) spec.tracking.fuserReleaseAggressive else spec.tracking.fuserRelease,
+        spec.tracking.fuserMemory,
+        if (settings.aggressive) spec.tracking.fuserLiftAggressive else spec.tracking.fuserLift,
         skinOn, spec.tracking.hysteresisOffRatio,
     )
     val store = MaskStore(storeFile, maskWidth, maskHeight)
@@ -278,7 +285,7 @@ class Analyzer(
         }
     }
 
-    fun finish(): Analysis = Analysis(settings, spec, fps, store, records.toList(), people.all.filterValues { it.frames > 0 })
+    fun finish(): Analysis = Analysis(settings, spec, fps, store, records.toList(), people.all.filterValues { it.frames > 0 }, people.aliases.toMap())
 
     companion object {
         val FACE_LABELS = setOf("FACE_FEMALE", "FACE_MALE")

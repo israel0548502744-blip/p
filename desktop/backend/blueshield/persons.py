@@ -88,7 +88,7 @@ class PersonDetector:
                 s = d.categories[0].score if d.categories else 0.0
                 if s >= min_score:
                     out.append(PersonBox((b.origin_x, b.origin_y, b.origin_x + b.width, b.origin_y + b.height), s))
-            return out
+            return suppress_contained(out)
         x = cv2.resize(rgb, (INPUT, INPUT), interpolation=cv2.INTER_AREA).astype(np.float32)
         x = (x - 127.0) / 128.0
         self._it.set_tensor(self._in, x[None])
@@ -111,5 +111,36 @@ class PersonDetector:
         rects = [[float(a_), float(b_), float(c_ - a_), float(d_ - b_)] for a_, b_, c_, d_ in zip(x1, y1, x2, y2)]
         sc = scores[keep].astype(float).tolist()
         idx = np.array(cv2.dnn.NMSBoxes(rects, sc, min_score, 0.5)).reshape(-1)
-        return [PersonBox((float(x1[i]), float(y1[i]), float(x2[i]), float(y2[i])), float(sc[i]))
-                for i in idx if (x2[i] - x1[i]) > 4 and (y2[i] - y1[i]) > 8]
+        out = [PersonBox((float(x1[i]), float(y1[i]), float(x2[i]), float(y2[i])), float(sc[i]))
+               for i in idx if (x2[i] - x1[i]) > 4 and (y2[i] - y1[i]) > 8]
+        return suppress_contained(out)
+
+
+CONTAINED_MIN = 0.8  # a box this much inside a bigger one is a partial (e.g. upper-body) duplicate
+
+
+def containment(inner: tuple[float, float, float, float], outer: tuple[float, float, float, float]) -> float:
+    """Fraction of ``inner``'s area that lies inside ``outer``."""
+    ix = max(0.0, min(inner[2], outer[2]) - max(inner[0], outer[0]))
+    iy = max(0.0, min(inner[3], outer[3]) - max(inner[1], outer[1]))
+    area = max(1e-6, (inner[2] - inner[0]) * (inner[3] - inner[1]))
+    return ix * iy / area
+
+
+def suppress_contained(dets: list[PersonBox]) -> list[PersonBox]:
+    """Drop partial duplicates: a detection lying almost entirely inside a bigger one of the same person.
+
+    Plain NMS keeps them because their IoU is small; left alone they become a second "person" that splits
+    the gender evidence (both halves then stay "uncertain"). The smaller box survives only when the
+    detector is clearly more confident about it.
+    """
+    def area(d: PersonBox) -> float:
+        return (d.box[2] - d.box[0]) * (d.box[3] - d.box[1])
+
+    order = sorted(dets, key=area, reverse=True)
+    keep: list[PersonBox] = []
+    for d in order:
+        if any(containment(d.box, k.box) > CONTAINED_MIN and d.score < k.score + 0.15 for k in keep):
+            continue
+        keep.append(d)
+    return keep

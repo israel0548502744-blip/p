@@ -4,7 +4,7 @@
   "defaults": {
     "color": "#1E4DFF",
     "sensitivity": 60,
-    "softness": 35,
+    "softness": 20,
     "aggressive": false,
     "animated": false,
     "include_face": false,
@@ -32,8 +32,9 @@
     "reclassify_seconds": 1.0
   },
   "tracking": {
-    "fuser_release": 0.35,
-    "fuser_release_aggressive": 0.2,
+    "fuser_memory": 0.4,
+    "fuser_lift": 0.35,
+    "fuser_lift_aggressive": 0.5,
     "hysteresis_off_ratio": 0.6,
     "person_lost_seconds": 1.5,
     "reid_gallery_seconds": 12,

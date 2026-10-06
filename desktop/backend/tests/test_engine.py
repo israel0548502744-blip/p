@@ -83,11 +83,13 @@ def test_tracker_keeps_region_through_short_miss():
 
 def test_fuser_hysteresis():
     flow = FlowEstimator(20, 20)
-    f = TemporalFuser(release=0.5, on_threshold=0.5)
+    f = TemporalFuser(on_threshold=0.5)
     on = np.full((20, 20), 0.9, np.float32)
     assert f.update(on, flow, True).all()
     # a dip below the on-threshold but above the off-threshold stays censored
     assert f.update(np.full((20, 20), 0.35, np.float32), flow, True).all()
+    # skin that is gone from the current measurement is released at once (no trail behind moving arms)
+    assert not f.update(np.zeros((20, 20), np.float32), flow, True).any()
 
 
 def test_full_pipeline(sample_video, tmp_path):
@@ -111,3 +113,37 @@ def test_segmenter_finds_skin():
     seg = SkinSegmenter().segment(img)
     assert seg.skin.shape == (256, 256) and float(seg.skin.max()) < 0.5  # nothing on a black frame
     _ = cv2  # keep import used
+
+
+def test_partial_duplicate_detections_are_dropped():
+    from blueshield.persons import PersonBox, suppress_contained
+    body = PersonBox((100, 50, 260, 400), 0.8)
+    upper = PersonBox((110, 55, 250, 200), 0.7)
+    other = PersonBox((300, 50, 420, 400), 0.6)
+    assert suppress_contained([upper, body, other]) == [body, other]
+    # a much more confident inner box is kept (could be someone standing in front)
+    sure = PersonBox((110, 55, 250, 200), 0.99)
+    assert len(suppress_contained([PersonBox(body.box, 0.5), sure])) == 2
+
+
+def test_duplicate_tracks_merge_and_keep_their_evidence():
+    from blueshield.people import PersonTracker
+    from blueshield.persons import PersonBox
+    img = np.full((400, 400, 3), 120, np.uint8)
+    body = PersonBox((100, 50, 260, 400), 0.8)
+    upper = PersonBox((105, 55, 255, 210), 0.9)
+    t = PersonTracker(max_misses=5)
+    t.update(img, [body, upper], 0)
+    assert len(t.active) == 1  # a partial box of someone already tracked is not a new person
+    t2 = PersonTracker(max_misses=5)
+    t2.update(img, [upper], 0)
+    t2.update(img, [body, upper], 2)
+    assert len(t2.active) == 2
+    for tr in t2.active:
+        for _ in range(3):
+            tr.gender.add(0.1)
+    for k in range(2, 5):
+        t2.update(img, [body, upper], k * 2)
+    assert len(t2.active) == 1
+    survivor = t2.active[0]
+    assert survivor.gender.votes == 6 and list(t2.aliases.values()) == [survivor.tid]

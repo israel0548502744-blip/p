@@ -6,6 +6,7 @@ import com.blueshield.core.image.RgbImage
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sqrt
 
 /**
  * Dense optical flow (pyramidal Lucas–Kanade on a ~128 px grayscale copy).
@@ -127,7 +128,14 @@ class OpticalFlow(val width: Int, val height: Int, flowSide: Int = 128) {
         return su.data to sv.data
     }
 
-    /** Per-pixel iterative LK refining (u, v) so that cur(x) ≈ old(x + (u, v)). */
+    /**
+     * Per-pixel iterative LK refining (u, v) so that cur(x) ≈ old(x + (u, v)).
+     *
+     * Only *well-conditioned* windows (both structure-tensor eigenvalues large: real texture, not sky,
+     * a wall or a pool-table felt) are trusted. Elsewhere plain LK returns huge, random vectors that would
+     * drag masks across the frame, so those pixels keep the coarser estimate and then take the
+     * confidence-weighted average of their neighbourhood.
+     */
     private fun lucasKanade(cur: FloatMask, old: FloatMask, u: FloatArray, v: FloatArray, window: Int, iterations: Int) {
         val w = cur.width
         val h = cur.height
@@ -141,6 +149,10 @@ class OpticalFlow(val width: Int, val height: Int, flowSide: Int = 128) {
             ix[y * w + x] = (old[xp, y] - old[xm, y]) * 0.5f
             iy[y * w + x] = (old[x, yp] - old[x, ym]) * 0.5f
         }
+        val n = (2 * window + 1) * (2 * window + 1)
+        val minEig = MIN_EIGEN_PER_PIXEL * n
+        val conf = FloatArray(w * h)
+        val prior = u.copyOf() to v.copyOf()
         repeat(iterations) {
             val nu = u.copyOf()
             val nv = v.copyOf()
@@ -166,20 +178,72 @@ class OpticalFlow(val width: Int, val height: Int, flowSide: Int = 128) {
                         b2 += gy * it
                     }
                 }
-                val det = a11 * a22 - a12 * a12
-                if (det > 1e-3f) {
-                    nu[i0] = u[i0] - (a22 * b1 - a12 * b2) / det
-                    nv[i0] = v[i0] - (a11 * b2 - a12 * b1) / det
+                val half = (a11 + a22) / 2
+                val lambdaMin = half - sqrt(((a11 - a22) / 2) * ((a11 - a22) / 2) + a12 * a12)
+                if (lambdaMin > minEig) {
+                    val det = a11 * a22 - a12 * a12
+                    // one LK step is at most a couple of pixels at this level; bigger jumps are mismatches
+                    nu[i0] = u[i0] - ((a22 * b1 - a12 * b2) / det).coerceIn(-2f, 2f)
+                    nv[i0] = v[i0] - ((a11 * b2 - a12 * b1) / det).coerceIn(-2f, 2f)
+                    conf[i0] = lambdaMin / (lambdaMin + 4 * minEig)
+                } else {
+                    nu[i0] = prior.first[i0]
+                    nv[i0] = prior.second[i0]
+                    conf[i0] = 0f
                 }
             }
             System.arraycopy(nu, 0, u, 0, u.size)
             System.arraycopy(nv, 0, v, 0, v.size)
         }
+        // confidence-weighted smoothing: textureless pixels inherit their textured neighbours' motion
+        // (or the coarser level's estimate when there are none)
+        val r = max(2, max(w, h) / 24)
+        val cu = boxBlur(FloatArray(w * h) { u[it] * conf[it] }, w, h, r)
+        val cv = boxBlur(FloatArray(w * h) { v[it] * conf[it] }, w, h, r)
+        val cc = boxBlur(conf, w, h, r)
+        for (i in u.indices) {
+            val k = cc[i]
+            val smoothU = if (k > 1e-4f) cu[i] / k else prior.first[i]
+            val smoothV = if (k > 1e-4f) cv[i] / k else prior.second[i]
+            val keep = conf[i]
+            val wPrior = (0.05f - k).coerceIn(0f, 0.05f) / 0.05f // no textured support at all → coarse estimate
+            val su = smoothU * (1 - wPrior) + prior.first[i] * wPrior
+            val sv = smoothV * (1 - wPrior) + prior.second[i] * wPrior
+            u[i] = u[i] * keep + su * (1 - keep)
+            v[i] = v[i] * keep + sv * (1 - keep)
+        }
         // keep the field sane
-        val lim = max(w, h) / 3f
+        val lim = max(w, h) / 6f
         for (i in u.indices) {
             u[i] = u[i].coerceIn(-lim, lim)
             v[i] = v[i].coerceIn(-lim, lim)
         }
+    }
+
+    private fun boxBlur(src: FloatArray, w: Int, h: Int, r: Int): FloatArray {
+        val tmp = FloatArray(w * h)
+        val out = FloatArray(w * h)
+        for (y in 0 until h) {
+            var acc = 0f
+            for (k in -r..r) acc += src[y * w + k.coerceIn(0, w - 1)]
+            for (x in 0 until w) {
+                tmp[y * w + x] = acc
+                acc += src[y * w + (x + r + 1).coerceAtMost(w - 1)] - src[y * w + (x - r).coerceAtLeast(0)]
+            }
+        }
+        for (x in 0 until w) {
+            var acc = 0f
+            for (k in -r..r) acc += tmp[k.coerceIn(0, h - 1) * w + x]
+            for (y in 0 until h) {
+                out[y * w + x] = acc
+                acc += tmp[(y + r + 1).coerceAtMost(h - 1) * w + x] - tmp[(y - r).coerceAtLeast(0) * w + x]
+            }
+        }
+        return out
+    }
+
+    private companion object {
+        /** Minimum structure-tensor eigenvalue per window pixel (gray levels²) for a trustworthy LK estimate. */
+        const val MIN_EIGEN_PER_PIXEL = 6f
     }
 }

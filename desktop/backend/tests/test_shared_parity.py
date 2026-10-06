@@ -31,6 +31,9 @@ def test_mask_constants_match():
     assert pipeline.UNASSIGNED_MIN_AREA == SPEC["unassigned_min_area"]
     assert config.ANALYSIS_MAX_SIDE == SPEC["analysis_max_side"]
     assert config.MASK_MAX_SIDE == SPEC["mask_max_side"]
+    t = SPEC["tracking"]
+    assert (pipeline.FUSER_MEMORY, pipeline.FUSER_LIFT, pipeline.FUSER_LIFT_AGGRESSIVE) == (
+        t["fuser_memory"], t["fuser_lift"], t["fuser_lift_aggressive"])
 
 
 def test_gender_constants_match():

@@ -32,6 +32,13 @@ class GenderEstimate(
         this.weight += weight
     }
 
+    /** Merge the evidence of a duplicate track of the same person. */
+    fun absorb(other: GenderEstimate) {
+        logit = (logit + other.logit).coerceIn(-maxLogit, maxLogit)
+        votes += other.votes
+        weight += other.weight
+    }
+
     val pFemale: Double get() = 1.0 / (1.0 + exp(-logit))
     val confidence: Double get() = max(pFemale, 1 - pFemale)
 

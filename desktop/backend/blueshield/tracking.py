@@ -166,13 +166,17 @@ class TemporalFuser:
 
     * motion compensated — the previous state is warped with optical flow first,
     * fast attack — new detections appear immediately (no lag on censorship),
-    * slow release — dropped detections fade out over several frames,
+    * evidence-anchored memory — on a freshly measured frame the past can only *lift* the current
+      score by a bounded amount (``lift``), never keep a pixel on by itself. Skin that moved away is
+      released at once, so a moving arm leaves no trail behind it,
     * hysteresis — pixels need a high score to switch on but only a lower
       score to stay on, which removes edge chatter.
     """
 
-    def __init__(self, release: float = 0.35, on_threshold: float = 0.5, off_ratio: float = 0.6) -> None:
-        self.release = release
+    def __init__(self, memory: float = 0.4, lift: float = 0.35, on_threshold: float = 0.5,
+                 off_ratio: float = 0.6) -> None:
+        self.memory = memory
+        self.lift = lift
         self.on = on_threshold
         self.off = on_threshold * off_ratio
         self.state: np.ndarray | None = None
@@ -190,8 +194,8 @@ class TemporalFuser:
             warped = flow.warp(self.state)
             prev_bin = flow.warp(self.binary.astype(np.float32)) > 0.5
             if fresh:
-                # new measurement: rise instantly, decay slowly
-                state = np.where(current >= warped, current, warped * (1 - self.release) + current * self.release)
+                remembered = np.minimum(warped, current + self.lift)
+                state = np.where(current >= warped, current, current * (1 - self.memory) + remembered * self.memory)
             else:
                 # propagated frame: current *is* the warped measurement; keep the max
                 state = np.maximum(current, warped * 0.97)

@@ -19,7 +19,7 @@ import cv2
 import numpy as np
 
 from .gender import GenderEstimate
-from .persons import PersonBox
+from .persons import CONTAINED_MIN, PersonBox, containment
 from .tracking import FlowEstimator, _iou
 
 
@@ -59,6 +59,7 @@ class PersonTrack:
     thumb: Optional[bytes] = None
     thumb_quality: float = 0.0
     lost_at: int = -1
+    dup_rounds: dict = field(default_factory=dict)  # other tid -> consecutive rounds looking like a duplicate
 
 
 class PersonTracker:
@@ -68,6 +69,7 @@ class PersonTracker:
         self.active: list[PersonTrack] = []
         self.gallery: list[PersonTrack] = []
         self.all: dict[int, PersonTrack] = {}
+        self.aliases: dict[int, int] = {}  # merged-away tid -> surviving tid
         self._next = 1
 
     def reset(self, frame_index: int) -> None:
@@ -133,10 +135,48 @@ class PersonTracker:
                 best.box, best.score, best.misses = list(d.box), d.score, 0
                 self.active.append(best)
                 continue
+            # a partial box of someone already tracked (e.g. their upper body) is not a new person
+            if any(not a.misses and containment(d.box, tuple(a.box)) > CONTAINED_MIN
+                   and hist_sim(a.hist, hists[di]) > 0.6 for a in self.active):
+                continue
             t = PersonTrack(self._next, list(d.box), d.score, hists[di], first_frame=frame_index)
             self._next += 1
             self.active.append(t)
             self.all[t.tid] = t
+        self._merge_duplicates()
+
+    def _merge_duplicates(self) -> None:
+        """Two tracks on the same person (one box inside the other, same look, for several detection
+        rounds) become one identity, so the gender evidence isn't split between them."""
+        pending = []
+        for small in self.active:
+            for big in self.active:
+                if small is big or small.misses or big.misses:
+                    continue
+                if (_area(small.box), small.tid) >= (_area(big.box), big.tid):
+                    continue
+                same = (containment(tuple(small.box), tuple(big.box)) > CONTAINED_MIN
+                        and hist_sim(small.hist, big.hist) > 0.6)
+                n = small.dup_rounds.get(big.tid, 0) + 1 if same else 0
+                small.dup_rounds[big.tid] = n
+                if n >= 3:
+                    pending.append((small, big))
+        for small, big in pending:
+            if small not in self.active or big not in self.active:
+                continue
+            keep, drop = (small, big) if (small.frames, -small.tid) >= (big.frames, -big.tid) else (big, small)
+            keep.box = list(big.box)
+            keep.gender.absorb(drop.gender)
+            keep.first_frame = min(keep.first_frame, drop.first_frame)
+            self.active.remove(drop)
+            self.all.pop(drop.tid, None)
+            self.aliases[drop.tid] = keep.tid
+            for k, v in self.aliases.items():
+                if v == drop.tid:
+                    self.aliases[k] = keep.tid
+
+    def resolve(self, tid: int) -> int:
+        return self.aliases.get(tid, tid)
 
     def visible(self) -> list[PersonTrack]:
         """Tracks considered on screen this frame (recently matched)."""
@@ -155,6 +195,10 @@ class PersonTracker:
                     crop = _thumb(frame, t.box)
                     if crop is not None:
                         t.thumb, t.thumb_quality = crop, quality
+
+
+def _area(box) -> float:
+    return max(0.0, box[2] - box[0]) * max(0.0, box[3] - box[1])
 
 
 def _thumb(frame: np.ndarray, box: list[float]) -> Optional[bytes]:

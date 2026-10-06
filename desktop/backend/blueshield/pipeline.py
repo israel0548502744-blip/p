@@ -58,7 +58,7 @@ POLICIES = ("censor", "keep")
 class CensorSettings:
     color: str = "#1E4DFF"
     sensitivity: int = 60  # 0..100
-    softness: int = 35  # 0..100
+    softness: int = 20  # 0..100
     aggressive: bool = False
     animated: bool = False
     include_face: bool = False
@@ -190,6 +190,7 @@ class Analysis:
     people: dict[int, PersonTrack]
     total: int
     elapsed: float = 0.0
+    aliases: dict[int, int] = field(default_factory=dict)  # merged duplicate tid -> surviving tid
 
     def close(self) -> None:
         try:
@@ -299,7 +300,8 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
     faces = BoxTracker(max_misses=2, smooth=0.6)  # face boxes, only used to keep faces uncensored
     people = PersonTracker(max_misses=max(3, int(round(1.5 * info.fps / det_stride))),
                            gallery_frames=int(round(12 * info.fps)))
-    fuser = TemporalFuser(release=0.35 if not settings.aggressive else 0.2, on_threshold=skin_threshold)
+    fuser = TemporalFuser(memory=FUSER_MEMORY, lift=FUSER_LIFT_AGGRESSIVE if settings.aggressive else FUSER_LIFT,
+                          on_threshold=skin_threshold)
     last_cls: dict[int, int] = {}
     state = {"prev_small": None, "last_skin": None, "since_seg": 10 ** 9, "analyzed": 0, "face_map": None,
              "last_person": None}
@@ -426,18 +428,27 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
         raise media.MediaError("Could not decode any frames from this video.")
     tracks = {tid: t for tid, t in people.all.items() if t.frames > 0}
     return Analysis(info=info, settings=settings, store=store, records=records, people=tracks,
-                    total=state["analyzed"], elapsed=meter.elapsed)
+                    total=state["analyzed"], elapsed=meter.elapsed, aliases=dict(people.aliases))
 
 
 # ═══════════════════════════════════ rendering ═══════════════════════════════════
 
 def decisions_for(analysis: Analysis, settings: CensorSettings, overrides: dict[int, str]) -> dict[int, bool]:
     th = settings.gender_threshold / 100.0
-    return {tid: censor_decision(t.gender.label(th), settings.target, settings.uncertain_policy,
-                                 overrides.get(tid, "auto"))
-            for tid, t in analysis.people.items()}
+    out = {tid: censor_decision(t.gender.label(th), settings.target, settings.uncertain_policy,
+                                overrides.get(tid, "auto"))
+           for tid, t in analysis.people.items()}
+    # frames recorded before two duplicate tracks were merged still carry the merged-away id
+    for old, new in analysis.aliases.items():
+        if new in out:
+            out[old] = out[new]
+    return out
 
 
+# temporal fusion: how much the motion-compensated past may lift the current skin score (see TemporalFuser)
+FUSER_MEMORY = 0.4
+FUSER_LIFT = 0.35
+FUSER_LIFT_AGGRESSIVE = 0.5
 UNASSIGNED_MIN_AREA = 0.001  # fraction of the frame; smaller unattributed blobs are noise, not people
 
 

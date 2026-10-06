@@ -217,6 +217,13 @@ data class Box(val x1: Float, val y1: Float, val x2: Float, val y2: Float) {
     fun scale(sx: Float, sy: Float) = Box(x1 * sx, y1 * sy, x2 * sx, y2 * sy)
     fun lerp(to: Box, a: Float) = Box(x1 + (to.x1 - x1) * a, y1 + (to.y1 - y1) * a, x2 + (to.x2 - x2) * a, y2 + (to.y2 - y2) * a)
 
+    /** Fraction of this box's area that lies inside [o]. */
+    fun containedIn(o: Box): Float {
+        val ix = max(0f, min(x2, o.x2) - max(x1, o.x1))
+        val iy = max(0f, min(y2, o.y2) - max(y1, o.y1))
+        return ix * iy / max(1e-6f, w * h)
+    }
+
     fun iou(o: Box): Float {
         val ix = max(0f, min(x2, o.x2) - max(x1, o.x1))
         val iy = max(0f, min(y2, o.y2) - max(y1, o.y1))
