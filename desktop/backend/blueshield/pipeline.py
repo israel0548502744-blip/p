@@ -478,6 +478,7 @@ PERSON_GATE = 0.3  # segmenter "person" probability a skin pixel must (nearly) t
 MIN_BODY_AREA = 0.02  # away from every person box, a smaller "person" blob is an object (a mug, a lamp)
 REFINE_RADIUS = 0.004  # guided-filter window, fraction of (width + height)
 REFINE_EPS = 0.004
+GATE_PAD = 0.3  # person_gate: skin counts within this much (box sizes) around a person's box
 REFINE_COLOR_BAND = 0.008  # band around the skin boundary decided by colour, fraction of the frame diagonal
 # per-person outlines (MobileSAM): see outlines.PersonMasks and shared/pipeline.json "person_masks"
 PM_VIDEO_SIZE = 512
@@ -510,7 +511,7 @@ def person_gate(person: np.ndarray, boxes: list, aw: int, ah: int) -> np.ndarray
     big[0] = False
     in_box = np.zeros(on.shape, bool)
     for (x1, y1, x2, y2) in boxes:
-        px, py = 0.15 * (x2 - x1), 0.15 * (y2 - y1)
+        px, py = GATE_PAD * (x2 - x1), GATE_PAD * (y2 - y1)  # an arm or leg reaching out of a tight box
         in_box[max(0, int(y1 - py)):int(y2 + py) + 1, max(0, int(x1 - px)):int(x2 + px) + 1] = True
     keep = ((labels > 0) & (in_box | big[labels])).astype(np.uint8)
     r = max(2, int(round(0.004 * (aw + ah))))

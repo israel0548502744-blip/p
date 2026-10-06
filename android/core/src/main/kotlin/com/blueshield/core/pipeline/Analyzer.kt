@@ -379,8 +379,9 @@ class Analyzer(
         val minBody = spec.thresholds.minBodyArea * n
         val inBox = BooleanArray(n)
         for (b in boxes) {
-            val px = 0.15f * b.w
-            val py = 0.15f * b.h
+            // generous: an arm or a leg reaching out of a tight detector box is still that person's
+            val px = GATE_PAD * b.w
+            val py = GATE_PAD * b.h
             val x0 = max(0, (b.x1 - px).toInt())
             val x1 = minOf(width, (b.x2 + px).toInt() + 1)
             val y0 = max(0, (b.y1 - py).toInt())
@@ -399,6 +400,7 @@ class Analyzer(
 
     companion object {
         val FACE_LABELS = setOf("FACE_FEMALE", "FACE_MALE")
+        const val GATE_PAD = 0.3f
         /** A low neckline seen in this many frames counts for the rest of the shot (no flicker on head turns). */
         const val CLEAVAGE_STICKY_FRAMES = 3
 
