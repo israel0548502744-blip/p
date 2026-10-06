@@ -65,22 +65,22 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
         val cover = BooleanArray(w * h)
         var any = false
         for (box in boxes) {
-            val side = Math.round(max(box.w, box.h) * roi.sideScale)
-            if (side < roi.minSidePx) continue
-            // the crop would be the whole frame again: a fresh full pass already is exactly that
-            if (baseIsFresh && side >= roi.maxFrameRatio * max(w, h)) continue
-            val a = Math.round(box.cx - side / 2f)
-            val b = Math.round(box.cy - side / 2f)
             val px = roi.pastePad * box.w
             val py = roi.pastePad * box.h
-            val rx1 = max(max(0, (box.x1 - px).toInt()), a)
-            val ry1 = max(max(0, (box.y1 - py).toInt()), b)
-            val rx2 = min(min(w, (box.x2 + px).toInt() + 1), a + side)
-            val ry2 = min(min(h, (box.y2 + py).toInt() + 1), b + side)
-            if (rx2 <= rx1 || ry2 <= ry1) continue
-            run(img.crop(a, b, side, side), includeFace).into(roiOut, a, b, rx1, ry1, rx2, ry2, max = true)
-            for (y in ry1 until ry2) java.util.Arrays.fill(cover, y * w + rx1, y * w + rx2, true)
-            any = true
+            for ((k, c) in roiCrops(box, roi.sideScale).withIndex()) {
+                val (a, b, side) = c
+                if (side < roi.minSidePx) continue
+                // the whole-person crop would be the whole frame again: a fresh full pass already is exactly that
+                if (k == 0 && baseIsFresh && side >= roi.maxFrameRatio * max(w, h)) continue
+                val rx1 = max(max(0, (box.x1 - px).toInt()), a)
+                val ry1 = max(max(0, (box.y1 - py).toInt()), b)
+                val rx2 = min(min(w, (box.x2 + px).toInt() + 1), a + side)
+                val ry2 = min(min(h, (box.y2 + py).toInt() + 1), b + side)
+                if (rx2 <= rx1 || ry2 <= ry1) continue
+                run(img.crop(a, b, side, side), includeFace).into(roiOut, a, b, rx1, ry1, rx2, ry2, max = true)
+                for (y in ry1 until ry2) java.util.Arrays.fill(cover, y * w + rx1, y * w + rx2, true)
+                any = true
+            }
         }
         if (!any) return base
         val skin = base.skin.copy()
@@ -127,6 +127,32 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
 
     companion object {
         const val SIZE = 256
+        /** Extra crops along a tall (standing) or wide (lying / arms out) person. */
+        const val MAX_TILES = 3
+
+        /**
+         * Square crops (left, top, side) that segment one person: the whole person, plus — for a tall or wide box —
+         * up to [MAX_TILES] overlapping squares along the long side. A standing person's whole-body crop shrinks
+         * them to 256 px; the tiles see torso and arms about twice as large (a belly-dance costume's bare midriff
+         * was missed otherwise). Same as the desktop `roi_crops`.
+         */
+        fun roiCrops(box: Box, sideScale: Float): List<Triple<Int, Int, Int>> {
+            val side = Math.round(max(box.w, box.h) * sideScale)
+            val out = arrayListOf(Triple(Math.round(box.cx - side / 2f), Math.round(box.cy - side / 2f), side))
+            val long = max(box.w, box.h)
+            val short = min(box.w, box.h)
+            if (short > 0f && long > 1.3f * short) {
+                val n = min(MAX_TILES, max(2, ceil(long / (short * 1.25f)).toInt()))
+                val t = Math.round(max(short * 1.25f, long / n * 1.2f))
+                for (i in 0 until n) {
+                    val f = (i + 0.5f) / n
+                    val tx = if (box.h >= box.w) box.cx else box.x1 + f * box.w
+                    val ty = if (box.h >= box.w) box.y1 + f * box.h else box.cy
+                    out += Triple(Math.round(tx - t / 2f), Math.round(ty - t / 2f), t)
+                }
+            }
+            return out
+        }
     }
 }
 

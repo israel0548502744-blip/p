@@ -47,8 +47,8 @@ def test_mask_constants_match():
 def test_gender_constants_match():
     g = SPEC["gender"]
     assert gender.MAX_LOGIT == g["max_logit"] and gender.MIN_VOTES == g["min_votes"] and gender.MIN_WEIGHT == g["min_weight"]
-    assert (gender.MALE_MIN_CONFIDENCE, gender.ADULT_MIN_AGE, gender.MIN_AGE_VOTES) == (
-        g["male_min_confidence"], g["adult_min_age"], g["min_age_votes"])
+    assert (gender.MALE_MIN_CONFIDENCE, gender.CHILD_MAX_AGE, gender.MIN_AGE_VOTES) == (
+        g["male_min_confidence"], g["child_max_age"], g["min_age_votes"])
     from blueshield.detectors import FACE_EXCLUSION
     assert FACE_EXCLUSION == SPEC["thresholds"]["face_exclusion"]
     est = gender.GenderEstimate()

@@ -39,8 +39,8 @@
     "votes_before_slowdown": 12,
     "reclassify_seconds": 1.0,
     "male_min_confidence": 0.8,
-    "adult_min_age": 18,
-    "min_age_votes": 4
+    "child_max_age": 7,
+    "min_age_votes": 6
   },
   "tracking": {
     "fuser_memory": 0.4,

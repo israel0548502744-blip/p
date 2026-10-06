@@ -101,7 +101,8 @@ data class PipelineSpec(
         @SerialName("votes_before_slowdown") val votesBeforeSlowdown: Int,
         @SerialName("reclassify_seconds") val reclassifySeconds: Double,
         @SerialName("male_min_confidence") val maleMinConfidence: Double,
-        @SerialName("adult_min_age") val adultMinAge: Double,
+        /** Median estimated age below which someone is a (clearly small) child — see GenderEstimate. */
+        @SerialName("child_max_age") val childMaxAge: Double,
         @SerialName("min_age_votes") val minAgeVotes: Int,
     )
 
@@ -123,7 +124,7 @@ data class PipelineSpec(
 
     /** A fresh per-person gender/age evidence accumulator with the shared constants. */
     fun newGenderEstimate() = com.blueshield.core.gender.GenderEstimate(
-        gender.voteFactor, gender.maxLogit, gender.minVotes, gender.minWeight, gender.maleMinConfidence, gender.adultMinAge, gender.minAgeVotes,
+        gender.voteFactor, gender.maxLogit, gender.minVotes, gender.minWeight, gender.maleMinConfidence, gender.childMaxAge, gender.minAgeVotes,
     )
 
     companion object {

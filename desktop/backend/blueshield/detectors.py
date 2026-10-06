@@ -23,6 +23,33 @@ CAT_BACKGROUND, CAT_HAIR, CAT_BODY_SKIN, CAT_FACE_SKIN, CAT_CLOTHES, CAT_OTHERS 
 FACE_EXCLUSION = 0.35  # facial-skin probability above which a pixel is never treated as body skin
 
 
+ROI_MAX_TILES = 3  # extra crops along a tall (standing) or wide (lying / arms out) person
+
+
+def roi_crops(box, side_scale: float = 1.15) -> list[tuple[int, int, int]]:
+    """Square crops (left, top, side) that segment one person: the whole person, plus — for a tall or wide
+    box — up to ROI_MAX_TILES overlapping squares along the long side. A standing person's whole-body crop
+    shrinks them to 256 px; the tiles see the torso and arms about twice as large (a belly-dance costume's
+    bare midriff was missed otherwise). Same as the Android ``SkinSegmenter.roiCrops``."""
+    x1, y1, x2, y2 = box
+    bw, bh = x2 - x1, y2 - y1
+    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+    side = int(round(max(bw, bh) * side_scale))
+    out = [(int(round(cx - side / 2)), int(round(cy - side / 2)), side)]
+    long_, short = max(bw, bh), min(bw, bh)
+    if short > 0 and long_ > 1.3 * short:
+        n = min(ROI_MAX_TILES, max(2, int(np.ceil(long_ / (short * 1.25)))))
+        t = int(round(max(short * 1.25, long_ / n * 1.2)))
+        for i in range(n):
+            f = (i + 0.5) / n
+            if bh >= bw:
+                tx, ty = cx, y1 + f * bh
+            else:
+                tx, ty = x1 + f * bw, cy
+            out.append((int(round(tx - t / 2)), int(round(ty - t / 2)), t))
+    return out
+
+
 # per-person crops: skipped when they'd be (almost) the whole frame anyway; whole-frame pass every Nth detection round
 ROI_MAX_FRAME_RATIO = 0.9
 ROI_FULL_EVERY_DET = 2
@@ -112,32 +139,30 @@ class SkinSegmenter:
         rgb_full = None
         for (x1, y1, x2, y2) in boxes:
             bw, bh = x2 - x1, y2 - y1
-            side = int(round(max(bw, bh) * side_scale))
-            if side < min_side:
-                continue
-            if base_is_fresh and side >= max_frame_ratio * max(h, w):
-                continue  # the crop would be the whole frame again: the fresh full pass already is that
-            cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-            a, b = int(round(cx - side / 2)), int(round(cy - side / 2))
-            # edge-replicated crop (the box may reach past the frame)
-            pad = (max(0, -b), max(0, b + side - h), max(0, -a), max(0, a + side - w))
-            crop = bgr[max(0, b):min(h, b + side), max(0, a):min(w, a + side)]
-            if crop.size == 0:
-                continue
-            crop = cv2.copyMakeBorder(crop, *pad, cv2.BORDER_REPLICATE)
-            s_, p_, f_ = self._masks(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB), include_face)
-            # region of the frame this person owns: their padded box, intersected with the crop
             px, py = paste_pad * bw, paste_pad * bh
-            rx1, ry1 = max(0, int(x1 - px), a), max(0, int(y1 - py), b)
-            rx2, ry2 = min(w, int(x2 + px) + 1, a + side), min(h, int(y2 + py) + 1, b + side)
-            if rx2 <= rx1 or ry2 <= ry1:
-                continue
-            src = (slice(ry1 - b, ry2 - b), slice(rx1 - a, rx2 - a))
-            dst = (slice(ry1, ry2), slice(rx1, rx2))
-            np.maximum(roi_skin[dst], s_[src], out=roi_skin[dst])
-            np.maximum(roi_person[dst], p_[src], out=roi_person[dst])
-            np.maximum(roi_face[dst], f_[src], out=roi_face[dst])
-            cover[dst] = True
+            for k, (a, b, side) in enumerate(roi_crops((x1, y1, x2, y2), side_scale)):
+                if side < min_side:
+                    continue
+                if k == 0 and base_is_fresh and side >= max_frame_ratio * max(h, w):
+                    continue  # the whole-person crop would be the whole frame again: the fresh full pass already is that
+                # edge-replicated crop (the box may reach past the frame)
+                pad = (max(0, -b), max(0, b + side - h), max(0, -a), max(0, a + side - w))
+                crop = bgr[max(0, b):min(h, b + side), max(0, a):min(w, a + side)]
+                if crop.size == 0:
+                    continue
+                crop = cv2.copyMakeBorder(crop, *pad, cv2.BORDER_REPLICATE)
+                s_, p_, f_ = self._masks(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB), include_face)
+                # region of the frame this person owns: their padded box, intersected with the crop
+                rx1, ry1 = max(0, int(x1 - px), a), max(0, int(y1 - py), b)
+                rx2, ry2 = min(w, int(x2 + px) + 1, a + side), min(h, int(y2 + py) + 1, b + side)
+                if rx2 <= rx1 or ry2 <= ry1:
+                    continue
+                src = (slice(ry1 - b, ry2 - b), slice(rx1 - a, rx2 - a))
+                dst = (slice(ry1, ry2), slice(rx1, rx2))
+                np.maximum(roi_skin[dst], s_[src], out=roi_skin[dst])
+                np.maximum(roi_person[dst], p_[src], out=roi_person[dst])
+                np.maximum(roi_face[dst], f_[src], out=roi_face[dst])
+                cover[dst] = True
         skin[cover], person[cover], face[cover] = roi_skin[cover], roi_person[cover], roi_face[cover]
         return SegResult(skin=skin, person=person, face=face)
 

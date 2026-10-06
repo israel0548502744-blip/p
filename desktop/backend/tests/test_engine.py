@@ -154,13 +154,13 @@ def test_children_are_not_censored_when_only_women_are():
     g = GenderEstimate()
     for _ in range(8):
         g.add(0.1)
-        g.add_age(9)
+        g.add_age(5)
     assert g.is_child
     assert not censor_decision(g.label(0.7), "female", "censor", "auto", g.is_child)
     assert censor_decision(g.label(0.7), "everyone", "censor", "auto", g.is_child)
     few = GenderEstimate()
-    for _ in range(3):
-        few.add_age(8)
+    for _ in range(5):
+        few.add_age(4)
     assert not few.is_child  # too little evidence: treated as an adult (the safe side)
 
 

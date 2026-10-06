@@ -254,16 +254,17 @@ class CoreTest {
 
     @Test fun childrenAreNotCensoredWhenOnlyWomenAre() {
         val g = spec.newGenderEstimate()
-        repeat(8) { g.add(0.1f); g.addAge(9f) }
+        repeat(8) { g.add(0.1f); g.addAge(5f) }
         assertTrue(g.isChild)
         val F = GenderEstimate.Label.FEMALE
         assertFalse(censorDecision(g.label(0.7), "female", "censor", Override.AUTO, g.isChild))
         assertTrue(censorDecision(g.label(0.7), "everyone", "censor", Override.AUTO, g.isChild))
         assertTrue(censorDecision(F, "female", "censor", Override.CENSOR, child = true))
         // too few age looks: treated as an adult (the safe side)
-        val few = spec.newGenderEstimate().apply { repeat(spec.gender.minAgeVotes - 1) { addAge(8f) } }
+        val few = spec.newGenderEstimate().apply { repeat(spec.gender.minAgeVotes - 1) { addAge(4f) } }
         assertFalse(few.isChild)
-        val adult = spec.newGenderEstimate().apply { listOf(16f, 40f, 45f, 50f, 38f).forEach { addAge(it) } }
+        // young-looking women are often estimated at 10–16: still adults
+        val adult = spec.newGenderEstimate().apply { listOf(11f, 12f, 14f, 16f, 13f, 10f).forEach { addAge(it) } }
         assertFalse(adult.isChild)
     }
 

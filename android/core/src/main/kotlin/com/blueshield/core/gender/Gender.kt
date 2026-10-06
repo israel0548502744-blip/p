@@ -19,10 +19,14 @@ class GenderEstimate(
     private val minWeight: Double = 0.0,
     /** Calling someone male needs at least this confidence, whatever the user's threshold (missing a woman costs more). */
     private val maleMinConfidence: Double = 0.0,
-    /** Median estimated age below this = a child (not censored when only women are). */
-    private val adultMinAge: Double = 18.0,
+    /**
+     * Median estimated age below this = a child (not censored when only women are). Only clearly small children:
+     * the face model puts young adult women anywhere from ~10 to ~16, so a higher cut-off would leave real women
+     * uncensored. Older girls count as adults (the safe side); "Don't" in the people list keeps them.
+     */
+    private val childMaxAge: Double = 7.0,
     /** Age observations needed before a person can be called a child; until then they count as adults. */
-    private val minAgeVotes: Int = 4,
+    private val minAgeVotes: Int = 6,
 ) {
     var logit = 0.0
         private set
@@ -49,7 +53,7 @@ class GenderEstimate(
         }
 
     /** Clearly a child: enough age observations with a median below the adult age. Unknown age counts as adult. */
-    val isChild: Boolean get() = ages.size >= minAgeVotes && (ageMedian ?: Double.MAX_VALUE) < adultMinAge
+    val isChild: Boolean get() = ages.size >= minAgeVotes && (ageMedian ?: Double.MAX_VALUE) < childMaxAge
 
     fun add(pMale: Float, weight: Float = 1f) {
         val p = pMale.toDouble().coerceIn(0.02, 0.98)

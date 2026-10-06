@@ -40,8 +40,11 @@ MAX_LOGIT = 6.0
 MIN_VOTES = 6  # face observations needed before calling anyone female or male
 MIN_WEIGHT = 3.0  # …and their summed quality weight (small / low-confidence faces count less)
 MALE_MIN_CONFIDENCE = 0.8  # calling someone male needs at least this, whatever the threshold (missing a woman costs more)
-ADULT_MIN_AGE = 18.0  # median estimated age below this = a child (not censored when only women are)
-MIN_AGE_VOTES = 4  # age observations needed before anyone can be called a child; until then: adult
+# A child (not censored when only women are) only when the age estimate clearly says "small child": the face
+# model puts young adult women anywhere from ~10 to ~16, so a higher cut-off would leave real women uncensored.
+# Older girls are therefore treated as adults (the safe side) — one tap on "Don't" in the people list keeps them.
+CHILD_MAX_AGE = 7.0
+MIN_AGE_VOTES = 6  # age observations needed before anyone can be called a child; until then: adult
 FACE_INPUT = 128
 GENDER_INPUT = 224
 AGE_INPUT = 112
@@ -66,7 +69,7 @@ class GenderEstimate:
     @property
     def is_child(self) -> bool:
         """Clearly a child: enough age observations with a median below the adult age (unknown age = adult)."""
-        return len(self.ages) >= MIN_AGE_VOTES and self.age_median < ADULT_MIN_AGE
+        return len(self.ages) >= MIN_AGE_VOTES and self.age_median < CHILD_MAX_AGE
 
     def add(self, p_male: float, weight: float = 1.0) -> None:
         p = float(np.clip(p_male, 0.02, 0.98))

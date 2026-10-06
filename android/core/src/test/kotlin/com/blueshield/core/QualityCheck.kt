@@ -38,7 +38,7 @@ class QualityCheck {
         val (vw, vh, fps) = PipelineIntegrationTest.probe(inFile)
         val (aw, ah) = Analyzer.scaledSize(vw, vh, spec.analysisMaxSide)
         // -Dblueshield.nearest=true: sample frames exactly like the Android FrameExtractor (nearest pixel)
-        val frames = if (System.getProperty("blueshield.nearest") == "true") {
+        var frames = if (System.getProperty("blueshield.nearest") == "true") {
             PipelineIntegrationTest.decode(inFile, vw, vh).map { full ->
                 RgbImage(aw, ah).also { o ->
                     for (y in 0 until ah) for (x in 0 until aw) {
@@ -51,6 +51,8 @@ class QualityCheck {
         } else PipelineIntegrationTest.decode(inFile, aw, ah)
         val from = parts.getOrNull(2)?.toIntOrNull() ?: 0
         val to = min(frames.size, parts.getOrNull(3)?.toIntOrNull() ?: frames.size)
+        // only the measured range is analysed (keeps long clips quick)
+        if (to < frames.size) frames = frames.subList(0, to)
 
         val oracle = oracle(models, frames, File("$prefix.oracle.bin"), spec)
 
@@ -137,7 +139,7 @@ class QualityCheck {
         println("QUALITY ${inFile.name} frames $from..$to: recall ${"%.1f".format(100.0 * hit / max(1, hit + miss))} %, " +
             "leak ${"%.1f".format(100.0 * leak / max(1, on))} %, flicker ${"%.1f".format(100.0 * flick / max(1, union))} %, " +
             "analysis ${"%.1f".format(frames.size / secs)} fps; people " + a.summaries(settings, emptyMap()).joinToString {
-                "#${it.id} ${it.gender} p=${"%.2f".format(it.pFemale)} v=${it.votes} ${it.frames}f [${it.startSec}-${it.endSec}] censored=${it.censored}" } + " aliases=${a.aliases}")
+                "#${it.id} ${it.gender} p=${"%.2f".format(it.pFemale)} v=${it.votes} age=${it.age?.let { a -> "%.0f".format(a) }} child=${it.child} ${it.frames}f censored=${it.censored}" } + " aliases=${a.aliases}")
         a.close()
         models.close()
     }
