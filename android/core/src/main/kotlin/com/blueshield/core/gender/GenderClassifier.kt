@@ -24,7 +24,7 @@ class GenderClassifier(
     private val ageGender: AgeGenderModel? = null,
 ) {
     /** One look at a face: combined P(male), vote weight, estimated age (NaN when unknown). */
-    data class Observation(val pMale: Float, val weight: Float, val age: Float)
+    data class Observation(val pMale: Float, val weight: Float, val age: Float, val face: Box? = null)
 
     /**
      * Returns an [Observation] or null when there is no usable face. With the second model, P(male) is the
@@ -32,28 +32,47 @@ class GenderClassifier(
      * FaceRes alone often calls male), so the ensemble is much steadier than either.
      */
     fun classify(frame: RgbImage, box: Box, faceMap: FloatMask?): Observation? {
-        val crops = ArrayList<Pair<RgbImage, Float>>()
+        val crops = ArrayList<Crop>()
         val head = if (faceMap != null) headCrop(frame, box, faceMap) else null
         head?.let { crops += it }
         topCrop(frame, box)?.let { crops += it }
         upperBodyCrop(frame, box)?.let { crops += it }
         for ((n, pair) in crops.withIndex()) {
-            val (crop, scale) = pair
+            val (crop, scale, ox, oy) = pair
             val found = faces.detect(crop, minFaceScore).filter { it.box.cy < 0.75f * crop.height }
             val face = pickFace(found, crop.width.toFloat(), centred = n == 0 && head != null) ?: continue
             val facePx = face.box.w * scale
             if (facePx < minFacePx) continue
             val weight = face.score * min(1f, facePx / 48f)
+            val inFrame = Box(ox + face.box.x1 * scale, oy + face.box.y1 * scale, ox + face.box.x2 * scale, oy + face.box.y2 * scale)
             val aligned = model.align(crop, face)
             val p1 = model.pMale(aligned)
-            val second = ageGender?.predict(aligned) ?: return Observation(p1, weight, Float.NaN)
-            return Observation(ensemble(p1, second.pMale), weight, second.age)
+            val second = ageGender?.predict(aligned) ?: return Observation(p1, weight, Float.NaN, inFrame)
+            return Observation(ensemble(p1, second.pMale), weight, second.age, inFrame)
         }
         return null
     }
 
+    /** A square crop resized to [CROP]: crop pixel × [scale] + ([x], [y]) = frame pixel. */
+    data class Crop(val image: RgbImage, val scale: Float, val x: Float, val y: Float)
+
     companion object {
         const val CROP = 256
+
+        /**
+         * How much [face] looks like the head of [box]: 0 at the top centre, growing downwards and sideways.
+         * A face that is someone else's (a child in front of an adult) scores better in its owner's box.
+         */
+        fun headScore(face: Box, box: Box): Float =
+            (face.cy - box.y1) / max(1f, box.h) + 0.5f * abs(face.cx - box.cx) / max(1f, box.w)
+
+        /** True unless the face centre lies in another box that it fits clearly better as a head. */
+        fun ownsFace(face: Box, own: Box, others: List<Box>): Boolean {
+            val mine = headScore(face, own)
+            return others.none { o ->
+                face.cx in o.x1..o.x2 && face.cy in o.y1..o.y2 && headScore(face, o) + 0.08f < mine
+            }
+        }
 
         /**
          * The face that belongs to the person: a person's own head is at the top of their box, so among the
@@ -74,7 +93,7 @@ class GenderClassifier(
         }
 
         /** Square crop around the largest facial-skin blob in the top 60 % of the person box. */
-        fun headCrop(frame: RgbImage, box: Box, faceMap: FloatMask): Pair<RgbImage, Float>? {
+        fun headCrop(frame: RgbImage, box: Box, faceMap: FloatMask): Crop? {
             val x0 = max(0, box.x1.roundToInt())
             val y0 = max(0, box.y1.roundToInt())
             val x1 = min(frame.width, box.x2.roundToInt())
@@ -108,22 +127,26 @@ class GenderClassifier(
             val cx = x0 + minX[k] + fw / 2f
             val cy = y0 + minY[k] + fh / 2f
             val side = max(fw, fh) * 2.4f
-            val crop = frame.crop((cx - side / 2).roundToInt(), (cy - side / 2).roundToInt(), side.roundToInt(), side.roundToInt())
-            return crop.resize(CROP, CROP) to side / CROP
+            val x = (cx - side / 2).roundToInt()
+            val y = (cy - side / 2).roundToInt()
+            val crop = frame.crop(x, y, side.roundToInt(), side.roundToInt())
+            return Crop(crop.resize(CROP, CROP), side.roundToInt().toFloat() / CROP, x.toFloat(), y.toFloat())
         }
 
         /** Head-sized square at the top centre of a tall (full-body) box — faces of distant, standing people. */
-        fun topCrop(frame: RgbImage, box: Box): Pair<RgbImage, Float>? {
+        fun topCrop(frame: RgbImage, box: Box): Crop? {
             if (box.h < 2.2f * box.w * 0.6f || box.h < 40f) return null
             val side = min(box.w, 0.36f * box.h)
             if (side < 12f) return null
             val cy = box.y1 + 0.42f * side
-            val crop = frame.crop((box.cx - side / 2).roundToInt(), (cy - side / 2).roundToInt(), side.roundToInt(), side.roundToInt())
-            return crop.resize(CROP, CROP) to side / CROP
+            val x = (box.cx - side / 2).roundToInt()
+            val y = (cy - side / 2).roundToInt()
+            val crop = frame.crop(x, y, side.roundToInt(), side.roundToInt())
+            return Crop(crop.resize(CROP, CROP), side.roundToInt().toFloat() / CROP, x.toFloat(), y.toFloat())
         }
 
         /** Square head/torso crop (padded with edge pixels), for when no facial-skin blob was found. */
-        fun upperBodyCrop(frame: RgbImage, box: Box): Pair<RgbImage, Float>? {
+        fun upperBodyCrop(frame: RgbImage, box: Box): Crop? {
             if (box.w < 12 || box.h < 24) return null
             val side = max(box.w * 1.1f, min(box.h, box.w * 1.6f) * 0.75f)
             val top = box.y1 - 0.05f * box.h
@@ -133,7 +156,7 @@ class GenderClassifier(
             val d = min(frame.height.toFloat(), top + side).toInt()
             if (c - a < 12 || d - b < 12) return null
             val s = max(c - a, d - b)
-            return frame.crop(a, b, s, s).resize(CROP, CROP) to s.toFloat() / CROP
+            return Crop(frame.crop(a, b, s, s).resize(CROP, CROP), s.toFloat() / CROP, a.toFloat(), b.toFloat())
         }
     }
 }

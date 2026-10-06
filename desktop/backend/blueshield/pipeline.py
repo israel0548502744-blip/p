@@ -35,7 +35,7 @@ from .censor import BlueCensor, hex_to_bgr
 from .config import ANALYSIS_MAX_SIDE, MASK_MAX_SIDE, WORK_DIR
 from .detectors import (ROI_FULL_EVERY_DET, SegResult, AGGRESSIVE_LABELS, FACE_LABELS, SENSITIVE_LABELS, SensitiveRegionDetector, SkinSegmenter,
                         color_skin_probability, skin_color_plausible)
-from .gender import GenderClassifier, censor_decision
+from .gender import GenderClassifier, censor_decision, owns_face
 from .maskstore import MaskStore
 from .people import PersonTrack, PersonTracker
 from .persons import PersonDetector
@@ -376,15 +376,14 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
             skin_bin = fuser.update(state["last_skin"], flow, fresh)
             if k in nude:
                 # ── stage 2: gender classification, only where it's still useful ──
-                for t in people.visible():
-                    if t.misses:
-                        continue
+                seen = [t for t in people.visible() if not t.misses]
+                for t in seen:
                     need = t.gender.votes < 12 or idx - last_cls.get(t.tid, -10 ** 9) >= reclassify_every
                     if need:
                         res = gender_model.classify_person(frame, tuple(t.box), state["face_map"])
                         last_cls[t.tid] = idx
-                        if res is not None:
-                            p_male, weight, age = res
+                        if res is not None and owns_face(res[3], tuple(t.box), [tuple(o.box) for o in seen if o is not t]):
+                            p_male, weight, age, _ = res
                             t.gender.add(p_male, weight)
                             t.gender.add_age(age)
             if not settings.include_face:

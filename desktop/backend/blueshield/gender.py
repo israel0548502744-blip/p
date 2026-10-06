@@ -261,8 +261,8 @@ class GenderClassifier:
         return None
 
     def classify_person(self, frame: np.ndarray, box: tuple[float, float, float, float],
-                        face_map: Optional[np.ndarray] = None, found=None) -> Optional[tuple[float, float, float]]:
-        """Return (P(male), vote weight, age) for the person in ``box``, or None if no usable face.
+                        face_map: Optional[np.ndarray] = None, found=None) -> Optional[tuple[float, float, float, tuple]]:
+        """Return (P(male), vote weight, age, face box in the frame) for the person in ``box``, or None if no usable face.
 
         P(male) averages the log-odds of both face models: their mistakes are largely independent (e.g. older
         women, whom FaceRes alone often calls male), so the ensemble is much steadier than either.
@@ -270,14 +270,30 @@ class GenderClassifier:
         found = found if found is not None else self.find_face(frame, box, face_map)
         if found is None:
             return None
-        crop, face, scale, _ = found
+        crop, face, scale, (ox, oy) = found
         face_px = (face.box[2] - face.box[0]) * scale
         if face_px < 14:
             return None  # too small to classify meaningfully
         weight = face.score * min(1.0, face_px / 48.0)
         aligned = self.aligned_face(crop, face)
         p2, age = self.age_gender(aligned)
-        return ensemble(self.p_male(aligned), p2), weight, age
+        fb = tuple(float(v) for v in (ox + face.box[0] * scale, oy + face.box[1] * scale, ox + face.box[2] * scale, oy + face.box[3] * scale))
+        return ensemble(self.p_male(aligned), p2), weight, age, fb
+
+
+def head_score(face, box) -> float:
+    """How much ``face`` looks like the head of ``box``: 0 at the top centre, growing downwards and sideways."""
+    fcx, fcy = (face[0] + face[2]) / 2, (face[1] + face[3]) / 2
+    bw, bh = max(1.0, box[2] - box[0]), max(1.0, box[3] - box[1])
+    return (fcy - box[1]) / bh + 0.5 * abs(fcx - (box[0] + box[2]) / 2) / bw
+
+
+def owns_face(face, own, others) -> bool:
+    """False when the face centre lies in another person's box that it fits clearly better as a head
+    (a child in front of her mother must not make the mother a child)."""
+    mine = head_score(face, own)
+    fcx, fcy = (face[0] + face[2]) / 2, (face[1] + face[3]) / 2
+    return not any(o[0] <= fcx <= o[2] and o[1] <= fcy <= o[3] and head_score(face, o) + 0.08 < mine for o in others)
 
 
 def ensemble(a: float, b: float) -> float:

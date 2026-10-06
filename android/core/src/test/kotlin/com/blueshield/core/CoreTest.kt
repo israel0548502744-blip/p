@@ -290,6 +290,13 @@ class CoreTest {
         val pick = com.blueshield.core.gender.GenderClassifier.Companion::pickFace
         assertEquals(adult, pick(listOf(childInFront, adult), 256f, false))
         assertEquals(childInFront, pick(listOf(childInFront, face(5f, 5f, 12f)), 256f, false)) // a tiny face far off is ignored
+        // A face lower in an adult's box that is the head of a smaller box in front belongs to that box.
+        val mother = Box(0f, 0f, 120f, 400f)
+        val child = Box(40f, 150f, 110f, 400f)
+        val childFace = Box(60f, 155f, 90f, 185f)
+        assertFalse(com.blueshield.core.gender.GenderClassifier.ownsFace(childFace, mother, listOf(child)))
+        assertTrue(com.blueshield.core.gender.GenderClassifier.ownsFace(childFace, child, listOf(mother)))
+        assertTrue(com.blueshield.core.gender.GenderClassifier.ownsFace(Box(40f, 5f, 80f, 45f), mother, listOf(child)))
         val centre = face(103f, 103f, 50f)
         assertEquals(centre, pick(listOf(adult, centre), 256f, true)) // a head crop is centred on its face
     }

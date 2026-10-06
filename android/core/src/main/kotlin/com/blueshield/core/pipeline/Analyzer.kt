@@ -241,12 +241,15 @@ class Analyzer(
             val skinBin = fuser.update(lastSkin!!, flow, fresh)
 
             nude[k]?.let {
-                for (t in people.visible()) {
-                    if (t.misses != 0) continue
+                val seen = people.visible().filter { it.misses == 0 }
+                for (t in seen) {
                     val need = t.gender.votes < spec.gender.votesBeforeSlowdown || idx - t.lastClassified >= reclassifyEvery
                     if (!need) continue
                     t.lastClassified = idx
                     classifier.classify(frame, t.box, faceMap)?.let { o ->
+                        // A face belongs to one person: skip it when it sits where another person's head is
+                        // (a child in front of her mother must not make the mother a child).
+                        if (o.face != null && !GenderClassifier.ownsFace(o.face, t.box, seen.filter { it !== t }.map { it.box })) return@let
                         t.gender.add(o.pMale, o.weight)
                         t.gender.addAge(o.age)
                     }
