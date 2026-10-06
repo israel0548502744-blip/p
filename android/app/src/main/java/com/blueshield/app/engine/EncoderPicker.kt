@@ -50,7 +50,7 @@ object EncoderPicker {
                 codec.release()
             }
         }
-        throw IllegalStateException("No H.264 encoder accepts a ${width}x$height video (${errors.joinToString("; ")})")
+        throw IllegalStateException("אין במכשיר מקודד H.264 שתומך בסרטון בגודל ${width}x$height (${errors.joinToString("; ")})")
     }
 
     private data class Candidate(val name: String, val width: Int, val height: Int, val bitrates: IntRange)

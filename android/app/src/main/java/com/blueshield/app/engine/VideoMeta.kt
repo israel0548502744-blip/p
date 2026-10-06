@@ -52,7 +52,7 @@ data class VideoMeta(
                     if (mime.startsWith("video/") && video == null) video = f
                     if (mime.startsWith("audio/") && audioMime == null) audioMime = mime
                 }
-                val v = video ?: throw IllegalArgumentException("This file has no video track.")
+                val v = video ?: throw IllegalArgumentException("בקובץ הזה אין ערוץ וידאו.")
                 val mmr = MediaMetadataRetriever()
                 var rotation = 0
                 var frames = 0

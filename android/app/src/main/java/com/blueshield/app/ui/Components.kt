@@ -67,7 +67,7 @@ fun Logo() {
         Spacer(Modifier.width(10.dp))
         Column {
             Text("BlueShield", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-            Text("Automatic video censorship", color = Palette.Ink300, fontSize = 11.sp)
+            Text("צנזור אוטומטי לסרטונים ולתמונות", color = Palette.Ink300, fontSize = 11.sp)
         }
     }
 }
@@ -81,7 +81,7 @@ fun PrivacyPill(modifier: Modifier = Modifier) {
     ) {
         Icon(Icons.Filled.Lock, null, tint = Palette.Emerald, modifier = Modifier.size(13.dp))
         Spacer(Modifier.width(6.dp))
-        Text("Your videos are processed on this device and are not uploaded.", color = Color(0xFFA7F3D0), fontSize = 11.5.sp)
+        Text("הסרטונים והתמונות מעובדים במכשיר הזה ולא מועלים לשום מקום.", color = Color(0xFFA7F3D0), fontSize = 11.5.sp)
     }
 }
 
@@ -165,6 +165,12 @@ fun Chip(label: String, value: String, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * Wraps numbers / Latin text in a left-to-right isolate so it keeps its order inside Hebrew (RTL)
+ * text, e.g. "1920×1080", "12 / 300" or "0:05–0:12" would otherwise be shown reversed.
+ */
+fun ltr(s: String): String = "\u2066$s\u2069"
+
 fun formatDuration(sec: Double): String {
     val s = sec.coerceAtLeast(0.0).toInt()
     val h = s / 3600
@@ -174,11 +180,11 @@ fun formatDuration(sec: Double): String {
 }
 
 fun formatEta(sec: Double?): String = when {
-    sec == null -> "Estimating…"
-    sec < 1 -> "Almost done"
-    sec < 60 -> "${sec.toInt() + 1}s left"
-    sec < 3600 -> "${(sec / 60).toInt()}m ${"%02d".format((sec % 60).toInt())}s left"
-    else -> "${(sec / 3600).toInt()}h ${((sec % 3600) / 60).toInt()}m left"
+    sec == null -> "מחשב…"
+    sec < 1 -> "כמעט סיימנו"
+    sec < 60 -> "עוד ${sec.toInt() + 1} שנ׳"
+    sec < 3600 -> "עוד ${(sec / 60).toInt()} דק׳ ${"%02d".format((sec % 60).toInt())} שנ׳"
+    else -> "עוד ${(sec / 3600).toInt()} שע׳ ${((sec % 3600) / 60).toInt()} דק׳"
 }
 
 fun formatBytes(n: Long): String {

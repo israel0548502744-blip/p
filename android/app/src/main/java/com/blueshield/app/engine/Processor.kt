@@ -179,7 +179,7 @@ class Processor(private val context: Context) {
                 analyzer.store.close()
                 return JobState(stage = JobState.Stage.CANCELLED).also(update)
             }
-            if (analyzer.processed == 0) error("Could not decode any frames from this video.")
+            if (analyzer.processed == 0) error("לא ניתן לפענח אף פריים מהסרטון.")
             analysis = analyzer.finish()
             // decoders deliver frames in presentation order; if this one didn't, fall back to counting
             analysedPts = pts.toLongArray().takeIf { arr -> (1 until arr.size).all { arr[it] > arr[it - 1] } } ?: LongArray(0)
@@ -344,9 +344,9 @@ class Processor(private val context: Context) {
                 stroke.color = if (censor) Color.rgb(40, 120, 255) else Color.GRAY
                 canvas.drawRect(t.box.x1, t.box.y1, t.box.x2, t.box.y2, stroke)
                 val label = when (t.gender.label(settings.threshold01)) {
-                    com.blueshield.core.gender.GenderEstimate.Label.FEMALE -> "Female ${(t.gender.confidence * 100).toInt()}%"
-                    com.blueshield.core.gender.GenderEstimate.Label.MALE -> "Male ${(t.gender.confidence * 100).toInt()}%"
-                    else -> "Unsure"
+                    com.blueshield.core.gender.GenderEstimate.Label.FEMALE -> "אישה ${(t.gender.confidence * 100).toInt()}%"
+                    com.blueshield.core.gender.GenderEstimate.Label.MALE -> "גבר ${(t.gender.confidence * 100).toInt()}%"
+                    else -> "לא בטוח"
                 }
                 canvas.drawText("#${t.id} $label", t.box.x1 + 6, maxOf(24f, t.box.y1 + 24f), text)
             }

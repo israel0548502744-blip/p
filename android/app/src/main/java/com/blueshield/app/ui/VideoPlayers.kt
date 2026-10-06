@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredWidth
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
@@ -34,6 +35,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -50,8 +52,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -141,16 +145,18 @@ fun ComparePlayer(original: Uri, censored: Uri, aspect: Float, mode: CompareMode
                 val full = maxWidth
                 VideoSurface(master, Modifier.fillMaxSize())
                 Box(Modifier.fillMaxHeight().width(full * wipe).clipToBounds()) {
-                    VideoSurface(follower, Modifier.requiredWidth(full).fillMaxHeight().align(Alignment.CenterStart))
+                    VideoSurface(follower, Modifier.wrapContentWidth(Alignment.Start, unbounded = true).requiredWidth(full).fillMaxHeight())
                 }
-                Label("ORIGINAL", false, Modifier.align(Alignment.TopStart).padding(10.dp))
-                Label("CENSORED", true, Modifier.align(Alignment.TopEnd).padding(10.dp))
+                Label("מקור", false, Modifier.align(Alignment.TopStart).padding(10.dp))
+                Label("מצונזר", true, Modifier.align(Alignment.TopEnd).padding(10.dp))
                 val density = LocalDensity.current
+                // the original is revealed from the start edge (the right in RTL), so a drag toward the end grows it
+                val towardEnd = if (LocalLayoutDirection.current == LayoutDirection.Rtl) -1f else 1f
                 Box(
                     Modifier.fillMaxHeight().width(44.dp).offset(x = full * wipe - 22.dp)
                         .pointerInput(Unit) {
                             detectHorizontalDragGestures { _, dx ->
-                                wipe = (wipe + dx / with(density) { full.toPx() }).coerceIn(0f, 1f)
+                                wipe = (wipe + towardEnd * dx / with(density) { full.toPx() }).coerceIn(0f, 1f)
                             }
                         },
                     contentAlignment = Alignment.Center,
@@ -164,18 +170,18 @@ fun ComparePlayer(original: Uri, censored: Uri, aspect: Float, mode: CompareMode
             CompareMode.SPLIT -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(Modifier.fillMaxWidth().aspectRatio(aspect).clip(RoundedCornerShape(14.dp)).background(Color.Black)) {
                     VideoSurface(follower, Modifier.fillMaxSize())
-                    Label("ORIGINAL", false, Modifier.align(Alignment.TopStart).padding(10.dp))
+                    Label("מקור", false, Modifier.align(Alignment.TopStart).padding(10.dp))
                 }
                 Box(Modifier.fillMaxWidth().aspectRatio(aspect).clip(RoundedCornerShape(14.dp)).background(Color.Black)) {
                     VideoSurface(master, Modifier.fillMaxSize())
-                    Label("CENSORED", true, Modifier.align(Alignment.TopEnd).padding(10.dp))
+                    Label("מצונזר", true, Modifier.align(Alignment.TopEnd).padding(10.dp))
                 }
             }
             CompareMode.CENSORED -> Box(Modifier.fillMaxWidth().aspectRatio(aspect).clip(RoundedCornerShape(14.dp)).background(Color.Black)) {
                 VideoSurface(master, Modifier.fillMaxSize())
                 // keep the follower attached (and paused in sync) without showing it
                 Box(Modifier.size(1.dp)) { VideoSurface(follower, Modifier.size(1.dp)) }
-                Label("CENSORED", true, Modifier.align(Alignment.TopEnd).padding(10.dp))
+                Label("מצונזר", true, Modifier.align(Alignment.TopEnd).padding(10.dp))
             }
         }
         Transport(master, timeline)
@@ -191,8 +197,14 @@ private fun Label(text: String, accent: Boolean, modifier: Modifier) {
     )
 }
 
+/** Media timelines are not mirrored in RTL: time runs left → right, play button on the left. */
 @Composable
 private fun Transport(player: ExoPlayer, timeline: List<Float>?) {
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) { TransportLtr(player, timeline) }
+}
+
+@Composable
+private fun TransportLtr(player: ExoPlayer, timeline: List<Float>?) {
     var pos by remember { mutableLongStateOf(0L) }
     var dur by remember { mutableLongStateOf(0L) }
     var playing by remember { mutableStateOf(false) }

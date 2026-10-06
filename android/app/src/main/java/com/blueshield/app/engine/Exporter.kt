@@ -24,9 +24,9 @@ object Exporter {
         }
         val collection = if (Build.VERSION.SDK_INT >= 29) MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
         else MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-        val uri = resolver.insert(collection, values) ?: error("Could not create a gallery entry")
+        val uri = resolver.insert(collection, values) ?: error("לא ניתן ליצור קובץ בגלריה")
         try {
-            resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out, 1 shl 20) } } ?: error("Could not open gallery file")
+            resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out, 1 shl 20) } } ?: error("לא ניתן לפתוח את הקובץ בגלריה")
             if (Build.VERSION.SDK_INT >= 29) {
                 values.clear()
                 values.put(MediaStore.Video.Media.IS_PENDING, 0)
@@ -52,9 +52,9 @@ object Exporter {
         }
         val collection = if (Build.VERSION.SDK_INT >= 29) MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
         else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-        val uri = resolver.insert(collection, values) ?: error("Could not create a gallery entry")
+        val uri = resolver.insert(collection, values) ?: error("לא ניתן ליצור קובץ בגלריה")
         try {
-            resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out, 1 shl 20) } } ?: error("Could not open gallery file")
+            resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out, 1 shl 20) } } ?: error("לא ניתן לפתוח את הקובץ בגלריה")
             if (Build.VERSION.SDK_INT >= 29) {
                 values.clear()
                 values.put(MediaStore.Images.Media.IS_PENDING, 0)

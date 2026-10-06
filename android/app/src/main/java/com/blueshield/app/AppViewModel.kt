@@ -64,8 +64,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         _saved.value = false
                         thumbs.clear()
                     }
-                    JobState.Stage.ERROR -> _error.value = "Processing failed: ${s.error?.lines()?.take(4)?.joinToString("\n")}"
-                    JobState.Stage.CANCELLED -> _error.value = "Processing cancelled."
+                    JobState.Stage.ERROR -> _error.value = "העיבוד נכשל: ${s.error?.lines()?.take(4)?.joinToString("\n")}"
+                    JobState.Stage.CANCELLED -> _error.value = "העיבוד בוטל."
                     else -> Unit
                 }
             }
@@ -96,7 +96,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _showResult.value = false
                 ProcessingRepository.reset()
             } catch (e: Throwable) {
-                _error.value = e.message ?: "Could not read this video."
+                _error.value = e.message ?: "לא ניתן לקרוא את הסרטון."
             } finally {
                 _loading.value = false
             }
@@ -116,7 +116,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _photoResult.value = null
                 _draft.value = emptyMap()
             } catch (e: Throwable) {
-                _error.value = e.message ?: "Could not read this photo."
+                _error.value = e.message ?: "לא ניתן לקרוא את התמונה."
             } finally {
                 _loading.value = false
             }
@@ -139,7 +139,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _draft.value = emptyMap()
                 _saved.value = false
             } catch (e: Throwable) {
-                _error.value = "Processing failed: ${e.message ?: e.javaClass.simpleName}"
+                _error.value = "העיבוד נכשל: ${e.message ?: e.javaClass.simpleName}"
             } finally {
                 _photoBusy.value = false
             }
@@ -155,7 +155,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _photoResult.value = withContext(Dispatchers.Default) { processor().renderPhoto(overrides) }
                 _saved.value = false
             } catch (e: Throwable) {
-                _error.value = "Could not apply: ${e.message}"
+                _error.value = "לא ניתן להחיל את השינויים: ${e.message}"
             } finally {
                 _photoBusy.value = false
             }
@@ -170,7 +170,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 withContext(Dispatchers.IO) { Exporter.savePhotoToGallery(getApplication(), r.file, name) }
                 _saved.value = true
             } catch (e: Throwable) {
-                _error.value = "Could not save: ${e.message}"
+                _error.value = "השמירה נכשלה: ${e.message}"
             }
         }
     }
@@ -228,7 +228,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 withContext(Dispatchers.IO) { Exporter.saveToGallery(getApplication(), out, name) }
                 _saved.value = true
             } catch (e: Throwable) {
-                _error.value = "Could not save: ${e.message}"
+                _error.value = "השמירה נכשלה: ${e.message}"
             }
         }
     }

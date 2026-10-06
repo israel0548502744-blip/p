@@ -161,7 +161,7 @@ class ProcessingService : Service() {
             } catch (t: Throwable) { // e.g. the app is not allowed to start a foreground service right now
                 Breadcrumbs.mark("service: start refused: ${Errors.describe(t)}")
                 pendingJob = null
-                ProcessingRepository.publish(JobState(stage = JobState.Stage.ERROR, error = "Could not start processing: ${t.message}"))
+                ProcessingRepository.publish(JobState(stage = JobState.Stage.ERROR, error = "לא ניתן להתחיל את העיבוד: ${t.message}"))
             }
         }
 

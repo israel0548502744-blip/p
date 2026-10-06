@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,6 +40,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -73,7 +76,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent { BlueShieldTheme { App(vm) } }
+        // The UI is Hebrew: right-to-left everywhere, whatever the phone's language is.
+        setContent { CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) { BlueShieldTheme { App(vm) } } }
     }
 }
 
@@ -136,21 +140,21 @@ private fun App(vm: AppViewModel) {
     ) {
         Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             if (page != null) {
-                IconButton(onClick = { page = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
+                IconButton(onClick = { page = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "חזרה", tint = Color.White) }
             }
             Logo()
             Spacer(Modifier.weight(1f))
             Box {
-                IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.MoreVert, "Menu", tint = Color.White) }
+                IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.MoreVert, "תפריט", tint = Color.White) }
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    DropdownMenuItem(text = { Text("Settings") }, leadingIcon = { Icon(Icons.Filled.Settings, null) },
+                    DropdownMenuItem(text = { Text("הגדרות") }, leadingIcon = { Icon(Icons.Filled.Settings, null) },
                         onClick = { menuOpen = false; page = Screen.SETTINGS })
-                    DropdownMenuItem(text = { Text("New video or photo") }, leadingIcon = { Icon(Icons.Filled.Add, null) },
+                    DropdownMenuItem(text = { Text("סרטון או תמונה חדשים") }, leadingIcon = { Icon(Icons.Filled.Add, null) },
                         enabled = !job.running, onClick = {
                             menuOpen = false; page = null
                             pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
                         })
-                    DropdownMenuItem(text = { Text("About") }, leadingIcon = { Icon(Icons.Filled.Info, null) },
+                    DropdownMenuItem(text = { Text("אודות") }, leadingIcon = { Icon(Icons.Filled.Info, null) },
                         onClick = { menuOpen = false; page = Screen.ABOUT })
                 }
             }

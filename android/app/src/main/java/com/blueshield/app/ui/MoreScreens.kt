@@ -55,9 +55,9 @@ import com.blueshield.core.gender.Override
 @Composable
 fun SettingsScreen(settings: CensorSettings, enabled: Boolean, onChange: (CensorSettings) -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Text("Settings", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
-        Text("Saved automatically and used for every video and photo.", color = Palette.Ink300, fontSize = 13.sp)
-        if (!enabled) Text("Processing is running — changes apply to the next job.", color = Palette.Amber, fontSize = 12.5.sp)
+        Text("הגדרות", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+        Text("ההגדרות נשמרות אוטומטית וחלות על כל סרטון ותמונה.", color = Palette.Ink300, fontSize = 13.sp)
+        if (!enabled) Text("עיבוד פועל כרגע — השינויים יחולו בעיבוד הבא.", color = Palette.Amber, fontSize = 12.5.sp)
         SettingsSection(settings, hasAudio = true, enabled = true, onChange = onChange)
     }
 }
@@ -73,11 +73,11 @@ fun SettingsSummary(s: CensorSettings, onEdit: () -> Unit) {
             )
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text("Censor settings", color = Color.White, fontSize = 14.5.sp, fontWeight = FontWeight.SemiBold)
+                Text("הגדרות צנזור", color = Color.White, fontSize = 14.5.sp, fontWeight = FontWeight.SemiBold)
                 Text(
-                    (if (s.target == "female") "Adult women only" else "Everyone") + " · " +
-                        (if (s.uncertainPolicy == "censor") "unsure → censor" else "unsure → keep") + " · " +
-                        when (s.speed) { "quality" -> "max quality"; "fast" -> "fast"; else -> "balanced" },
+                    (if (s.target == "female") "נשים בוגרות בלבד" else "כולם") + " · " +
+                        (if (s.uncertainPolicy == "censor") "בספק: לצנזר" else "בספק: לא לצנזר") + " · " +
+                        when (s.speed) { "quality" -> "איכות מרבית"; "fast" -> "מהיר"; else -> "מאוזן" },
                     color = Palette.Ink300, fontSize = 12.sp,
                 )
             }
@@ -89,32 +89,32 @@ fun SettingsSummary(s: CensorSettings, onEdit: () -> Unit) {
 @Composable
 fun AboutScreen() {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("About BlueShield", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
-        Text("Version ${BuildInfo.version}", color = Palette.Ink300, fontSize = 13.sp)
+        Text("אודות BlueShield", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+        Text("גרסה ${BuildInfo.version}", color = Palette.Ink300, fontSize = 13.sp)
         Panel(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                SectionTitle("How it works")
+                SectionTitle("איך זה עובד")
                 for (line in listOf(
-                    "People are detected and tracked through the video; each person is classified from their face (two models, decided over many frames).",
-                    "Only adult women are censored by default. Girls, men and anyone you mark “Don't” are left as they are.",
-                    "Bare skin of each censored person is covered — arms, shoulders, a low neckline from just below the chin. Faces and necks stay visible.",
-                    "On-screen text and captions are never painted over.",
-                    "Unsure? The safe default censors. You can override every person and re-render without re-analysing.",
+                    "האפליקציה מזהה אנשים ועוקבת אחריהם לאורך הסרטון; כל אדם מסווג לפי הפנים שלו (שני מודלים, וההחלטה מתקבלת על פני פריימים רבים).",
+                    "כברירת מחדל מצונזרות רק נשים בוגרות. ילדות, גברים וכל מי שסימנתם \"אל תצנזר\" נשארים כמו שהם.",
+                    "העור החשוף של כל מי שמצונזרת מכוסה — זרועות, כתפיים ומחשוף נמוך, החל מקצת מתחת לסנטר. הפנים והצוואר נשארים גלויים.",
+                    "טקסט וכתוביות שעל המסך אף פעם לא מכוסים.",
+                    "לא בטוח? ברירת המחדל הבטוחה היא לצנזר. אפשר לשנות את ההחלטה לכל אדם ולעבד מחדש בלי לנתח שוב.",
                 )) Text("• $line", color = Palette.Ink100, fontSize = 13.sp, lineHeight = 18.sp)
             }
         }
         Panel(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                SectionTitle("Privacy")
-                Text("Everything runs on this phone. Videos and photos are never uploaded.", color = Palette.Ink100, fontSize = 13.sp)
+                SectionTitle("פרטיות")
+                Text("הכול רץ על הטלפון הזה. סרטונים ותמונות אף פעם לא מועלים.", color = Palette.Ink100, fontSize = 13.sp)
             }
         }
         Panel(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                SectionTitle("Models")
+                SectionTitle("מודלים")
                 for (m in listOf(
                     "MediaPipe Selfie Multiclass, EfficientDet-Lite0, BlazeFace (Apache-2.0)",
-                    "FaceRes gender model, @vladmandic/human-models (MIT)",
+                    "מודל מגדר " + ltr("FaceRes, @vladmandic/human-models (MIT)"),
                     "face-api.js AgeGenderNet, @vladmandic/face-api (MIT)",
                     "NudeNet v3 (MIT)",
                 )) Text(m, color = Palette.Ink300, fontSize = 12.sp)
@@ -138,16 +138,16 @@ fun PhotoHome(preview: Bitmap, name: String, settings: CensorSettings, busy: Boo
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
                         Text(name, color = Color.White, fontSize = 14.sp, maxLines = 1)
-                        Text("Photo · ${preview.width}×${preview.height} preview", color = Palette.Ink400, fontSize = 12.sp)
+                        Text("תמונה · תצוגה מקדימה " + ltr("${preview.width}×${preview.height}"), color = Palette.Ink400, fontSize = 12.sp)
                     }
-                    Text("Change", color = Palette.Shield400, fontSize = 13.sp, modifier = Modifier.clickable(onClick = onClear).padding(6.dp))
+                    Text("החלפה", color = Palette.Shield400, fontSize = 13.sp, modifier = Modifier.clickable(onClick = onClear).padding(6.dp))
                 }
             }
             SettingsSummary(settings, onEditSettings)
         }
         Box(Modifier.background(Palette.Ink950).padding(16.dp), contentAlignment = Alignment.Center) {
             if (busy) CircularProgressIndicator(color = Palette.Shield400)
-            else PrimaryButton("Censor Photo", Icons.Filled.PlayArrow, onClick = onStart)
+            else PrimaryButton("צנזור התמונה", Icons.Filled.PlayArrow, onClick = onStart)
         }
     }
 }
@@ -167,27 +167,27 @@ fun PhotoResultScreen(
             }
             Spacer(Modifier.width(12.dp))
             Column {
-                Text("Photo censored.", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
-                Text("Review the result, then save or share.", color = Palette.Ink300, fontSize = 12.5.sp)
+                Text("התמונה צונזרה.", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
+                Text("בדקו את התוצאה, ואז שמרו או שתפו.", color = Palette.Ink300, fontSize = 12.5.sp)
             }
         }
-        Segmented(listOf(false to "Censored", true to "Original"), showOriginal, { showOriginal = it })
+        Segmented(listOf(false to "מצונזר", true to "מקור"), showOriginal, { showOriginal = it })
         val bmp = if (showOriginal) result.original else result.censored
         Image(
             bmp.asImageBitmap(), null, contentScale = ContentScale.Fit,
             modifier = Modifier.fillMaxWidth().aspectRatio(bmp.width.toFloat() / bmp.height).clip(RoundedCornerShape(16.dp)),
         )
         if (busy) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Palette.Shield400) }
-        PrimaryButton(if (saved) "Saved to gallery" else "Save to gallery", Icons.Filled.Download, enabled = !saved, onClick = onSave)
+        PrimaryButton(if (saved) "נשמרה בגלריה" else "שמירה בגלריה", Icons.Filled.Download, enabled = !saved, onClick = onSave)
         OutlinedButton(onClick = onShare, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(14.dp)) {
             Icon(Icons.Filled.Share, null)
             Spacer(Modifier.width(8.dp))
-            Text("Share")
+            Text("שיתוף")
         }
         PeoplePanel(result.people, draft, thumbnail, onOverride, onApply, settings)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = onAdjust, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) { Icon(Icons.Filled.Refresh, null); Spacer(Modifier.width(6.dp)); Text("Adjust") }
-            OutlinedButton(onClick = onNew, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) { Icon(Icons.Filled.Image, null); Spacer(Modifier.width(6.dp)); Text("New") }
+            OutlinedButton(onClick = onAdjust, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) { Icon(Icons.Filled.Refresh, null); Spacer(Modifier.width(6.dp)); Text("כוונון") }
+            OutlinedButton(onClick = onNew, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) { Icon(Icons.Filled.Image, null); Spacer(Modifier.width(6.dp)); Text("תמונה חדשה") }
         }
         PrivacyPill()
     }
