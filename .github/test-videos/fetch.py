@@ -18,7 +18,7 @@ def get(url):
 
 manifest = []
 for q in QUERIES:
-    params = {"action": "query", "format": "json", "generator": "search", "gsrnamespace": 6, "gsrlimit": 25,
+    params = {"action": "query", "format": "json", "generator": "search", "gsrnamespace": 6, "gsrlimit": 50,
               "gsrsearch": f"filetype:video {q}", "prop": "imageinfo",
               "iiprop": "url|size|mime|extmetadata", "iiurlwidth": 0}
     data = json.loads(get(API + "?" + urllib.parse.urlencode(params)))

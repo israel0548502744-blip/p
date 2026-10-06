@@ -15,7 +15,7 @@ jobs:
       - name: Install ffmpeg
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - name: Download clips
-        run: python3 .github/test-videos/fetch.py out "$(cat .github/test-videos/queries.txt)" 2
+        run: python3 .github/test-videos/fetch.py out "$(cat .github/test-videos/queries.txt)" 1
       - name: Contact sheet (one frame per clip, for a quick look)
         run: |
           cd out && for f in *.mp4; do ffmpeg -v error -y -ss 2 -i "$f" -frames:v 1 -vf scale=320:-2 "${f%.mp4}.jpg"; done; ls -la
