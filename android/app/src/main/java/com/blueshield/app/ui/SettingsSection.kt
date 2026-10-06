@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,6 +28,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -33,9 +36,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.blueshield.core.CensorSettings
 
-private val SWATCHES = listOf("#1E4DFF", "#0A84FF", "#2563EB", "#00B3FF", "#3B2BFF", "#0B1F66")
+private val SWATCHES = listOf("#FFFFFF" to "White", "#000000" to "Black", "#6B7280" to "Gray", "#E8D9C5" to "Beige", "#1E4DFF" to "Blue", "#0B1F66" to "Navy", "#10B981" to "Green", "#F472B6" to "Pink")
 
 /** All censor settings — same options as the desktop settings panel. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SettingsSection(s: CensorSettings, hasAudio: Boolean, enabled: Boolean, onChange: (CensorSettings) -> Unit) {
     Panel(Modifier.fillMaxWidth()) {
@@ -61,14 +65,17 @@ fun SettingsSection(s: CensorSettings, hasAudio: Boolean, enabled: Boolean, onCh
             Spacer(Modifier.height(18.dp))
             SectionTitle("Censor color")
             Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                for (c in SWATCHES) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                for ((c, name) in SWATCHES) {
                     val selected = s.color.equals(c, ignoreCase = true)
-                    Box(
-                        Modifier.size(34.dp).clip(RoundedCornerShape(10.dp)).background(Color(android.graphics.Color.parseColor(c)))
-                            .border(if (selected) 2.dp else 1.dp, if (selected) Color.White else Palette.Border, RoundedCornerShape(10.dp))
-                            .clickable(enabled = enabled) { onChange(s.copy(color = c)) },
-                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Box(
+                            Modifier.size(38.dp).clip(RoundedCornerShape(11.dp)).background(Color(android.graphics.Color.parseColor(c)))
+                                .border(if (selected) 2.5.dp else 1.dp, if (selected) Palette.Shield400 else Palette.Border, RoundedCornerShape(11.dp))
+                                .clickable(enabled = enabled) { onChange(s.copy(color = c)) },
+                        )
+                        Text(name, color = if (selected) Color.White else Palette.Ink400, fontSize = 10.5.sp, modifier = Modifier.padding(top = 3.dp))
+                    }
                 }
             }
             var hex by remember(s.color) { mutableStateOf(s.color) }

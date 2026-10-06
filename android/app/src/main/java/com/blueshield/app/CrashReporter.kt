@@ -79,7 +79,7 @@ object CrashReporter {
     }
 }
 
-object BuildInfo { const val version = "1.0.0" }
+object BuildInfo { const val version = "1.1.0" }
 
 class BlueShieldApp : android.app.Application() {
     override fun onCreate() {

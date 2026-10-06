@@ -101,6 +101,23 @@ class PipelineIntegrationTest {
         assertTrue(right < left * 0.01)
     }
 
+    @Test fun stillImageCensorsTheWomanOnly() {
+        val img = wmFrames[30]
+        val a = com.blueshield.core.pipeline.StillImage.analyze(models, CensorSettings(), PipelineSpec.bundled, img, img.width, img.height,
+            File.createTempFile("still", ".bin"))
+        val s = CensorSettings()
+        val sides = a.people.values.associateBy { if (it.box.cx / img.width < 0.5f) "left" else "right" }
+        println("still: " + a.summaries(s, emptyMap()).joinToString { "#${it.id} ${it.gender} p=${"%.2f".format(it.pFemale)} v=${it.votes}" })
+        val d = a.decisions(s, emptyMap())
+        assertEquals(true, d[sides.getValue("left").id])
+        assertEquals(false, d[sides.getValue("right").id])
+        val alpha = com.blueshield.core.pipeline.StillImage.alpha(a, s, d, img.width, img.height)!!
+        var left = 0; var right = 0
+        for (y in 0 until img.height) for (x in 0 until img.width) if (alpha[x, y] > 128) { if (x < img.width / 2) left++ else if (x > img.width * 0.62) right++ }
+        assertTrue(left > 1000 && right < left * 0.01, "left=$left right=$right")
+        a.close()
+    }
+
     @Test fun overrideInvertsDecisions() {
         val a = womanAndMan!!
         val sides = bySide(a)

@@ -269,10 +269,55 @@ class Processor(private val context: Context) {
         return best
     }
 
+    // ── photos ──────────────────────────────────────────────────────────────────────────────────
+
+    /** A censored photo, plus what the people list needs for overrides. */
+    class PhotoResult(val original: Bitmap, val censored: Bitmap, val people: List<PersonSummary>, val file: File, val overrides: Map<Int, Override>)
+
+    private var photo: Analysis? = null
+    private var photoOriginal: Bitmap? = null
+    private var photoSettings: CensorSettings = CensorSettings()
+
+    /** Analyse and censor one photo (same rules as video: people, women only, neckline, text stays visible). */
+    fun processPhoto(uri: android.net.Uri, settings: CensorSettings): PhotoResult {
+        val s = settings.validated()
+        Breadcrumbs.reset("photo: $uri")
+        val bmp = PhotoLoader.load(context, uri)
+        val (aw, ah) = Analyzer.scaledSize(bmp.width, bmp.height, spec.analysisMaxSide)
+        val (mw, mh) = Analyzer.scaledSize(bmp.width, bmp.height, spec.maskMaxSide)
+        photo?.close()
+        val store = File(context.cacheDir, "photo_masks_${System.currentTimeMillis()}.bin")
+        photo = com.blueshield.core.pipeline.StillImage.analyze(models(), s, spec, PhotoLoader.toRgb(bmp, aw, ah), mw, mh, store)
+        photoOriginal = bmp
+        photoSettings = s
+        Breadcrumbs.mark("photo: analysed, ${photo?.people?.size ?: 0} people")
+        return renderPhoto(emptyMap())
+    }
+
+    /** Re-paint the analysed photo with manual per-person overrides (no re-analysis). */
+    fun renderPhoto(overrides: Map<Int, Override>): PhotoResult {
+        val a = photo ?: error("No photo analysed")
+        val original = photoOriginal ?: error("No photo")
+        val s = photoSettings
+        val decisions = a.decisions(s, overrides)
+        val w = original.width
+        val h = original.height
+        val out = original.copy(Bitmap.Config.ARGB_8888, true)
+        com.blueshield.core.pipeline.StillImage.alpha(a, s, decisions, w, h)?.let { alpha ->
+            val px = IntArray(w * h)
+            out.getPixels(px, 0, w, 0, 0, w, h)
+            com.blueshield.core.pipeline.StillImage.paint(px, w, h, alpha, CensorSettingsColor.rgb(s))
+            out.setPixels(px, 0, w, 0, 0, w, h)
+        }
+        val file = File(context.filesDir, "outputs/blueshield_photo_${System.currentTimeMillis()}.jpg").also { it.parentFile?.mkdirs() }
+        file.outputStream().use { out.compress(Bitmap.CompressFormat.JPEG, 94, it) }
+        return PhotoResult(original, out, a.summaries(s, overrides), file, overrides)
+    }
+
     /** People summaries for a new set of overrides (no re-render). */
     fun summaries(overrides: Map<Int, Override>): List<PersonSummary> = analysis?.summaries(settings, overrides) ?: emptyList()
 
-    fun personThumbnail(id: Int): Bitmap? = analysis?.people?.get(id)?.thumbnail?.let { toBitmap(it) }
+    fun personThumbnail(id: Int): Bitmap? = (analysis?.people?.get(id) ?: photo?.people?.get(id))?.thumbnail?.let { toBitmap(it) }
 
     private fun analysisPreview(frame: RgbImage, analyzer: Analyzer): Bitmap {
         val bmp = toBitmap(frame)
@@ -318,6 +363,8 @@ class Processor(private val context: Context) {
 
     fun close() {
         releaseAnalysis()
+        photo?.close()
+        photo = null
         models?.close()
         models = null
     }

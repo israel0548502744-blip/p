@@ -2,7 +2,7 @@
   "$comment": "Single source of truth for pipeline constants shared by desktop (Python) and Android (Kotlin). Desktop tests assert parity with these values; the Android build copies this file into its assets.",
   "version": 2,
   "defaults": {
-    "color": "#1E4DFF",
+    "color": "#FFFFFF",
     "sensitivity": 60,
     "softness": 20,
     "aggressive": false,

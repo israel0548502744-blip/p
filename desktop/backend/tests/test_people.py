@@ -128,7 +128,7 @@ def test_woman_classified_female_man_male(woman_and_man):
 
 def test_render_censors_woman_not_man(woman_and_man, tmp_path):
     a = woman_and_man
-    settings = CensorSettings()
+    settings = CensorSettings(color="#1E4DFF")  # blue: easy to count against the scene
     out = tmp_path / "wm.mp4"
     res = render(a, settings, {}, out, Control(), Progress(), lambda _: None)
     assert res["censored_frames"] >= a.total * 0.9

@@ -50,6 +50,22 @@ import com.blueshield.app.ui.Logo
 import com.blueshield.app.ui.Palette
 import com.blueshield.app.ui.ProcessingScreen
 import com.blueshield.app.ui.ResultScreen
+import com.blueshield.app.ui.AboutScreen
+import com.blueshield.app.ui.PhotoHome
+import com.blueshield.app.ui.PhotoResultScreen
+import com.blueshield.app.ui.SettingsScreen
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Text
 
 class MainActivity : ComponentActivity() {
     private val vm: AppViewModel by viewModels()
@@ -61,7 +77,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { HOME, PROCESSING, RESULT }
+private enum class Screen { HOME, PROCESSING, RESULT, PHOTO, PHOTO_RESULT, SETTINGS, ABOUT }
 
 @Composable
 private fun App(vm: AppViewModel) {
@@ -74,6 +90,12 @@ private fun App(vm: AppViewModel) {
     val showResult by vm.showResult.collectAsStateWithLifecycle()
     val draft by vm.draftOverrides.collectAsStateWithLifecycle()
     val saved by vm.saved.collectAsStateWithLifecycle()
+    val photo by vm.photo.collectAsStateWithLifecycle()
+    val photoResult by vm.photoResult.collectAsStateWithLifecycle()
+    val photoBusy by vm.photoBusy.collectAsStateWithLifecycle()
+    /** A page opened from the menu, shown over whatever is current. */
+    var page by remember { mutableStateOf<Screen?>(null) }
+    var menuOpen by remember { mutableStateOf(false) }
 
     val context = androidx.compose.ui.platform.LocalContext.current
     var crashReport by remember { mutableStateOf(CrashReporter.pending(context)) }
@@ -95,12 +117,16 @@ private fun App(vm: AppViewModel) {
         if (Build.VERSION.SDK_INT >= 33) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS) else vm.start()
     }
 
-    val screen = when {
+    val screen = page ?: when {
         job.running -> Screen.PROCESSING
         showResult && job.stage == JobState.Stage.COMPLETE && job.output != null && video != null -> Screen.RESULT
+        photoResult != null -> Screen.PHOTO_RESULT
+        photo != null -> Screen.PHOTO
         else -> Screen.HOME
     }
-    BackHandler(enabled = screen == Screen.RESULT) { vm.adjust() }
+    BackHandler(enabled = page != null) { page = null }
+    BackHandler(enabled = page == null && screen == Screen.RESULT) { vm.adjust() }
+    BackHandler(enabled = page == null && screen == Screen.PHOTO_RESULT) { vm.adjustPhoto() }
 
     Column(
         Modifier.fillMaxSize()
@@ -108,18 +134,48 @@ private fun App(vm: AppViewModel) {
             .background(Palette.Ink950)
             .safeDrawingPadding(),
     ) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (page != null) {
+                IconButton(onClick = { page = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
+            }
             Logo()
             Spacer(Modifier.weight(1f))
+            Box {
+                IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.MoreVert, "Menu", tint = Color.White) }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(text = { Text("Settings") }, leadingIcon = { Icon(Icons.Filled.Settings, null) },
+                        onClick = { menuOpen = false; page = Screen.SETTINGS })
+                    DropdownMenuItem(text = { Text("New video or photo") }, leadingIcon = { Icon(Icons.Filled.Add, null) },
+                        enabled = !job.running, onClick = {
+                            menuOpen = false; page = null
+                            pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
+                        })
+                    DropdownMenuItem(text = { Text("About") }, leadingIcon = { Icon(Icons.Filled.Info, null) },
+                        onClick = { menuOpen = false; page = Screen.ABOUT })
+                }
+            }
         }
         error?.let { ErrorBanner(it, vm::dismissError) }
         AnimatedContent(screen, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "screen", modifier = Modifier.weight(1f)) { s ->
             when (s) {
                 Screen.HOME -> HomeScreen(
                     video, settings, loading, error,
-                    onPick = { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)) },
-                    onClear = vm::clearVideo, onSettings = vm::updateSettings, onStart = startWithPermission,
+                    onPick = { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) },
+                    onClear = vm::clearVideo, onEditSettings = { page = Screen.SETTINGS }, onStart = startWithPermission,
                 )
+                Screen.PHOTO -> photo?.let { p ->
+                    PhotoHome(p.preview, p.name, settings, photoBusy, onEditSettings = { page = Screen.SETTINGS }, onClear = vm::clearPhoto, onStart = vm::startPhoto)
+                }
+                Screen.PHOTO_RESULT -> photoResult?.let { r ->
+                    PhotoResultScreen(
+                        r, draft, vm::thumbnail, photoBusy, vm::setOverride, vm::applyPhotoOverrides, vm::savePhoto,
+                        onShare = { vm.sharePhotoIntent()?.let(activity::startActivity) }, onAdjust = vm::adjustPhoto,
+                        onNew = { vm.clearPhoto(); pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) },
+                        saved = saved, settings = settings,
+                    )
+                }
+                Screen.SETTINGS -> SettingsScreen(settings, enabled = !job.running && !photoBusy, onChange = vm::updateSettings)
+                Screen.ABOUT -> AboutScreen()
                 Screen.PROCESSING -> ProcessingScreen(job, vm::pause, vm::resume, vm::cancel)
                 Screen.RESULT -> ResultScreen(
                     video!!, job, job.output!!.toUri(), draft, vm::thumbnail, vm::setOverride, vm::applyOverrides, vm::save,

@@ -6,7 +6,7 @@ import kotlinx.serialization.Serializable
 /** User-facing options. Field names/defaults match the desktop app and shared/pipeline.json. */
 @Serializable
 data class CensorSettings(
-    val color: String = "#1E4DFF",
+    val color: String = "#FFFFFF",
     val sensitivity: Int = 60,
     val softness: Int = 20,
     val aggressive: Boolean = false,

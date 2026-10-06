@@ -96,7 +96,7 @@ fun PrimaryButton(text: String, icon: androidx.compose.ui.graphics.vector.ImageV
 @Composable
 fun HomeScreen(
     video: VideoMeta?, settings: CensorSettings, loading: Boolean, error: String?,
-    onPick: () -> Unit, onClear: () -> Unit, onSettings: (CensorSettings) -> Unit, onStart: () -> Unit,
+    onPick: () -> Unit, onClear: () -> Unit, onEditSettings: () -> Unit, onStart: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -105,7 +105,7 @@ fun HomeScreen(
             } else {
                 SinglePlayer(video.uri, video.width.toFloat() / video.height, Modifier.fillMaxWidth())
                 VideoInfo(video, onClear)
-                SettingsSection(settings, video.hasAudio, enabled = true, onChange = onSettings)
+                SettingsSummary(settings, onEditSettings)
             }
         }
         if (video != null) Box(Modifier.background(Palette.Ink950).padding(16.dp)) { PrimaryButton("Start Censoring", Icons.Filled.PlayArrow, onClick = onStart) }
@@ -126,15 +126,15 @@ private fun EmptyState(loading: Boolean, error: String?, onPick: () -> Unit) {
                 ) { Icon(Icons.Filled.VideoLibrary, null, tint = Color.White, modifier = Modifier.size(34.dp)) }
             }
             Spacer(Modifier.height(20.dp))
-            Text("Select a video to begin", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+            Text("Select a video or photo", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(8.dp))
             Text(
-                "BlueShield finds exposed skin and sensitive regions frame by frame and covers them with a clean blue mask that follows every movement.",
+                "BlueShield finds the bare skin of adult women — frame by frame in videos, or in a single photo — and covers it with a clean mask in the colour you choose. Faces, necks and on-screen text stay visible.",
                 color = Palette.Ink300, fontSize = 14.sp, lineHeight = 20.sp,
             )
             Spacer(Modifier.height(20.dp))
             if (loading) CircularProgressIndicator(color = Palette.Shield400)
-            else PrimaryButton("Select Video", Icons.Filled.Movie, onClick = onPick)
+            else PrimaryButton("Select Video or Photo", Icons.Filled.Movie, onClick = onPick)
             if (error != null) Text(error, color = Palette.Danger, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp))
             Spacer(Modifier.height(16.dp))
             PrivacyPill()
@@ -335,7 +335,7 @@ fun ResultScreen(
 }
 
 @Composable
-private fun InfoRow(k: String, v: String) {
+internal fun InfoRow(k: String, v: String) {
     Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
         Text(k, color = Palette.Ink400, fontSize = 13.sp, modifier = Modifier.weight(1f))
         Text(v, color = Palette.Ink100, fontSize = 13.sp)
@@ -343,7 +343,7 @@ private fun InfoRow(k: String, v: String) {
 }
 
 @Composable
-private fun PeoplePanel(
+internal fun PeoplePanel(
     people: List<PersonSummary>, draft: Map<Int, Override>, thumbnail: (Int) -> Bitmap?,
     onOverride: (Int, Override) -> Unit, onApply: () -> Unit, settings: CensorSettings,
 ) {

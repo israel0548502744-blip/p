@@ -36,7 +36,7 @@ for _stale in WORK_DIR.glob("*.masks"):
 
 
 class SettingsIn(BaseModel):
-    color: str = "#1E4DFF"
+    color: str = "#FFFFFF"
     sensitivity: int = Field(60, ge=0, le=100)
     softness: int = Field(20, ge=0, le=100)
     aggressive: bool = False

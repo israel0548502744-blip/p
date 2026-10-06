@@ -56,7 +56,7 @@ POLICIES = ("censor", "keep")
 
 @dataclass
 class CensorSettings:
-    color: str = "#1E4DFF"
+    color: str = "#FFFFFF"
     sensitivity: int = 60  # 0..100
     softness: int = 20  # 0..100
     aggressive: bool = False

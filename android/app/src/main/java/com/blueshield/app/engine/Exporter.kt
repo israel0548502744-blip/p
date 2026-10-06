@@ -39,10 +39,38 @@ object Exporter {
         return uri
     }
 
+    /** Saves a censored photo to the gallery (Pictures/BlueShield). */
+    fun savePhotoToGallery(context: Context, file: File, displayName: String): Uri {
+        val resolver = context.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
+            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            if (Build.VERSION.SDK_INT >= 29) {
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/BlueShield")
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            }
+        }
+        val collection = if (Build.VERSION.SDK_INT >= 29) MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        val uri = resolver.insert(collection, values) ?: error("Could not create a gallery entry")
+        try {
+            resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out, 1 shl 20) } } ?: error("Could not open gallery file")
+            if (Build.VERSION.SDK_INT >= 29) {
+                values.clear()
+                values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                resolver.update(uri, values, null, null)
+            }
+        } catch (e: Throwable) {
+            resolver.delete(uri, null, null)
+            throw e
+        }
+        return uri
+    }
+
     fun shareIntent(context: Context, file: File): Intent {
         val uri = FileProvider.getUriForFile(context, context.packageName + ".files", file)
         return Intent(Intent.ACTION_SEND).apply {
-            type = "video/mp4"
+            type = if (file.extension.equals("jpg", true)) "image/jpeg" else "video/mp4"
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }.let { Intent.createChooser(it, null) }

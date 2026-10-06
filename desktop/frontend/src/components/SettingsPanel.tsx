@@ -4,7 +4,7 @@ import type { CensorSettings, Quality, Speed, Target, UncertainPolicy } from "..
 import { DEFAULT_SETTINGS } from "../types";
 import { cx } from "../format";
 
-const SWATCHES = ["#1E4DFF", "#0A84FF", "#2563EB", "#00B3FF", "#3B2BFF", "#0B1F66"];
+const SWATCHES = ["#FFFFFF", "#000000", "#6B7280", "#E8D9C5", "#1E4DFF", "#0B1F66", "#10B981", "#F472B6"];
 
 function Section({ title, children, right }: { title: string; children: ReactNode; right?: ReactNode }) {
   return (
