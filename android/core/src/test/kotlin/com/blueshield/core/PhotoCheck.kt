@@ -32,7 +32,7 @@ class PhotoCheck {
         val t0 = System.nanoTime()
         // Same as StillImage.analyze, keeping the analyzer to read its skin probability.
         val still = spec.copy(gender = spec.gender.copy(voteFactor = 1.0, minVotes = 1, minWeight = 0.3, minAgeVotes = 1))
-        val analyzer = Analyzer(models, settings.copy(speed = "quality"), still, aw, ah, 1.0, mw, mh, File.createTempFile("photo", ".bin"))
+        val analyzer = Analyzer(models, settings.copy(speed = "quality"), still, aw, ah, 1.0, mw, mh, File.createTempFile("photo", ".bin"), spec.personMasks.photoSize)
         var prob: com.blueshield.core.image.FloatMask? = null
         analyzer.process(listOf(img)) { prob = analyzer.lastSkinProbability }
         val a = analyzer.finish()
@@ -43,7 +43,7 @@ class PhotoCheck {
             println("PERSON #${p.id} ${p.gender} pFemale=${"%.2f".format(p.pFemale)} votes=${p.votes} age=${p.age} child=${p.child} censored=${d[p.id]} box=$box")
         }
         val px = IntArray(w * h) { (0xFF shl 24) or ((full.data[it * 3].toInt() and 0xFF) shl 16) or ((full.data[it * 3 + 1].toInt() and 0xFF) shl 8) or (full.data[it * 3 + 2].toInt() and 0xFF) }
-        StillImage.alpha(a, settings, d, w, h)?.let { StillImage.paint(px, w, h, it, CensorSettings.parseColor(settings.color)) }
+        StillImage.alpha(a, settings, d, w, h, px.copyOf())?.let { StillImage.paint(px, w, h, it, CensorSettings.parseColor(settings.color)) }
         // Debug panel at analysis size, scaled to the photo size.
         val out = java.awt.image.BufferedImage(w * 2, h, java.awt.image.BufferedImage.TYPE_INT_RGB)
         out.setRGB(0, 0, w, h, px, 0, w)

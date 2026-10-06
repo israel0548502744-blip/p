@@ -303,9 +303,9 @@ class Processor(private val context: Context) {
         val w = original.width
         val h = original.height
         val out = original.copy(Bitmap.Config.ARGB_8888, true)
-        com.blueshield.core.pipeline.StillImage.alpha(a, s, decisions, w, h)?.let { alpha ->
-            val px = IntArray(w * h)
-            out.getPixels(px, 0, w, 0, 0, w, h)
+        val px = IntArray(w * h)
+        out.getPixels(px, 0, w, 0, 0, w, h)
+        com.blueshield.core.pipeline.StillImage.alpha(a, s, decisions, w, h, px)?.let { alpha ->
             com.blueshield.core.pipeline.StillImage.paint(px, w, h, alpha, CensorSettingsColor.rgb(s))
             out.setPixels(px, 0, w, 0, 0, w, h)
         }

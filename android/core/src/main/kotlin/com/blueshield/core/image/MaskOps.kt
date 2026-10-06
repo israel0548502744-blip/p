@@ -44,6 +44,14 @@ object MaskOps {
         return ByteMask(w, h, out)
     }
 
+    /** Morphological erosion (binary masks) with a square of the given radius. */
+    fun erode(m: ByteMask, radius: Int): ByteMask {
+        if (radius <= 0) return m.copy()
+        val inv = ByteMask(m.width, m.height, ByteArray(m.data.size) { if (m.data[it].toInt() != 0) 0 else -1 })
+        val d = dilate(inv, radius)
+        return ByteMask(m.width, m.height, ByteArray(m.data.size) { if (d.data[it].toInt() != 0) 0 else -1 })
+    }
+
     /** Three box-blur passes ≈ Gaussian blur with the given sigma (O(1) per pixel per pass). */
     fun gaussianApprox(m: ByteMask, sigma: Float): ByteMask {
         if (sigma < 0.5f) return m.copy()

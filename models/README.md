@@ -26,6 +26,7 @@ e.g. on older women), and the age decides "adult woman" vs. "girl".
 | `gender_faceres.onnx` | `gender_faceres_fp16.tflite` above | `tf2onnx` | max abs diff 1e-7 |
 | `nudenet_320n.onnx` | NudeNet v3 320n (MIT), unchanged | — | — |
 | `faceapi_agegender.onnx` | face-api.js AgeGenderNet (see above) | `tf2onnx --opset 17` (SavedModel) | max abs diff 1e-5 |
+| `mobilesam_encoder_512.onnx`, `mobilesam_encoder_1024.onnx`, `mobilesam_decoder.onnx` | [MobileSAM](https://github.com/ChaoningZhang/MobileSAM) `weights/mobile_sam.pt` (Apache-2.0) | `shared/tools/build_mobilesam.py` (torch.onnx, opset 17, weights stored fp16) | masks identical to PyTorch (IoU 1.000) |
 
 Reproduce: `pip install tensorflow tf2onnx onnx`, then
 `python -m tf2onnx.convert --tflite <model>.tflite --output <model>.onnx --opset 17`

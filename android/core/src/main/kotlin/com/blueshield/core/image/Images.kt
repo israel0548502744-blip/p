@@ -232,6 +232,19 @@ class ByteMask(val width: Int, val height: Int, val data: ByteArray = ByteArray(
     fun countOn(): Int = data.count { it.toInt() != 0 }
 
     /** Area-averaged downscale / bilinear upscale. */
+    /** Nearest-neighbour resize: keeps label values (owner ids) intact. */
+    fun resizeNearest(w: Int, h: Int): ByteMask {
+        if (w == width && h == height) return this
+        val out = ByteMask(w, h)
+        val xs = IntArray(w) { ((it + 0.5f) * width / w).toInt().coerceIn(0, width - 1) }
+        for (y in 0 until h) {
+            val r = ((y + 0.5f) * height / h).toInt().coerceIn(0, height - 1) * width
+            val o = y * w
+            for (x in 0 until w) out.data[o + x] = data[r + xs[x]]
+        }
+        return out
+    }
+
     fun resize(w: Int, h: Int): ByteMask {
         if (w == width && h == height) return this
         val f = FloatMask(width, height, FloatArray(width * height) { (data[it].toInt() and 0xFF).toFloat() })

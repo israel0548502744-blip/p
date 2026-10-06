@@ -26,6 +26,8 @@ class FrameRecord(
  * Builds the censor mask for a frame: only skin pixels / sensitive regions *owned by
  * people who are to be censored*. Same algorithm as the desktop `compose_mask`:
  *
+ * a skin pixel stored with an owner label (1..n, from the person outlines) belongs to that
+ * person. For the rest (label 255):
  * every skin pixel belongs to the person whose padded box contains it; where boxes
  * overlap, or for pixels outside every box (an outstretched arm), the pixel adopts the
  * owner of the majority of its connected skin component, falling back to the nearest
@@ -104,11 +106,16 @@ object Composer {
             }
         }
         val on = BooleanArray(w * h) { skin.data[it].toInt() != 0 }
+        // owner already known from the person outlines (stored label 1..n), else 0
+        val direct = IntArray(w * h) { val l = skin.data[it].toInt() and 0xFF; if (l in 1..n) l else 0 }
         val (comp, count) = MaskOps.connectedComponents(on, w, h)
         val compArea = IntArray(count)
         for (i in 0 until w * h) if (on[i]) compArea[comp[i]]++
         val votes = IntArray(count * (n + 1))
-        for (i in 0 until w * h) if (on[i] && cover[i] == 1) votes[comp[i] * (n + 1) + nearest[i]]++
+        for (i in 0 until w * h) if (on[i]) {
+            if (direct[i] > 0) votes[comp[i] * (n + 1) + direct[i]]++
+            else if (cover[i] == 1) votes[comp[i] * (n + 1) + nearest[i]]++
+        }
         val compOwner = IntArray(count) { c ->
             var best = 0
             var bestV = 0
@@ -161,7 +168,7 @@ object Composer {
         val out = ByteMask(w, h)
         for (i in 0 until w * h) {
             if (!on[i]) continue
-            var owner = if (cover[i] == 1) nearest[i] else compOwner[comp[i]]
+            var owner = if (direct[i] > 0) direct[i] else if (cover[i] == 1) nearest[i] else compOwner[comp[i]]
             if (owner == 0 && cover[i] > 0) owner = nearest[i]
             // unattributed pixels only count if their whole blob is big enough to be part of a person
             val censor = if (owner == 0) censorUnassigned && compArea[comp[i]] >= minArea else flags[owner - 1]

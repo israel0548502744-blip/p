@@ -29,12 +29,30 @@ data class PipelineSpec(
     val refine: Refine,
     /** Face / neck / neckline rules and speck removal (sizes relative to the face box). */
     val neckline: Neckline,
+    /** Per-person outlines (MobileSAM) for skin ownership and clipping. */
+    @SerialName("person_masks") val personMasks: PersonMasksSpec,
 ) {
+    @Serializable
+    data class PersonMasksSpec(
+        @SerialName("video_size") val videoSize: Int,
+        @SerialName("photo_size") val photoSize: Int,
+        /** Refresh at most this often (seconds of video); the motion carries the outlines in between. */
+        @SerialName("every_sec") val everySec: Float,
+        /** Speed presets that use the outlines. */
+        val speeds: List<String>,
+        /** A pixel belongs to the person with the highest logit above this. */
+        @SerialName("owner_min_logit") val ownerMinLogit: Float,
+        /** Skin where every person's logit is below this is outside all silhouettes: dropped. */
+        @SerialName("clip_logit") val clipLogit: Float,
+    )
+
     @Serializable
     data class Refine(
         /** Window radius as a fraction of (width + height). */
         val radius: Float,
         val eps: Float,
+        /** Width (fraction of the frame diagonal) of the band around the skin boundary decided by colour (0 = off). */
+        @SerialName("color_band") val colorBand: Float = 0f,
     )
 
     @Serializable

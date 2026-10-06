@@ -7,6 +7,7 @@ import com.blueshield.core.gender.GenderEstimate
 import com.blueshield.core.gender.Override
 import com.blueshield.core.gender.censorDecision
 import com.blueshield.core.image.ByteMask
+import com.blueshield.core.image.EdgeSnap
 import com.blueshield.core.image.FloatMask
 import com.blueshield.core.image.Guided
 import com.blueshield.core.image.MaskOps
@@ -18,6 +19,7 @@ import com.blueshield.core.ml.GenderModel
 import com.blueshield.core.ml.ModelStore
 import com.blueshield.core.ml.NudeNet
 import com.blueshield.core.ml.PersonDetector
+import com.blueshield.core.ml.PersonMasks
 import com.blueshield.core.ml.SkinSegmenter
 import com.blueshield.core.track.OpticalFlow
 import com.blueshield.core.track.PersonTrack
@@ -27,6 +29,7 @@ import com.blueshield.core.track.SceneCutDetector
 import com.blueshield.core.track.TemporalFuser
 import java.io.File
 import kotlin.math.abs
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -118,6 +121,8 @@ class Analyzer(
     maskWidth: Int,
     maskHeight: Int,
     storeFile: File,
+    /** Person-outline input size (0 = off); by default the video size for the speeds that use outlines. */
+    personMaskSize: Int? = null,
 ) {
     private val preset = spec.speedPresets.getValue(settings.speed)
     private val segStride = if (settings.aggressive) 1 else preset.segStride
@@ -132,6 +137,13 @@ class Analyzer(
     private val segmenter = SkinSegmenter(models, spec.thresholds.faceExclusion)
     private val personDetector = PersonDetector(models)
     private val nudeNet = NudeNet(models)
+    private val pm = spec.personMasks
+    private val outlineModel = (personMaskSize ?: if (settings.speed in pm.speeds) pm.videoSize else 0)
+        .takeIf { it > 0 }?.let { PersonMasks(models, it) }
+    private val outlineEvery = max(1, (pm.everySec * fps).roundToInt())
+    private var sinceOutline = Int.MAX_VALUE / 2
+    /** Track id → MobileSAM mask logits at analysis size, carried along with the motion between refreshes. */
+    private val outlines = HashMap<Int, FloatMask>()
     private val classifier = GenderClassifier(
         FaceDetector(models), GenderModel(models), spec.thresholds.faceMinScore, spec.thresholds.minFacePx, AgeGenderModel(models),
     )
@@ -221,10 +233,21 @@ class Analyzer(
                     })
                 }
                 val plausible = ColorSkin.plausible(frame, spec.thresholds.skinColor.maxBlueOverRed, spec.thresholds.skinColor.minLuma)
-                // edges: re-fit the coarse (256 px model) probability to the frame's own outlines
-                val luma = frame.gray().data.also { for (i in it.indices) it[i] /= 255f }
+                // edges: re-fit the coarse (256 px model) probability to the frame's own outlines — first the pixels
+                // near the boundary by colour (this frame's skin vs. what surrounds it), then a guided filter
                 val gr = max(2, (spec.refine.radius * (width + height)).roundToInt())
-                val refined = Guided.filter(luma, skin.data, width, height, gr, spec.refine.eps)
+                val refined = if (spec.refine.colorBand > 0f) {
+                    val px = IntArray(width * height) { i ->
+                        val o = i * 3
+                        (0xFF shl 24) or ((frame.data[o].toInt() and 0xFF) shl 16) or ((frame.data[o + 1].toInt() and 0xFF) shl 8) or (frame.data[o + 2].toInt() and 0xFF)
+                    }
+                    val p = skin.data.copyOf()
+                    EdgeSnap.recolour(p, px, width, height, max(2, (spec.refine.colorBand * hypot(width.toFloat(), height.toFloat())).roundToInt()))
+                    Guided.filter(EdgeSnap.guide(px), p, width, height, gr, spec.refine.eps)
+                } else {
+                    val luma = frame.gray().data.also { for (i in it.indices) it[i] /= 255f }
+                    Guided.filter(luma, skin.data, width, height, gr, spec.refine.eps)
+                }
                 // skin only counts on a person: skin-coloured objects (wood, a mug, a lamp) are not people
                 val gate = personGate(seg.person, boxes)
                 skin = FloatMask(width, height, FloatArray(width * height) {
@@ -265,6 +288,7 @@ class Analyzer(
             people.markFrame(frame, idx)
 
             val vis = people.visible()
+            val owners = ownership(frame, cut, nude.containsKey(k), vis, skinBin)
             val p = FloatArray(vis.size * 5)
             for ((i, t) in vis.withIndex()) {
                 p[i * 5] = t.id.toFloat()
@@ -289,11 +313,56 @@ class Analyzer(
                 r[i * 6 + 5] = if (rt.misses == 0) 1f else max(0.6f, 1f - 0.1f * rt.misses)
             }
             records += FrameRecord(p, r)
-            store.append(ByteMask(width, height, ByteArray(width * height) { if (skinBin[it]) -1 else 0 }).resize(store.width, store.height))
+            store.append(ByteMask(width, height, owners).resizeNearest(store.width, store.height))
             lastSkinBinary = skinBin
             processed = idx + 1
             onFrame(idx)
         }
+    }
+
+    /**
+     * Skin labelled with its owner, as stored: 0 = no skin, k (1..254) = the k-th visible person (the
+     * FrameRecord order), 255 = skin whose owner is decided later from the boxes ([Composer]).
+     * Owners come from the people's outlines (MobileSAM), refreshed on detection frames at most every
+     * [outlineEvery] frames and carried by the motion in between. Skin inside a person's box but clearly
+     * outside every outline (background around an arm) is dropped from [skinBin].
+     */
+    private fun ownership(frame: RgbImage, cut: Boolean, detFrame: Boolean, vis: List<PersonTrack>, skinBin: BooleanArray): ByteArray {
+        val n = width * height
+        val out = ByteArray(n) { if (skinBin[it]) -1 else 0 }
+        val model = outlineModel ?: return out
+        if (cut) outlines.clear()
+        for (key in outlines.keys.toList()) outlines[key] = flow.warp(outlines.getValue(key))
+        outlines.keys.retainAll(vis.map { it.id }.toSet())
+        sinceOutline++
+        val missing = vis.any { it.misses == 0 && it.id !in outlines }
+        if (detFrame && vis.isNotEmpty() && (sinceOutline >= outlineEvery || missing || cut)) {
+            val e = model.encode(frame)
+            val masks = model.masks(e, vis.map { PersonMasks.clampBox(it.box, width, height) })
+            outlines.clear()
+            for ((t, m) in vis.zip(masks)) outlines[t.id] = m
+            sinceOutline = 0
+        }
+        if (outlines.isEmpty() || vis.size > 254) return out
+        val logits = vis.map { outlines[it.id] }
+        // clipping only near people: skin far from every box is someone the detector missed
+        val nearPeople = BooleanArray(n)
+        for (b in vis.map { it.box }) {
+            val x0 = max(0, (b.x1 - 0.1f * b.w).toInt())
+            val x1 = minOf(width, (b.x2 + 0.1f * b.w).toInt() + 1)
+            val y0 = max(0, (b.y1 - 0.1f * b.h).toInt())
+            val y1 = minOf(height, (b.y2 + 0.1f * b.h).toInt() + 1)
+            for (y in y0 until y1) java.util.Arrays.fill(nearPeople, y * width + x0, y * width + max(x0, x1), true)
+        }
+        for (i in 0 until n) {
+            if (!skinBin[i]) continue
+            val o = PersonMasks.owners(logits, i, pm.ownerMinLogit, pm.clipLogit)
+            when {
+                o > 0 -> out[i] = o.toByte()
+                o < 0 && nearPeople[i] -> { out[i] = 0; skinBin[i] = false }
+            }
+        }
+        return out
     }
 
     /**

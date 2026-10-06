@@ -36,7 +36,10 @@ class ModelStore(
         const val GENDER = "gender_faceres.onnx"
         const val NUDENET = "nudenet_320n.onnx"
         const val AGE_GENDER = "faceapi_agegender.onnx"
-        val ALL = listOf(SEGMENTER, PERSONS, FACES, GENDER, NUDENET, AGE_GENDER)
+        const val SAM_ENCODER_512 = "mobilesam_encoder_512.onnx"
+        const val SAM_ENCODER_1024 = "mobilesam_encoder_1024.onnx"
+        const val SAM_DECODER = "mobilesam_decoder.onnx"
+        val ALL = listOf(SEGMENTER, PERSONS, FACES, GENDER, NUDENET, AGE_GENDER, SAM_ENCODER_512, SAM_ENCODER_1024, SAM_DECODER)
     }
 }
 

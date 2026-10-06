@@ -3,10 +3,13 @@ package com.blueshield.core.pipeline
 import com.blueshield.core.CensorSettings
 import com.blueshield.core.PipelineSpec
 import com.blueshield.core.image.ByteMask
+import com.blueshield.core.image.EdgeSnap
+import com.blueshield.core.image.MaskOps
 import com.blueshield.core.image.RgbImage
 import com.blueshield.core.image.TextGuard
 import com.blueshield.core.ml.ModelStore
 import java.io.File
+import kotlin.math.hypot
 import kotlin.math.roundToInt
 
 /**
@@ -17,16 +20,27 @@ import kotlin.math.roundToInt
 object StillImage {
     fun analyze(models: ModelStore, settings: CensorSettings, spec: PipelineSpec, img: RgbImage, maskW: Int, maskH: Int, store: File): Analysis {
         val still = spec.copy(gender = spec.gender.copy(voteFactor = 1.0, minVotes = 1, minWeight = 0.3, minAgeVotes = 1))
-        val analyzer = Analyzer(models, settings.copy(speed = "quality"), still, img.width, img.height, 1.0, maskW, maskH, store)
+        val analyzer = Analyzer(models, settings.copy(speed = "quality"), still, img.width, img.height, 1.0, maskW, maskH, store, spec.personMasks.photoSize)
         analyzer.process(listOf(img))
         return analyzer.finish()
     }
 
-    /** Feathered alpha (0..255) at [outW] × [outH] for the current decisions. */
-    fun alpha(a: Analysis, settings: CensorSettings, decisions: Map<Int, Boolean>, outW: Int, outH: Int): ByteMask? {
+    /**
+     * Alpha (0..255) at [outW] × [outH] for the current decisions. With the photo's [pixels] (ARGB, outW × outH)
+     * the mask is first fitted to the photo's own edges ([EdgeSnap]) and only lightly feathered, so the censor
+     * follows the outline of an arm instead of a blob around it.
+     */
+    fun alpha(a: Analysis, settings: CensorSettings, decisions: Map<Int, Boolean>, outW: Int, outH: Int, pixels: IntArray? = null): ByteMask? {
         val raw = a.maskFor(0, decisions, settings, 0)
         if (!raw.any()) return null
-        return Composer.feather(raw, outW, outH, settings.softness, settings.aggressive).resize(outW, outH)
+        if (pixels == null) return Composer.feather(raw, outW, outH, settings.softness, settings.aggressive).resize(outW, outH)
+        val snapped = EdgeSnap.snap(raw, pixels, outW, outH)
+        val diag = hypot(outW.toFloat(), outH.toFloat())
+        val featherPx = settings.softness / 100f * 0.006f * diag
+        val grow = featherPx * 0.6f + (if (settings.aggressive) 0.004f else 0.001f) * diag
+        val bin = ByteMask(outW, outH, ByteArray(outW * outH) { if ((snapped.data[it].toInt() and 0xFF) > 127) -1 else 0 })
+        val grown = MaskOps.dilate(bin, grow.roundToInt())
+        return if (featherPx < 0.5f) grown else MaskOps.gaussianApprox(grown, featherPx)
     }
 
     /**
