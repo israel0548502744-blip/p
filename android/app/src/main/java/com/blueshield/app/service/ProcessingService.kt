@@ -91,10 +91,25 @@ class ProcessingService : Service() {
         return START_NOT_STICKY
     }
 
+    /**
+     * dataSync is the foreground-service type used everywhere. (mediaProcessing is rejected by Android 16
+     * with InvalidForegroundServiceTypeException, which crashed the app.) If the system still refuses to
+     * promote the service, processing continues while the app is open instead of crashing.
+     */
     private fun startInForeground(n: Notification) {
-        val type = if (Build.VERSION.SDK_INT >= 35) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING
-        else if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0
-        ServiceCompat.startForeground(this, NOTIF_ID, n, type)
+        try {
+            val type = if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0
+            ServiceCompat.startForeground(this, NOTIF_ID, n, type)
+        } catch (t: Throwable) {
+            Breadcrumbs.mark("service: could not go foreground: ${Errors.describe(t)}")
+        }
+    }
+
+    /** Android 15+ limits dataSync services to a few hours per day: stop cleanly when told to. */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        Breadcrumbs.mark("service: system timeout (type $fgsType)")
+        ProcessingRepository.processor?.cancel()
+        stopSelf(startId)
     }
 
     private fun contentIntent() = PendingIntent.getActivity(
@@ -141,7 +156,13 @@ class ProcessingService : Service() {
 
         fun start(context: Context, job: Job) {
             pendingJob = job
-            context.startForegroundService(Intent(context, ProcessingService::class.java))
+            try {
+                context.startForegroundService(Intent(context, ProcessingService::class.java))
+            } catch (t: Throwable) { // e.g. the app is not allowed to start a foreground service right now
+                Breadcrumbs.mark("service: start refused: ${Errors.describe(t)}")
+                pendingJob = null
+                ProcessingRepository.publish(JobState(stage = JobState.Stage.ERROR, error = "Could not start processing: ${t.message}"))
+            }
         }
 
         fun ensureChannel(context: Context) {
