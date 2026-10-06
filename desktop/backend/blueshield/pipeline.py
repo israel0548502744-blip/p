@@ -30,7 +30,7 @@ from typing import Callable, Optional
 import cv2
 import numpy as np
 
-from . import media
+from . import media, outlines
 from .censor import BlueCensor, hex_to_bgr
 from .config import ANALYSIS_MAX_SIDE, MASK_MAX_SIDE, WORK_DIR
 from .detectors import (ROI_FULL_EVERY_DET, SegResult, AGGRESSIVE_LABELS, FACE_LABELS, SENSITIVE_LABELS, SensitiveRegionDetector, SkinSegmenter,
@@ -168,6 +168,9 @@ class Engine:
     def people_models(self) -> tuple[PersonDetector, GenderClassifier]:
         return self._get("person", PersonDetector), self._get("gender", GenderClassifier)
 
+    def outlines(self, size: int) -> outlines.PersonMasks:
+        return self._get(f"outlines{size}", lambda: outlines.PersonMasks(size))
+
 
 @dataclass
 class FrameRecord:
@@ -298,6 +301,9 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
     progress.stage = "detecting"
     progress.message = "Detecting people and sensitive regions…"
     flow = FlowEstimator(aw, ah)
+    outline_size = PM_VIDEO_SIZE if settings.speed in PM_SPEEDS else 0
+    outline_state = {"model": engine.outlines(outline_size) if outline_size else None, "masks": {},
+                     "since": 10 ** 9, "every": max(1, int(round(PM_EVERY_SEC * info.fps)))}
     regions = BoxTracker(max_misses=3 if not settings.aggressive else 5)
     faces = BoxTracker(max_misses=2, smooth=0.6)  # face boxes, only used to keep faces uncensored
     people = PersonTracker(max_misses=max(3, int(round(1.5 * info.fps / det_stride))),
@@ -362,9 +368,12 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
                         face = cv2.dilate((seg.face > 0.3).astype(np.uint8), np.ones((15, 15), np.uint8))
                         backup *= 1 - face
                     skin = np.maximum(skin, backup)
-                # edges: re-fit the coarse (256 px model) probability to the frame's own outlines
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255.0
-                skin = guided_filter(gray, skin.astype(np.float32), max(2, int(round(REFINE_RADIUS * (aw + ah)))), REFINE_EPS)
+                # edges: re-fit the coarse (256 px model) probability to the frame's own outlines — first the pixels
+                # near the boundary by colour (this frame's skin vs. what surrounds it), then a guided filter
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                band = max(2, int(round(REFINE_COLOR_BAND * float(np.hypot(aw, ah)))))
+                skin = outlines.recolour(skin.astype(np.float32), rgb, band)
+                skin = guided_filter(outlines.guide(rgb), skin.astype(np.float32), max(2, int(round(REFINE_RADIUS * (aw + ah)))), REFINE_EPS)
                 skin = skin * skin_color_plausible(frame)
                 # skin only counts on a person: skin-coloured objects (wood, a mug, a lamp) are not people
                 skin = skin * person_gate(seg.person, [tuple(b) for b in boxes], aw, ah)
@@ -398,6 +407,7 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
 
             # ── per-frame record (normalised coordinates) ──
             vis = people.visible()
+            owner_map = _ownership(outline_state, frame, flow, cut, k in nude, vis, skin_bin, aw, ah)
             prec = (np.array([[t.tid, t.box[0] / aw, t.box[1] / ah, t.box[2] / aw, t.box[3] / ah] for t in vis],
                              np.float32) if vis else _EMPTY_P)
             rrows = []
@@ -412,7 +422,7 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
                 strength = 1.0 if r.misses == 0 else max(0.6, 1.0 - 0.1 * r.misses)
                 rrows.append([owner, r.box[0] / aw, r.box[1] / ah, r.box[2] / aw, r.box[3] / ah, strength])
             records.append(FrameRecord(prec, np.array(rrows, np.float32) if rrows else _EMPTY_R))
-            store.append(cv2.resize(skin_bin.astype(np.uint8) * 255, (mw, mh), interpolation=cv2.INTER_AREA))
+            store.append(cv2.resize(owner_map, (mw, mh), interpolation=cv2.INTER_NEAREST))
 
             b = min(TIMELINE_BUCKETS - 1, int(idx / max(info.frames, 1) * TIMELINE_BUCKETS))
             timeline_sum[b] += float(skin_bin.mean())
@@ -468,6 +478,14 @@ PERSON_GATE = 0.3  # segmenter "person" probability a skin pixel must (nearly) t
 MIN_BODY_AREA = 0.02  # away from every person box, a smaller "person" blob is an object (a mug, a lamp)
 REFINE_RADIUS = 0.004  # guided-filter window, fraction of (width + height)
 REFINE_EPS = 0.004
+REFINE_COLOR_BAND = 0.012  # band around the skin boundary decided by colour, fraction of the frame diagonal
+# per-person outlines (MobileSAM): see outlines.PersonMasks and shared/pipeline.json "person_masks"
+PM_VIDEO_SIZE = 512
+PM_PHOTO_SIZE = 1024
+PM_EVERY_SEC = 0.5
+PM_SPEEDS = ("quality", "balanced")
+PM_OWNER_MIN_LOGIT = 0.0
+PM_CLIP_LOGIT = -2.0
 
 
 def guided_filter(guide: np.ndarray, p: np.ndarray, r: int, eps: float) -> np.ndarray:
@@ -502,11 +520,56 @@ OWNER_REACH = 0.12  # a skin blob whose nearest edge is this close (box sizes) t
 UNASSIGNED_MIN_AREA = 0.001  # fraction of the frame; smaller unattributed blobs are noise, not people
 
 
+def _ownership(st: dict, frame: np.ndarray, flow: FlowEstimator, cut: bool, det_frame: bool, vis: list,
+               skin_bin: np.ndarray, aw: int, ah: int) -> np.ndarray:
+    """Skin labelled with its owner, as stored: 0 = no skin, k (1..254) = the k-th visible person (the
+    FrameRecord order), 255 = skin whose owner is decided later from the boxes (compose_mask).
+
+    Owners come from the people's outlines (MobileSAM), refreshed on detection frames at most every
+    ``st["every"]`` frames and carried by the motion in between. Skin inside a person's box but clearly
+    outside every outline (background around an arm) is dropped from ``skin_bin``."""
+    out = np.where(skin_bin, 255, 0).astype(np.uint8)
+    model = st["model"]
+    if model is None:
+        return out
+    masks = st["masks"]
+    if cut:
+        masks.clear()
+    for key in list(masks):
+        masks[key] = flow.warp(masks[key] + 20.0) - 20.0  # outside the frame: clearly nobody
+    ids = {t.tid for t in vis}
+    for key in [k for k in masks if k not in ids]:
+        del masks[key]
+    st["since"] += 1
+    missing = any(t.misses == 0 and t.tid not in masks for t in vis)
+    if det_frame and vis and (st["since"] >= st["every"] or missing or cut):
+        boxes = [(max(0.0, t.box[0]), max(0.0, t.box[1]), min(float(aw), t.box[2]), min(float(ah), t.box[3])) for t in vis]
+        masks.clear()
+        for t, m in zip(vis, model.masks(frame, boxes)):
+            masks[t.tid] = m
+        st["since"] = 0
+    if not masks or len(vis) > 254:
+        return out
+    own = outlines.owners([masks.get(t.tid) for t in vis], PM_OWNER_MIN_LOGIT, PM_CLIP_LOGIT)
+    near = np.zeros((ah, aw), bool)  # clipping only near people: skin far from every box is someone missed
+    for t in vis:
+        x1, y1, x2, y2 = t.box
+        bw, bh = x2 - x1, y2 - y1
+        near[max(0, int(y1 - 0.1 * bh)):min(ah, int(y2 + 0.1 * bh) + 1), max(0, int(x1 - 0.1 * bw)):min(aw, int(x2 + 0.1 * bw) + 1)] = True
+    labelled = skin_bin & (own > 0)
+    out[labelled] = own[labelled]
+    clipped = skin_bin & (own < 0) & near
+    out[clipped] = 0
+    skin_bin[clipped] = False
+    return out
+
+
 def compose_mask(skin: np.ndarray, rec: FrameRecord, decisions: dict[int, bool], unassigned_censor: bool,
                  box_pad: float = 0.06, unassigned_min_area: float = UNASSIGNED_MIN_AREA) -> np.ndarray:
     """Censor mask for one frame: only skin / sensitive regions owned by people who are censored.
 
-    Ownership: each skin pixel belongs to the person whose (slightly padded) box
+    Ownership: a skin pixel stored with an owner label (1..n, from the person outlines) belongs to that
+    person. Otherwise (label 255) it belongs to the person whose (slightly padded) box
     contains it. Where boxes overlap, or a pixel lies outside every box (e.g. an
     outstretched arm), the pixel adopts the owner of the majority of its connected
     skin component; failing that, the nearest box centre wins. Skin that can't be
@@ -572,9 +635,12 @@ def _owned_skin(skin: np.ndarray, persons: np.ndarray, flags: np.ndarray, unassi
         nearest[py1:py2, px1:px2][closer] = i + 1
         cover[py1:py2, px1:px2] += 1
     on = skin > 0
-    sure = on & (cover == 1)
+    # owner already known from the person outlines (stored label 1..n), else 0
+    direct = np.where((skin >= 1) & (skin <= n), skin, 0).astype(np.int32)
+    sure = on & (cover == 1) & (direct == 0)
     count, comp = cv2.connectedComponents(on.astype(np.uint8), connectivity=8)
-    votes = np.bincount(comp[sure] * (n + 1) + nearest[sure], minlength=count * (n + 1)).reshape(count, n + 1)
+    votes = np.bincount(np.concatenate([comp[sure] * (n + 1) + nearest[sure], comp[direct > 0] * (n + 1) + direct[direct > 0]]),
+                        minlength=count * (n + 1)).reshape(count, n + 1)
     has = votes[:, 1:].sum(1) > 0
     comp_owner = np.where(has, votes[:, 1:].argmax(1) + 1, 0)
     # a blob entirely outside every box (a forearm stretched beyond the detector's box) belongs to the person
@@ -597,7 +663,7 @@ def _owned_skin(skin: np.ndarray, persons: np.ndarray, flags: np.ndarray, unassi
                 if r <= best_r:
                     best, best_r = i + 1, r
             comp_owner[c] = best
-    owner = np.where(sure, nearest, comp_owner[comp])
+    owner = np.where(direct > 0, direct, np.where(sure, nearest, comp_owner[comp]))
     # ambiguous pixels with no component majority fall back to the nearest box (if any)
     owner = np.where((owner == 0) & (cover > 0), nearest, owner)
     lut = np.concatenate([[unassigned_censor], flags]).astype(np.uint8) * 255

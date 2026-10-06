@@ -38,7 +38,12 @@ def test_mask_constants_match():
     assert pipeline.UNASSIGNED_MIN_AREA_WITH_PEOPLE == SPEC["unassigned_min_area_with_people"]
     assert pipeline.PERSON_GATE == SPEC["thresholds"]["person_gate"]
     assert pipeline.MIN_BODY_AREA == SPEC["thresholds"]["min_body_area"]
-    assert (pipeline.REFINE_RADIUS, pipeline.REFINE_EPS) == (SPEC["refine"]["radius"], SPEC["refine"]["eps"])
+    assert (pipeline.REFINE_RADIUS, pipeline.REFINE_EPS, pipeline.REFINE_COLOR_BAND) == (
+        SPEC["refine"]["radius"], SPEC["refine"]["eps"], SPEC["refine"]["color_band"])
+    pm = SPEC["person_masks"]
+    assert (pipeline.PM_VIDEO_SIZE, pipeline.PM_PHOTO_SIZE, pipeline.PM_EVERY_SEC, list(pipeline.PM_SPEEDS),
+            pipeline.PM_OWNER_MIN_LOGIT, pipeline.PM_CLIP_LOGIT) == (
+        pm["video_size"], pm["photo_size"], pm["every_sec"], pm["speeds"], pm["owner_min_logit"], pm["clip_logit"])
     t = SPEC["tracking"]
     assert (pipeline.FUSER_MEMORY, pipeline.FUSER_LIFT, pipeline.FUSER_LIFT_AGGRESSIVE) == (
         t["fuser_memory"], t["fuser_lift"], t["fuser_lift_aggressive"])
