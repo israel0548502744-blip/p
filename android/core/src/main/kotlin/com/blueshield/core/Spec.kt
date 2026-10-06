@@ -18,15 +18,25 @@ data class PipelineSpec(
     @SerialName("ownership_box_pad") val ownershipBoxPad: Float,
     /** A skin blob up to this many box sizes outside a person's box still belongs to them (mirrors Composer.OWNER_REACH). */
     @SerialName("owner_reach") val ownerReach: Float,
+    @SerialName("unassigned_min_area_with_people") val unassignedMinAreaWithPeople: Float,
     /** Unattributed skin blobs smaller than this fraction of the frame are noise, never censored. */
     @SerialName("unassigned_min_area") val unassignedMinArea: Float,
     @SerialName("analysis_max_side") val analysisMaxSide: Int,
     @SerialName("mask_max_side") val maskMaxSide: Int,
     /** Per-person region-of-interest segmentation parameters. */
     val roi: Roi,
+    /** Edge-aware refinement of the skin probability (guided filter). */
+    val refine: Refine,
     /** Face / neck / neckline rules and speck removal (sizes relative to the face box). */
     val neckline: Neckline,
 ) {
+    @Serializable
+    data class Refine(
+        /** Window radius as a fraction of (width + height). */
+        val radius: Float,
+        val eps: Float,
+    )
+
     @Serializable
     data class Neckline(
         @SerialName("band_half_width") val bandHalfWidth: Float,
@@ -78,6 +88,8 @@ data class PipelineSpec(
         @SerialName("skin_color") val skinColor: SkinColor,
         /** Segmenter "person" probability a skin pixel must (nearly) touch to count. */
         @SerialName("person_gate") val personGate: Float,
+        /** Away from every person box, a "person" blob smaller than this fraction of the frame is an object. */
+        @SerialName("min_body_area") val minBodyArea: Float,
     )
 
     @Serializable

@@ -32,8 +32,10 @@ class FrameRecord(
  * box centre. Unattributable skin follows `censorUnassigned`.
  */
 object Composer {
-    /** A skin blob up to this many box sizes outside a person's box still belongs to them (arms). */
-    const val OWNER_REACH = 0.6f
+    /** A skin blob whose nearest edge is within this many box sizes of a person's box belongs to them (arms). */
+    const val OWNER_REACH = 0.12f
+    /** With people detected, an unattributed skin blob must cover at least this fraction of the frame. */
+    const val UNASSIGNED_MIN_AREA_WITH_PEOPLE = 0.004f
 
     fun compose(
         skin: ByteMask, rec: FrameRecord, decisions: Map<Int, Boolean>, censorUnassigned: Boolean, boxPad: Float,
@@ -49,7 +51,9 @@ object Composer {
                 if (censorUnassigned) out = ownedSkin(skin, rec, BooleanArray(0), true, boxPad, minArea)
             } else {
                 val flags = BooleanArray(n) { decisions[rec.persons[it * 5].toInt()] ?: censorUnassigned }
-                if (flags.any { it } || censorUnassigned) out = ownedSkin(skin, rec, flags, censorUnassigned, boxPad, minArea)
+                // with people in view, a lone unattributed blob must be bigger to count (objects near people)
+                val orphanMin = max(minArea, UNASSIGNED_MIN_AREA_WITH_PEOPLE * w * h)
+                if (flags.any { it } || censorUnassigned) out = ownedSkin(skin, rec, flags, censorUnassigned, boxPad, orphanMin)
             }
         }
         for (k in 0 until rec.regionCount) {
@@ -114,31 +118,40 @@ object Composer {
             }
             best
         }
-        // a blob entirely outside every box (an arm stretched beyond the detector's box) belongs to the nearest
-        // person within arm's reach — so it follows that person's decision, not the "unassigned" fallback
-        val sx = DoubleArray(count)
-        val sy = DoubleArray(count)
+        // a blob entirely outside every box (a forearm stretched beyond the detector's box) belongs to the person
+        // whose box its nearest edge almost touches — so it follows that person's decision. A blob separated by a
+        // real gap (a mug on the desk) stays unattributed.
+        val bx0 = IntArray(count) { Int.MAX_VALUE }
+        val by0 = IntArray(count) { Int.MAX_VALUE }
+        val bx1 = IntArray(count) { -1 }
+        val by1 = IntArray(count) { -1 }
         for (i in 0 until w * h) if (on[i]) {
-            sx[comp[i]] += (i % w).toDouble()
-            sy[comp[i]] += (i / w).toDouble()
+            val c = comp[i]
+            val x = i % w
+            val y = i / w
+            if (x < bx0[c]) bx0[c] = x
+            if (x > bx1[c]) bx1[c] = x
+            if (y < by0[c]) by0[c] = y
+            if (y > by1[c]) by1[c] = y
         }
         for (c in 1 until count) {
             if (compOwner[c] != 0 || compArea[c] == 0) continue
             var hasVote = false
             for (k in 1..n) if (votes[c * (n + 1) + k] > 0) hasVote = true
             if (hasVote) continue
-            val mx = (sx[c] / compArea[c]).toFloat()
-            val my = (sy[c] / compArea[c]).toFloat()
             var bestR = OWNER_REACH
             for (k in 0 until n) {
                 val o = k * 5
-                val bx1 = rec.persons[o + 1] * w
-                val by1 = rec.persons[o + 2] * h
-                val bx2 = rec.persons[o + 3] * w
-                val by2 = rec.persons[o + 4] * h
-                val bw = max(bx2 - bx1, 1f)
-                val bh = max(by2 - by1, 1f)
-                val r = max(max(0f, max(bx1 - mx, mx - bx2)) / bw, max(0f, max(by1 - my, my - by2)) / bh)
+                val x1 = rec.persons[o + 1] * w
+                val y1 = rec.persons[o + 2] * h
+                val x2 = rec.persons[o + 3] * w
+                val y2 = rec.persons[o + 4] * h
+                val bw = max(x2 - x1, 1f)
+                val bh = max(y2 - y1, 1f)
+                // gap between the blob's bounding box and the person box, relative to the box size
+                val gx = max(0f, max(x1 - bx1[c], bx0[c] - x2)) / bw
+                val gy = max(0f, max(y1 - by1[c], by0[c] - y2)) / bh
+                val r = max(gx, gy)
                 if (r <= bestR) {
                     bestR = r
                     compOwner[c] = k + 1

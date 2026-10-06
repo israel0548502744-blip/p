@@ -35,7 +35,10 @@ def test_mask_constants_match():
     assert (detectors.ROI_MAX_FRAME_RATIO, detectors.ROI_FULL_EVERY_DET) == (
         SPEC["roi"]["max_frame_ratio"], SPEC["roi"]["full_every_det"])
     assert pipeline.OWNER_REACH == SPEC["owner_reach"]
+    assert pipeline.UNASSIGNED_MIN_AREA_WITH_PEOPLE == SPEC["unassigned_min_area_with_people"]
     assert pipeline.PERSON_GATE == SPEC["thresholds"]["person_gate"]
+    assert pipeline.MIN_BODY_AREA == SPEC["thresholds"]["min_body_area"]
+    assert (pipeline.REFINE_RADIUS, pipeline.REFINE_EPS) == (SPEC["refine"]["radius"], SPEC["refine"]["eps"])
     t = SPEC["tracking"]
     assert (pipeline.FUSER_MEMORY, pipeline.FUSER_LIFT, pipeline.FUSER_LIFT_AGGRESSIVE) == (
         t["fuser_memory"], t["fuser_lift"], t["fuser_lift_aggressive"])

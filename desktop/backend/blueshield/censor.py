@@ -78,7 +78,36 @@ class BlueCensor:
             fill = np.clip(self.bgr[None, None, :] * shade + 18 * (wave[..., None] > 0.85), 0, 255)
         else:
             fill = self.bgr[None, None, :]
+        alpha *= 1.0 - text_mask(frame[y1:y2, x1:x2])  # on-screen text always stays visible
         a = alpha[..., None]
         roi += (fill - roi) * a
         out[y1:y2, x1:x2] = np.clip(roi, 0, 255).astype(np.uint8)
         return out, coverage
+
+
+TEXT_R = 2
+TEXT_BRIGHT = 0.80
+TEXT_DARK = 0.25
+TEXT_MAX_SAT = 0.25
+
+
+def text_mask(bgr: np.ndarray) -> np.ndarray:
+    """1.0 on burned-in captions / on-screen text: a very bright, unsaturated pixel with a very dark one
+    ``TEXT_R`` px away (white text with a dark outline), or that dark outline itself. Same test as the Android
+    ``TextGuard`` and GPU shader."""
+    f = bgr.astype(np.float32) / 255.0
+    lum = f[..., 2] * 0.299 + f[..., 1] * 0.587 + f[..., 0] * 0.114
+    sat = f.max(-1) - f.min(-1)
+    bright = (lum > TEXT_BRIGHT) & (sat < TEXT_MAX_SAT)
+    dark = lum < TEXT_DARK
+    h, w = lum.shape
+    near_dark = np.zeros_like(bright)
+    near_bright = np.zeros_like(bright)
+    pad_d = np.pad(dark, TEXT_R, mode="edge")
+    pad_b = np.pad(bright, TEXT_R, mode="edge")
+    for dy, dx in ((0, TEXT_R), (0, -TEXT_R), (TEXT_R, 0), (-TEXT_R, 0),
+                   (TEXT_R, TEXT_R), (-TEXT_R, TEXT_R), (TEXT_R, -TEXT_R), (-TEXT_R, -TEXT_R)):
+        sl = (slice(TEXT_R + dy, TEXT_R + dy + h), slice(TEXT_R + dx, TEXT_R + dx + w))
+        near_dark |= pad_d[sl]
+        near_bright |= pad_b[sl]
+    return ((bright & near_dark) | (dark & near_bright)).astype(np.float32)

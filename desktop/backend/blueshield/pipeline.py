@@ -362,11 +362,12 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
                         face = cv2.dilate((seg.face > 0.3).astype(np.uint8), np.ones((15, 15), np.uint8))
                         backup *= 1 - face
                     skin = np.maximum(skin, backup)
+                # edges: re-fit the coarse (256 px model) probability to the frame's own outlines
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255.0
+                skin = guided_filter(gray, skin.astype(np.float32), max(2, int(round(REFINE_RADIUS * (aw + ah)))), REFINE_EPS)
                 skin = skin * skin_color_plausible(frame)
                 # skin only counts on a person: skin-coloured objects (wood, a mug, a lamp) are not people
-                r = max(2, int(round(0.004 * (aw + ah))))
-                person_px = cv2.dilate((seg.person >= PERSON_GATE).astype(np.uint8), np.ones((2 * r + 1, 2 * r + 1), np.uint8))
-                skin = skin * person_px
+                skin = skin * person_gate(seg.person, [tuple(b) for b in boxes], aw, ah)
                 state["last_skin"], state["last_person"], state["since_seg"] = skin, seg.person, 0
                 state["face_map"] = seg.face
             else:
@@ -464,7 +465,40 @@ FUSER_MEMORY = 0.4
 FUSER_LIFT = 0.35
 FUSER_LIFT_AGGRESSIVE = 0.5
 PERSON_GATE = 0.3  # segmenter "person" probability a skin pixel must (nearly) touch to count
-OWNER_REACH = 0.6  # a skin blob up to this many box sizes outside a person's box still belongs to them (arms)
+MIN_BODY_AREA = 0.02  # away from every person box, a smaller "person" blob is an object (a mug, a lamp)
+REFINE_RADIUS = 0.004  # guided-filter window, fraction of (width + height)
+REFINE_EPS = 0.004
+
+
+def guided_filter(guide: np.ndarray, p: np.ndarray, r: int, eps: float) -> np.ndarray:
+    """Edge-aware refinement (He et al.): re-fit the coarse probability to the frame's luminance so mask edges
+    follow real outlines. Same as the Android ``Guided.filter``."""
+    k = (2 * r + 1, 2 * r + 1)
+    box = lambda x: cv2.boxFilter(x, -1, k, borderType=cv2.BORDER_REPLICATE)  # noqa: E731
+    mean_i, mean_p = box(guide), box(p)
+    var_i = box(guide * guide) - mean_i * mean_i
+    cov = box(guide * p) - mean_i * mean_p
+    a = cov / (var_i + eps)
+    b = mean_p - a * mean_i
+    return np.clip(box(a) * guide + box(b), 0, 1)
+
+
+def person_gate(person: np.ndarray, boxes: list, aw: int, ah: int) -> np.ndarray:
+    """Where skin may count: on the segmenter's person map (slightly grown), and — away from every detected
+    person box — only on a person-sized body. Same as the Android ``Analyzer.personGate``."""
+    on = (person >= PERSON_GATE).astype(np.uint8)
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(on, connectivity=8)
+    big = stats[:, cv2.CC_STAT_AREA] >= MIN_BODY_AREA * aw * ah
+    big[0] = False
+    in_box = np.zeros(on.shape, bool)
+    for (x1, y1, x2, y2) in boxes:
+        px, py = 0.15 * (x2 - x1), 0.15 * (y2 - y1)
+        in_box[max(0, int(y1 - py)):int(y2 + py) + 1, max(0, int(x1 - px)):int(x2 + px) + 1] = True
+    keep = ((labels > 0) & (in_box | big[labels])).astype(np.uint8)
+    r = max(2, int(round(0.004 * (aw + ah))))
+    return cv2.dilate(keep, np.ones((2 * r + 1, 2 * r + 1), np.uint8)).astype(np.float32)
+UNASSIGNED_MIN_AREA_WITH_PEOPLE = 0.004  # with people detected, a lone unattributed blob must be this big
+OWNER_REACH = 0.12  # a skin blob whose nearest edge is this close (box sizes) to a person's box belongs to them
 UNASSIGNED_MIN_AREA = 0.001  # fraction of the frame; smaller unattributed blobs are noise, not people
 
 
@@ -491,8 +525,10 @@ def compose_mask(skin: np.ndarray, rec: FrameRecord, decisions: dict[int, bool],
                 out = _drop_small_blobs(skin, min_area)
         else:
             flags = np.array([decisions.get(int(p[0]), unassigned_censor) for p in persons], bool)
+            # with people in view, a lone unattributed blob must be bigger to count (objects near people)
+            orphan_min = max(min_area, UNASSIGNED_MIN_AREA_WITH_PEOPLE * mh * mw)
             if flags.any() or unassigned_censor:
-                out = _owned_skin(skin, persons, flags, unassigned_censor, box_pad, min_area)
+                out = _owned_skin(skin, persons, flags, unassigned_censor, box_pad, orphan_min)
     for r in rec.regions:
         owner = int(r[0])
         allowed = decisions.get(owner, unassigned_censor) if owner >= 0 else unassigned_censor
@@ -541,23 +577,23 @@ def _owned_skin(skin: np.ndarray, persons: np.ndarray, flags: np.ndarray, unassi
     votes = np.bincount(comp[sure] * (n + 1) + nearest[sure], minlength=count * (n + 1)).reshape(count, n + 1)
     has = votes[:, 1:].sum(1) > 0
     comp_owner = np.where(has, votes[:, 1:].argmax(1) + 1, 0)
-    # a blob entirely outside every box (an arm stretched beyond the detector's box) belongs to the nearest
-    # person within arm's reach — so it follows that person's decision, not the "unassigned" fallback
+    # a blob entirely outside every box (a forearm stretched beyond the detector's box) belongs to the person
+    # whose box its nearest edge almost touches — so it follows that person's decision. A blob separated by a
+    # real gap (a mug on the desk) stays unattributed.
     orphans = np.where(~has)[0]
     orphans = orphans[orphans > 0]
     if len(orphans):
-        on_px = np.nonzero(on)
-        cnt = np.bincount(comp[on_px], minlength=count)
-        sx = np.bincount(comp[on_px], weights=on_px[1], minlength=count)
-        sy = np.bincount(comp[on_px], weights=on_px[0], minlength=count)
+        _, _, stats, _ = cv2.connectedComponentsWithStats(on.astype(np.uint8), connectivity=8)
         for c in orphans:
-            if cnt[c] == 0:
+            if c >= len(stats) or stats[c, cv2.CC_STAT_AREA] == 0:
                 continue
-            mx, my = sx[c] / cnt[c], sy[c] / cnt[c]
+            cx0, cy0 = stats[c, cv2.CC_STAT_LEFT], stats[c, cv2.CC_STAT_TOP]
+            cx1, cy1 = cx0 + stats[c, cv2.CC_STAT_WIDTH] - 1, cy0 + stats[c, cv2.CC_STAT_HEIGHT] - 1
             best, best_r = 0, OWNER_REACH
             for i, (_, x1, y1, x2, y2) in enumerate(persons):
-                bw, bh = max((x2 - x1) * mw, 1.0), max((y2 - y1) * mh, 1.0)
-                r = max(max(0.0, x1 * mw - mx, mx - x2 * mw) / bw, max(0.0, y1 * mh - my, my - y2 * mh) / bh)
+                X1, Y1, X2, Y2 = x1 * mw, y1 * mh, x2 * mw, y2 * mh
+                bw, bh = max(X2 - X1, 1.0), max(Y2 - Y1, 1.0)
+                r = max(max(0.0, X1 - cx1, cx0 - X2) / bw, max(0.0, Y1 - cy1, cy0 - Y2) / bh)
                 if r <= best_r:
                     best, best_r = i + 1, r
             comp_owner[c] = best

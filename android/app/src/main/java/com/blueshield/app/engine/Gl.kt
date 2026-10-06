@@ -71,6 +71,7 @@ class CensorShader(rotation: Int) {
     private val uRot: Int
     private val uTime: Int
     private val uAnimated: Int
+    private val uTexel: Int
     private val rot = rotation
     val videoTex: Int
     private val maskTex: Int
@@ -87,6 +88,7 @@ class CensorShader(rotation: Int) {
         uRot = GLES20.glGetUniformLocation(program, "uRot")
         uTime = GLES20.glGetUniformLocation(program, "uTime")
         uAnimated = GLES20.glGetUniformLocation(program, "uAnimated")
+        uTexel = GLES20.glGetUniformLocation(program, "uTexel")
         val tex = IntArray(2)
         GLES20.glGenTextures(2, tex, 0)
         videoTex = tex[0]
@@ -124,6 +126,8 @@ class CensorShader(rotation: Int) {
         GLES20.glUniform1i(uRot, rot)
         GLES20.glUniform1f(uTime, timeSec)
         GLES20.glUniform1i(uAnimated, if (animated) 1 else 0)
+        // one video pixel in texture coordinates (text protection samples neighbours TextGuard.R px away)
+        GLES20.glUniform2f(uTexel, 1f / viewW, 1f / viewH)
         GLES20.glEnableVertexAttribArray(aPos)
         GLES20.glVertexAttribPointer(aPos, 2, GLES20.GL_FLOAT, false, 0, quad)
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
@@ -176,8 +180,28 @@ class CensorShader(rotation: Int) {
             uniform int uRot;
             uniform float uTime;
             uniform int uAnimated;
+            uniform vec2 uTexel;
             varying vec2 vVideo;
             varying vec2 vPos;
+            float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+            float sat(vec3 c) { return max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b)); }
+            // on-screen text (bright + unsaturated next to very dark, or the dark outline itself) stays visible —
+            // same test as core TextGuard
+            float isText(vec4 video) {
+                float l = luma(video.rgb);
+                bool bright = l > 0.80 && sat(video.rgb) < 0.25;
+                bool dark = l < 0.25;
+                if (!bright && !dark) return 0.0;
+                float hit = 0.0;
+                for (int i = 0; i < 8; i++) {
+                    vec2 d = i == 0 ? vec2(2.0, 0.0) : i == 1 ? vec2(-2.0, 0.0) : i == 2 ? vec2(0.0, 2.0) : i == 3 ? vec2(0.0, -2.0)
+                        : i == 4 ? vec2(2.0, 2.0) : i == 5 ? vec2(-2.0, 2.0) : i == 6 ? vec2(2.0, -2.0) : vec2(-2.0, -2.0);
+                    vec3 n = texture2D(uVideo, vVideo + d * uTexel).rgb;
+                    float ln = luma(n);
+                    if ((bright && ln < 0.25) || (dark && ln > 0.80 && sat(n) < 0.25)) hit = 1.0;
+                }
+                return hit;
+            }
             void main() {
                 vec4 video = texture2D(uVideo, vVideo);
                 // coded image coords (origin top-left) -> display (upright) coords of the mask
@@ -187,6 +211,7 @@ class CensorShader(rotation: Int) {
                 else if (uRot == 180) d = vec2(1.0 - c.x, 1.0 - c.y);
                 else if (uRot == 270) d = vec2(c.y, 1.0 - c.x);
                 float a = texture2D(uMask, d).r;
+                if (a > 0.0) a *= 1.0 - isText(video);
                 vec3 fill = uColor;
                 if (uAnimated == 1) {
                     float wave = sin((d.x * 0.9 + d.y * 0.6) * 18.0 + uTime * 2.4);

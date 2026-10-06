@@ -8,6 +8,7 @@ import com.blueshield.core.gender.Override
 import com.blueshield.core.gender.censorDecision
 import com.blueshield.core.image.ByteMask
 import com.blueshield.core.image.FloatMask
+import com.blueshield.core.image.Guided
 import com.blueshield.core.image.MaskOps
 import com.blueshield.core.image.RgbImage
 import com.blueshield.core.ml.AgeGenderModel
@@ -220,13 +221,14 @@ class Analyzer(
                     })
                 }
                 val plausible = ColorSkin.plausible(frame, spec.thresholds.skinColor.maxBlueOverRed, spec.thresholds.skinColor.minLuma)
+                // edges: re-fit the coarse (256 px model) probability to the frame's own outlines
+                val luma = frame.gray().data.also { for (i in it.indices) it[i] /= 255f }
+                val gr = max(2, (spec.refine.radius * (width + height)).roundToInt())
+                val refined = Guided.filter(luma, skin.data, width, height, gr, spec.refine.eps)
                 // skin only counts on a person: skin-coloured objects (wood, a mug, a lamp) are not people
-                val personPx = MaskOps.dilate(
-                    ByteMask(width, height, ByteArray(width * height) { if (seg.person.data[it] >= spec.thresholds.personGate) -1 else 0 }),
-                    max(2, (0.004f * (width + height)).roundToInt()),
-                )
+                val gate = personGate(seg.person, boxes)
                 skin = FloatMask(width, height, FloatArray(width * height) {
-                    if (personPx.data[it].toInt() == 0) 0f else skin.data[it] * plausible.data[it]
+                    if (!gate[it]) 0f else refined[it] * plausible.data[it]
                 })
                 lastSkin = skin
                 lastPerson = seg.person
@@ -291,6 +293,35 @@ class Analyzer(
             processed = idx + 1
             onFrame(idx)
         }
+    }
+
+    /**
+     * Where skin may count: on the segmenter's person map (slightly grown), and — away from every detected
+     * person box — only on a person-sized body. Small "person" blobs on their own are objects (a mug, a lamp).
+     */
+    private fun personGate(person: FloatMask, boxes: List<com.blueshield.core.image.Box>): BooleanArray {
+        val n = width * height
+        val on = BooleanArray(n) { person.data[it] >= spec.thresholds.personGate }
+        val (labels, count) = MaskOps.connectedComponents(on, width, height)
+        val area = IntArray(count)
+        for (l in labels) if (l != 0) area[l]++
+        val minBody = spec.thresholds.minBodyArea * n
+        val inBox = BooleanArray(n)
+        for (b in boxes) {
+            val px = 0.15f * b.w
+            val py = 0.15f * b.h
+            val x0 = max(0, (b.x1 - px).toInt())
+            val x1 = minOf(width, (b.x2 + px).toInt() + 1)
+            val y0 = max(0, (b.y1 - py).toInt())
+            val y1 = minOf(height, (b.y2 + py).toInt() + 1)
+            for (y in y0 until y1) java.util.Arrays.fill(inBox, y * width + x0, y * width + max(x0, x1), true)
+        }
+        val keep = ByteMask(width, height, ByteArray(n) { i ->
+            val l = labels[i]
+            if (l != 0 && (inBox[i] || area[l] >= minBody)) -1 else 0
+        })
+        val grown = MaskOps.dilate(keep, max(2, (0.004f * (width + height)).roundToInt()))
+        return BooleanArray(n) { grown.data[it].toInt() != 0 }
     }
 
     fun finish(): Analysis = Analysis(settings, spec, fps, store, records.toList(), people.all.filterValues { it.frames > 0 }, people.aliases.toMap())

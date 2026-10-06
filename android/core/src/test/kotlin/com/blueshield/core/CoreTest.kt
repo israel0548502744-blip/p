@@ -302,13 +302,17 @@ class CoreTest {
 
     @Test fun armOutsideTheBoxFollowsItsOwner() {
         assertEquals(spec.ownerReach, Composer.OWNER_REACH)
-        // person 7's box covers x 0.2..0.5; a hand blob just right of it (x 0.55..0.6) belongs to them
-        val skin = ByteMask(100, 100).also { for (y in 40..50) for (x in 55..60) it[x, y] = 255 }
+        assertEquals(spec.unassignedMinAreaWithPeople, Composer.UNASSIGNED_MIN_AREA_WITH_PEOPLE)
+        // person 7's box covers x 0.2..0.5; a hand blob just right of it (x 0.52..0.6) belongs to them
+        val skin = ByteMask(100, 100).also { for (y in 40..50) for (x in 52..60) it[x, y] = 255 }
         val rec = FrameRecord(floatArrayOf(7f, 0.2f, 0.2f, 0.5f, 0.9f), FloatArray(0))
         val kept = Composer.compose(skin, rec, mapOf(7 to false), censorUnassigned = true, boxPad = 0.06f)
         assertFalse(kept.any(), "a kept person's hand must not be censored as 'unassigned'")
         val censored = Composer.compose(skin, rec, mapOf(7 to true), censorUnassigned = false, boxPad = 0.06f)
         assertTrue(censored.any())
+        // a separate small object further away (a mug) is not that person's
+        val mug = ByteMask(100, 100).also { for (y in 80..84) for (x in 75..80) it[x, y] = 255 }
+        assertFalse(Composer.compose(mug, rec, mapOf(7 to true), censorUnassigned = true, boxPad = 0.06f).any())
     }
 
     @Test fun tinySpecksAreRemoved() {

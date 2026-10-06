@@ -99,10 +99,11 @@ class QualityCheck {
                 prev = raw
             }
             val feathered = Composer.feather(raw, vw, vh, settings.softness, settings.aggressive).resize(aw, ah)
+            val text = com.blueshield.core.image.TextGuard.mask(f) // what the GPU shader keeps visible
             val row = ByteArray(aw * 3 * ah * 3)
             for (y in 0 until ah) for (x in 0 until aw) {
                 val k = y * aw + x
-                val alpha = (feathered.data[k].toInt() and 0xFF) / 255f
+                val alpha = if (text[k]) 0f else (feathered.data[k].toInt() and 0xFF) / 255f
                 val pr = (probs[i][k].toInt() and 0xFF) / 255f
                 val m = (raw.data[k].toInt() and 0xFF) > 127
                 val g = o.data[k].toInt() != 0
