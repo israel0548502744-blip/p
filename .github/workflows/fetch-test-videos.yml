@@ -3,7 +3,7 @@ name: Fetch test videos
 # `test-videos` branch (the development sandbox has no access to video sites). Edit queries.txt to re-run.
 on:
   push:
-    paths: [".github/test-videos/queries.txt"]
+    paths: [".github/test-videos/**", ".github/workflows/fetch-test-videos.yml"]
   workflow_dispatch:
 permissions:
   contents: write
