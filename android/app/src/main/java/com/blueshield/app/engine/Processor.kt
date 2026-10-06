@@ -47,7 +47,7 @@ data class JobState(
  * per-person overrides only need a (much faster) re-render.
  */
 class Processor(private val context: Context) {
-    private val spec = PipelineSpec.bundled
+    private val spec by lazy { PipelineSpec.bundled }
     private var models: ModelStore? = null
     var analysis: Analysis? = null
         private set
@@ -74,14 +74,17 @@ class Processor(private val context: Context) {
     private fun models(): ModelStore = models ?: ModelStore(
         load = { name -> context.assets.open("models/$name").use { it.readBytes() } },
         options = { sessionOptions() },
+        onEvent = Breadcrumbs::mark,
     ).also { models = it }
 
-    /** NNAPI (GPU/NPU) when available, XNNPACK/CPU otherwise; FP16 relaxation allowed on accelerators. */
+    /**
+     * CPU execution provider only. Hardware delegates (NNAPI/XNNPACK) are faster on paper, but NNAPI is
+     * deprecated and can crash natively on some drivers; a flagship CPU is fast enough, and stability first.
+     */
     private fun sessionOptions(): OrtSession.SessionOptions = OrtSession.SessionOptions().apply {
         setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
-        setIntraOpNumThreads(Runtime.getRuntime().availableProcessors().coerceIn(1, 4))
-        runCatching { addNnapi(java.util.EnumSet.of(ai.onnxruntime.providers.NNAPIFlags.USE_FP16)) }
-        runCatching { addXnnpack(mapOf("intra_op_num_threads" to "4")) }
+        setIntraOpNumThreads(Runtime.getRuntime().availableProcessors().coerceIn(2, 6))
+        setInterOpNumThreads(1)
     }
 
     fun releaseAnalysis() {
@@ -94,6 +97,7 @@ class Processor(private val context: Context) {
         cancelFlag.set(false)
         paused = false
         releaseAnalysis()
+        Breadcrumbs.reset("run: ${meta.name} ${meta.width}x${meta.height}@${"%.2f".format(meta.fps)} ${meta.frameCount} frames ${meta.videoMime} rot=${meta.rotation}")
         this.meta = meta
         this.settings = settings.validated()
         var state = JobState(stage = JobState.Stage.ANALYZING, totalFrames = meta.frameCount)
@@ -102,7 +106,9 @@ class Processor(private val context: Context) {
             val (aw, ah) = Analyzer.scaledSize(meta.width, meta.height, spec.analysisMaxSide)
             val (mw, mh) = Analyzer.scaledSize(meta.width, meta.height, spec.maskMaxSide)
             val store = File(context.cacheDir, "masks_${System.currentTimeMillis()}.bin")
+            Breadcrumbs.mark("analysis: creating analyzer (${aw}x$ah, masks ${mw}x$mh)")
             val analyzer = Analyzer(models(), this.settings, spec, aw, ah, meta.fps, mw, mh, store)
+            Breadcrumbs.mark("analysis: analyzer ready, decoding frames")
             val meter = ProgressMeter(meta.frameCount, 0f, ANALYSIS_SHARE)
             state = state.copy(stage = JobState.Stage.DETECTING, passIndex = 1)
             update(state)
@@ -112,6 +118,7 @@ class Processor(private val context: Context) {
             fun flush() {
                 val chunkStart = analyzer.processed
                 analyzer.process(chunk) { idx ->
+                    if (idx % 30 == 0) Breadcrumbs.mark("analysis: frame $idx")
                     val snap = meter.update(idx + 1)
                     val now = System.nanoTime()
                     var preview = state.preview
@@ -138,6 +145,7 @@ class Processor(private val context: Context) {
             }
             if (analyzer.processed == 0) error("Could not decode any frames from this video.")
             analysis = analyzer.finish()
+            Breadcrumbs.mark("analysis: done, ${analysis?.people?.size ?: 0} people")
             return renderInternal(emptyMap(), state, ANALYSIS_SHARE, update)
         } catch (e: Renderer.CancelledException) {
             return JobState(stage = JobState.Stage.CANCELLED).also(update)
@@ -170,6 +178,7 @@ class Processor(private val context: Context) {
         var state = start.copy(stage = JobState.Stage.APPLYING, passIndex = 2, totalFrames = total, people = a.summaries(s, overrides), overrides = overrides)
         update(state)
         var censored = 0
+        Breadcrumbs.mark("render: start (${m.width}x${m.height}, $total frames)")
         val version = start.version + 1
         val out = File(context.filesDir, "outputs/blueshield_${System.currentTimeMillis()}_v$version.mp4").also { it.parentFile?.mkdirs() }
         val source = object : Renderer.FrameSource {
@@ -186,6 +195,7 @@ class Processor(private val context: Context) {
             out, source, Renderer.Options(CensorSettingsColor.rgb(s), s.animated, s.keepAudio, s.quality), total,
             shouldContinue = { checkpoint(meter) },
             onProgress = { i ->
+                if (i % 60 == 0) Breadcrumbs.mark("render: frame $i")
                 val snap = meter.update(i)
                 state = state.copy(percent = snap.percent, frame = snap.frame, etaSeconds = snap.etaSeconds, fps = snap.fps, elapsed = snap.elapsed, paused = paused,
                     stage = if (i >= total) JobState.Stage.ENCODING else JobState.Stage.APPLYING)
@@ -193,6 +203,7 @@ class Processor(private val context: Context) {
             },
             onPreview = { bmp -> state = state.copy(preview = bmp); update(state) },
         )
+        Breadcrumbs.mark("render: done")
         start.output?.takeIf { it != out }?.delete()
         state = state.copy(stage = JobState.Stage.COMPLETE, percent = 100f, etaSeconds = 0.0, output = out, censoredFrames = censored, version = version)
         update(state)

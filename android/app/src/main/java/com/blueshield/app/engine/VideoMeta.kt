@@ -30,11 +30,16 @@ data class VideoMeta(
         fun probe(context: Context, uri: Uri): VideoMeta {
             var name = "video.mp4"
             var size = 0L
-            context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { c ->
-                if (c.moveToFirst()) {
-                    c.getString(0)?.let { name = it }
-                    if (!c.isNull(1)) size = c.getLong(1)
+            runCatching {
+                context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { c ->
+                    if (c.moveToFirst()) {
+                        c.getString(0)?.let { name = it }
+                        if (!c.isNull(1)) size = c.getLong(1)
+                    }
                 }
+            }
+            if (size == 0L && uri.scheme == "file") {
+                uri.path?.let { java.io.File(it).let { f -> name = f.name; size = f.length() } }
             }
             val ex = MediaExtractor()
             try {

@@ -14,6 +14,7 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // 64-bit phones + x86_64 emulators; keeps the APK small (ONNX Runtime native libs are per-ABI).
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
@@ -33,6 +34,8 @@ android {
     packaging { resources { excludes += listOf("META-INF/{AL2.0,LGPL2.1}", "META-INF/versions/9/OSGI-INF/MANIFEST.MF") } }
 
     sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/modelAssets"))
+    // short fixture clips (woman + man, four men) used by the emulator end-to-end test
+    sourceSets["androidTest"].assets.srcDir(rootDir.resolve("../tests/fixtures"))
 }
 
 kotlin {
@@ -64,4 +67,6 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
 
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
 }

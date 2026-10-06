@@ -14,6 +14,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.blueshield.app.MainActivity
 import com.blueshield.app.R
+import com.blueshield.app.engine.Breadcrumbs
 import com.blueshield.app.engine.JobState
 import com.blueshield.app.engine.Processor
 import com.blueshield.app.engine.VideoMeta
@@ -47,7 +48,6 @@ class ProcessingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startInForeground(notification(0f, getString(R.string.notif_starting)))
-        val processor = ProcessingRepository.processor ?: Processor(applicationContext).also { ProcessingRepository.processor = it }
         val job = pendingJob
         pendingJob = null
         if (job == null) {
@@ -70,9 +70,15 @@ class ProcessingService : Service() {
                     getSystemService(NotificationManager::class.java)?.notify(NOTIF_ID, notification(s.percent, text))
                 }
             }
-            val result = when (job) {
-                is Job.Full -> processor.run(job.meta, job.settings, update)
-                is Job.Rerender -> processor.rerender(job.overrides, ProcessingRepository.state.value, update)
+            val result = try {
+                val processor = ProcessingRepository.processor ?: Processor(applicationContext).also { ProcessingRepository.processor = it }
+                when (job) {
+                    is Job.Full -> processor.run(job.meta, job.settings, update)
+                    is Job.Rerender -> processor.rerender(job.overrides, ProcessingRepository.state.value, update)
+                }
+            } catch (t: Throwable) { // setup failures must show as an error message, not kill the app
+                Breadcrumbs.mark("service: failed ${t.javaClass.simpleName}: ${t.message}")
+                JobState(stage = JobState.Stage.ERROR, error = "${t.javaClass.simpleName}: ${t.message}")
             }
             ProcessingRepository.publish(result)
             ServiceCompat.stopForeground(this@ProcessingService, ServiceCompat.STOP_FOREGROUND_REMOVE)

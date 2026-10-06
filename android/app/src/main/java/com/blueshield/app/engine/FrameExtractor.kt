@@ -3,6 +3,7 @@ package com.blueshield.app.engine
 import android.content.Context
 import android.graphics.ImageFormat
 import android.media.Image
+import android.os.Build
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaExtractor
@@ -71,7 +72,11 @@ class FrameExtractor(private val context: Context, private val meta: VideoMeta, 
 
     /** YUV_420_888 → upright RGB at outW × outH (nearest-neighbour sampling of the crop rect). */
     private fun toRgb(img: Image): RgbImage {
-        require(img.format == ImageFormat.YUV_420_888) { "Unexpected decoder image format ${img.format}" }
+        // 8-bit video arrives as YUV_420_888. 10-bit (HDR / many phone recordings) arrives as P010: 16-bit
+        // little-endian samples with the 10 bits in the top, so the second byte is an 8-bit approximation.
+        val tenBit = Build.VERSION.SDK_INT >= 33 && img.format == ImageFormat.YCBCR_P010
+        require(tenBit || img.format == ImageFormat.YUV_420_888) { "Unexpected decoder image format ${img.format}" }
+        val hi = if (tenBit) 1 else 0
         val crop = img.cropRect
         val cw = crop.width()
         val ch = crop.height()
@@ -94,11 +99,11 @@ class FrameExtractor(private val context: Context, private val meta: VideoMeta, 
                 val (cx, cy) = Orientation.displayToCoded(dx.toInt(), dy.toInt(), rot, cw, ch)
                 val px = (cx.coerceIn(0, cw - 1) + crop.left)
                 val py = (cy.coerceIn(0, ch - 1) + crop.top)
-                val yy = (yb.get(py * y.rowStride + px * y.pixelStride).toInt() and 0xFF) - 16
+                val yy = (yb.get(py * y.rowStride + px * y.pixelStride + hi).toInt() and 0xFF) - 16
                 val uvx = px / 2
                 val uvy = py / 2
-                val uu = (ub.get(uvy * u.rowStride + uvx * u.pixelStride).toInt() and 0xFF) - 128
-                val vv = (vb.get(uvy * v.rowStride + uvx * v.pixelStride).toInt() and 0xFF) - 128
+                val uu = (ub.get(uvy * u.rowStride + uvx * u.pixelStride + hi).toInt() and 0xFF) - 128
+                val vv = (vb.get(uvy * v.rowStride + uvx * v.pixelStride + hi).toInt() and 0xFF) - 128
                 val c = 1.164f * yy
                 val o = (oy * outW + ox) * 3
                 d[o] = (c + 1.596f * vv).toInt().coerceIn(0, 255).toByte()

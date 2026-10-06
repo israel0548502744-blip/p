@@ -12,12 +12,17 @@ import java.nio.FloatBuffer
 class ModelStore(
     private val load: (String) -> ByteArray,
     private val options: () -> OrtSession.SessionOptions = { OrtSession.SessionOptions() },
+    /** Progress breadcrumbs ("loading x", "loaded x"): lets the app tell where a native crash happened. */
+    private val onEvent: (String) -> Unit = {},
 ) : AutoCloseable {
     val env: OrtEnvironment = OrtEnvironment.getEnvironment()
     private val sessions = HashMap<String, OrtSession>()
 
     @Synchronized
-    fun session(file: String): OrtSession = sessions.getOrPut(file) { env.createSession(load(file), options()) }
+    fun session(file: String): OrtSession = sessions.getOrPut(file) {
+        onEvent("model: loading $file")
+        env.createSession(load(file), options()).also { onEvent("model: loaded $file") }
+    }
 
     override fun close() {
         sessions.values.forEach { it.close() }

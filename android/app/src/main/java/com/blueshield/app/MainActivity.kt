@@ -1,6 +1,10 @@
 package com.blueshield.app
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -21,10 +25,16 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -64,6 +74,20 @@ private fun App(vm: AppViewModel) {
     val showResult by vm.showResult.collectAsStateWithLifecycle()
     val draft by vm.draftOverrides.collectAsStateWithLifecycle()
     val saved by vm.saved.collectAsStateWithLifecycle()
+
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var crashReport by remember { mutableStateOf(CrashReporter.pending(context)) }
+    crashReport?.let { report ->
+        CrashDialog(report, onShare = {
+            val send = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, report) }
+            activity.startActivity(Intent.createChooser(send, null))
+        }, onCopy = {
+            (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("BlueShield crash report", report))
+        }, onClose = {
+            CrashReporter.markSeen(context)
+            crashReport = null
+        })
+    }
 
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { vm.onPicked(it) }
     val notifPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { vm.start() }
@@ -105,4 +129,37 @@ private fun App(vm: AppViewModel) {
             }
         }
     }
+}
+
+
+/** Shown on the launch after a crash: the report can be copied or shared so the cause can be fixed. */
+@Composable
+private fun CrashDialog(report: String, onShare: () -> Unit, onCopy: () -> Unit, onClose: () -> Unit) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onClose,
+        containerColor = Palette.Ink900,
+        title = { androidx.compose.material3.Text("האפליקציה קרסה בפעם הקודמת", color = Color.White) },
+        text = {
+            Column {
+                androidx.compose.material3.Text(
+                    "כדי שאוכל לתקן, לחץ \"שיתוף\" ושלח לי את הטקסט (למשל בוואטסאפ לעצמך, ומשם הדבק לי בשיחה).",
+                    color = Palette.Ink200, fontSize = 13.sp,
+                )
+                androidx.compose.foundation.text.selection.SelectionContainer {
+                    androidx.compose.material3.Text(
+                        report, color = Palette.Ink300, fontSize = 10.sp, lineHeight = 13.sp,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        modifier = Modifier.padding(top = 10.dp).heightIn(max = 280.dp).verticalScroll(androidx.compose.foundation.rememberScrollState()),
+                    )
+                }
+            }
+        },
+        confirmButton = { androidx.compose.material3.TextButton(onClick = onShare) { androidx.compose.material3.Text("שיתוף") } },
+        dismissButton = {
+            Row {
+                androidx.compose.material3.TextButton(onClick = onCopy) { androidx.compose.material3.Text("העתקה") }
+                androidx.compose.material3.TextButton(onClick = onClose) { androidx.compose.material3.Text("סגירה") }
+            }
+        },
+    )
 }
