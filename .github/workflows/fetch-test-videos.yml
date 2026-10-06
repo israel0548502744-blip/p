@@ -1,0 +1,29 @@
+name: Fetch test videos
+# Downloads freely licensed clips (Wikimedia Commons) for quality checks and stores them on the
+# `test-videos` branch (the development sandbox has no access to video sites). Edit queries.txt to re-run.
+on:
+  push:
+    paths: [".github/test-videos/queries.txt"]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Download clips
+        run: python3 .github/test-videos/fetch.py out "$(cat .github/test-videos/queries.txt)" 2
+      - name: Contact sheet (one frame per clip, for a quick look)
+        run: |
+          cd out && for f in *.mp4; do ffmpeg -v error -y -ss 2 -i "$f" -frames:v 1 -vf scale=320:-2 "${f%.mp4}.jpg"; done; ls -la
+      - name: Publish to the test-videos branch
+        run: |
+          cd out
+          git init -q -b test-videos
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A && git commit -q -m "Test clips (Wikimedia Commons, see manifest.json for licenses)"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" test-videos
