@@ -697,8 +697,9 @@ def render(analysis: Analysis, settings: CensorSettings, overrides: dict[int, st
     timeline_sum = np.zeros(TIMELINE_BUCKETS)
     timeline_cnt = np.zeros(TIMELINE_BUCKETS)
 
-    window: deque = deque()  # composed masks for frames i .. i+lookahead
+    window: deque = deque()  # composed masks for frames i .. i+max(1, lookahead)
     next_compose = 0
+    prev = None  # composed mask of frame i-1
 
     def compose(i: int) -> np.ndarray:
         return compose_mask(analysis.store.get(i), analysis.records[i], decisions, unassigned_censor)
@@ -722,13 +723,19 @@ def render(analysis: Analysis, settings: CensorSettings, overrides: dict[int, st
             control.checkpoint()
             if i >= total:
                 break
-            while next_compose < min(total, i + lookahead + 1):
+            while next_compose < min(total, i + max(1, lookahead) + 1):
                 window.append(compose(next_compose))
                 next_compose += 1
-            m = window[0]
-            for extra in list(window)[1:]:
+            cur = window[0]
+            m = cur
+            # momentary drop-outs: censored in the previous and the next frame -> censored here too (only ever
+            # adds; same as Analysis.maskFor on Android)
+            if prev is not None and len(window) > 1 and prev.any() and window[1].any():
+                m = np.maximum(m, np.minimum(prev, window[1]))
+            for extra in list(window)[1:lookahead + 1]:
                 if extra.any():
                     m = np.maximum(m, extra)
+            prev = cur
             window.popleft()
             out, cov = censor.apply(frame, m, i)
             if cov > 0:

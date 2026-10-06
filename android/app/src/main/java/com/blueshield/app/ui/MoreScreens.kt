@@ -194,3 +194,67 @@ fun PhotoResultScreen(
         PrivacyPill()
     }
 }
+
+/** Several photos at once: progress, the latest censored photo, and a summary when done. */
+@Composable
+fun BatchScreen(b: com.blueshield.app.AppViewModel.BatchState, onClose: () -> Unit, onMore: () -> Unit) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(40.dp).clip(RoundedCornerShape(12.dp))
+                    .background((if (b.finished) Palette.Emerald else Palette.Shield500).copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (b.finished) Icon(Icons.Filled.CheckCircle, null, tint = Palette.Emerald)
+                else CircularProgressIndicator(color = Palette.Shield400, strokeWidth = 2.5.dp, modifier = Modifier.size(22.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text(
+                    if (b.finished) "התמונות צונזרו ונשמרו בגלריה." else "מצנזר תמונות…",
+                    color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    if (b.finished) "בתיקייה BlueShield בגלריה." else (b.current ?: ""),
+                    color = Palette.Ink300, fontSize = 12.5.sp, maxLines = 1,
+                )
+            }
+        }
+        Panel(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row {
+                    Text("הושלמו", color = Palette.Ink300, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                    Text(ltr("${b.done} / ${b.total}"), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                }
+                androidx.compose.material3.LinearProgressIndicator(
+                    progress = { if (b.total == 0) 0f else b.done.toFloat() / b.total },
+                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                    color = Palette.Shield400, trackColor = Palette.Ink800,
+                )
+                Text("נשמרו בגלריה: ${b.saved}", color = Palette.Ink200, fontSize = 13.sp)
+                if (b.failed.isNotEmpty()) {
+                    Text("לא הצליחו (${b.failed.size}): " + b.failed.joinToString(", "), color = Palette.Amber, fontSize = 12.5.sp)
+                }
+            }
+        }
+        b.last?.let { bmp ->
+            Image(
+                bmp.asImageBitmap(), null, contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxWidth().aspectRatio(bmp.width.toFloat() / bmp.height).clip(RoundedCornerShape(16.dp)),
+            )
+        }
+        if (b.finished) {
+            PrimaryButton("סיום", Icons.Filled.CheckCircle, onClick = onClose)
+            OutlinedButton(onClick = onMore, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(14.dp)) {
+                Icon(Icons.Filled.Image, null)
+                Spacer(Modifier.width(8.dp))
+                Text("עוד תמונות")
+            }
+        } else {
+            OutlinedButton(onClick = onClose, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(14.dp)) {
+                Text("עצירה (מה שכבר נשמר נשאר בגלריה)")
+            }
+        }
+        PrivacyPill()
+    }
+}

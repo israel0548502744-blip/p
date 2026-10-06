@@ -12,5 +12,6 @@ class ActivityResultContracts {
         object VideoOnly : VisualMediaType
         object ImageAndVideo : VisualMediaType
     }
+    open class PickMultipleVisualMedia(maxItems: Int = 0) : ActivityResultContract<PickVisualMediaRequest, List<Uri>>()
     class RequestPermission : ActivityResultContract<String, Boolean>()
 }

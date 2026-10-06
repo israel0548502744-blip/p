@@ -75,6 +75,25 @@ class PipelineE2ETest {
         p.close()
     }
 
+    /** Batch photos: several photos censored one after another with one processor, each saved to the gallery. */
+    @Test fun photoBatchEndToEnd() {
+        val p = Processor(ctx)
+        val uri = fixture("woman_and_man.jpg")
+        repeat(2) { n ->
+            val r = p.processPhoto(uri, CensorSettings())
+            assertTrue("photo $n output missing", r.file.exists() && r.file.length() > 10_000)
+            assertEquals(r.original.width, r.censored.width)
+            // the woman (left) is censored, so the picture changed
+            var diff = 0
+            for (y in 0 until r.original.height step 4) for (x in 0 until r.original.width / 2 step 4) if (r.original.getPixel(x, y) != r.censored.getPixel(x, y)) diff++
+            assertTrue("photo $n: nothing censored", diff > 50)
+            val saved = com.blueshield.app.engine.Exporter.savePhotoToGallery(ctx, r.file, "e2e_batch_$n.jpg")
+            ctx.contentResolver.openInputStream(saved)!!.use { assertTrue(it.read() >= 0) }
+            ctx.contentResolver.delete(saved, null, null)
+        }
+        p.close()
+    }
+
     @Test fun serviceEndToEnd() {
         val meta = VideoMeta.probe(ctx, fixture("woman_and_man.mp4"))
         ProcessingRepository.reset()

@@ -54,6 +54,7 @@ import com.blueshield.app.ui.Palette
 import com.blueshield.app.ui.ProcessingScreen
 import com.blueshield.app.ui.ResultScreen
 import com.blueshield.app.ui.AboutScreen
+import com.blueshield.app.ui.BatchScreen
 import com.blueshield.app.ui.PhotoHome
 import com.blueshield.app.ui.PhotoResultScreen
 import com.blueshield.app.ui.SettingsScreen
@@ -61,6 +62,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
@@ -81,7 +83,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { HOME, PROCESSING, RESULT, PHOTO, PHOTO_RESULT, SETTINGS, ABOUT }
+private enum class Screen { HOME, PROCESSING, RESULT, PHOTO, PHOTO_RESULT, BATCH, SETTINGS, ABOUT }
 
 @Composable
 private fun App(vm: AppViewModel) {
@@ -97,6 +99,7 @@ private fun App(vm: AppViewModel) {
     val photo by vm.photo.collectAsStateWithLifecycle()
     val photoResult by vm.photoResult.collectAsStateWithLifecycle()
     val photoBusy by vm.photoBusy.collectAsStateWithLifecycle()
+    val batch by vm.batch.collectAsStateWithLifecycle()
     /** A page opened from the menu, shown over whatever is current. */
     var page by remember { mutableStateOf<Screen?>(null) }
     var menuOpen by remember { mutableStateOf(false) }
@@ -116,6 +119,8 @@ private fun App(vm: AppViewModel) {
     }
 
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { vm.onPicked(it) }
+    val pickMany = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(100)) { vm.onPickedMany(it) }
+    val launchMany = { pickMany.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
     val notifPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { vm.start() }
     val startWithPermission = {
         if (Build.VERSION.SDK_INT >= 33) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS) else vm.start()
@@ -123,6 +128,7 @@ private fun App(vm: AppViewModel) {
 
     val screen = page ?: when {
         job.running -> Screen.PROCESSING
+        batch != null -> Screen.BATCH
         showResult && job.stage == JobState.Stage.COMPLETE && job.output != null && video != null -> Screen.RESULT
         photoResult != null -> Screen.PHOTO_RESULT
         photo != null -> Screen.PHOTO
@@ -131,6 +137,7 @@ private fun App(vm: AppViewModel) {
     BackHandler(enabled = page != null) { page = null }
     BackHandler(enabled = page == null && screen == Screen.RESULT) { vm.adjust() }
     BackHandler(enabled = page == null && screen == Screen.PHOTO_RESULT) { vm.adjustPhoto() }
+    BackHandler(enabled = page == null && screen == Screen.BATCH) { vm.closeBatch() }
 
     Column(
         Modifier.fillMaxSize()
@@ -154,6 +161,8 @@ private fun App(vm: AppViewModel) {
                             menuOpen = false; page = null
                             pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
                         })
+                    DropdownMenuItem(text = { Text("כמה תמונות בבת אחת") }, leadingIcon = { Icon(Icons.Filled.Collections, null) },
+                        enabled = !job.running && batch == null, onClick = { menuOpen = false; page = null; launchMany() })
                     DropdownMenuItem(text = { Text("אודות") }, leadingIcon = { Icon(Icons.Filled.Info, null) },
                         onClick = { menuOpen = false; page = Screen.ABOUT })
                 }
@@ -166,7 +175,9 @@ private fun App(vm: AppViewModel) {
                     video, settings, loading, error,
                     onPick = { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) },
                     onClear = vm::clearVideo, onEditSettings = { page = Screen.SETTINGS }, onStart = startWithPermission,
+                    onPickMany = launchMany,
                 )
+                Screen.BATCH -> batch?.let { b -> BatchScreen(b, onClose = vm::closeBatch, onMore = { vm.closeBatch(); launchMany() }) }
                 Screen.PHOTO -> photo?.let { p ->
                     PhotoHome(p.preview, p.name, settings, photoBusy, onEditSettings = { page = Screen.SETTINGS }, onClear = vm::clearPhoto, onStart = vm::startPhoto)
                 }

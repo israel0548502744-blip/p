@@ -35,6 +35,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Person
@@ -97,11 +98,12 @@ fun PrimaryButton(text: String, icon: androidx.compose.ui.graphics.vector.ImageV
 fun HomeScreen(
     video: VideoMeta?, settings: CensorSettings, loading: Boolean, error: String?,
     onPick: () -> Unit, onClear: () -> Unit, onEditSettings: () -> Unit, onStart: () -> Unit,
+    onPickMany: () -> Unit = {},
 ) {
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             if (video == null) {
-                EmptyState(loading, error, onPick)
+                EmptyState(loading, error, onPick, onPickMany)
             } else {
                 SinglePlayer(video.uri, video.width.toFloat() / video.height, Modifier.fillMaxWidth())
                 VideoInfo(video, onClear)
@@ -113,7 +115,7 @@ fun HomeScreen(
 }
 
 @Composable
-private fun EmptyState(loading: Boolean, error: String?, onPick: () -> Unit) {
+private fun EmptyState(loading: Boolean, error: String?, onPick: () -> Unit, onPickMany: () -> Unit) {
     Panel(Modifier.fillMaxWidth()) {
         Column(Modifier.fillMaxWidth().padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             val pulse = rememberInfiniteTransition(label = "pulse")
@@ -135,7 +137,17 @@ private fun EmptyState(loading: Boolean, error: String?, onPick: () -> Unit) {
             )
             Spacer(Modifier.height(20.dp))
             if (loading) CircularProgressIndicator(color = Palette.Shield400)
-            else PrimaryButton("בחירת סרטון או תמונה", Icons.Filled.Movie, onClick = onPick)
+            else {
+                PrimaryButton("בחירת סרטון או תמונה", Icons.Filled.Movie, onClick = onPick)
+                Spacer(Modifier.height(10.dp))
+                androidx.compose.material3.OutlinedButton(
+                    onClick = onPickMany, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(14.dp),
+                ) {
+                    Icon(Icons.Filled.Collections, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("כמה תמונות בבת אחת")
+                }
+            }
             if (error != null) Text(error, color = Palette.Danger, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp))
             Spacer(Modifier.height(16.dp))
             PrivacyPill()

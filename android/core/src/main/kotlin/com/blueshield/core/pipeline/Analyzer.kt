@@ -31,6 +31,7 @@ import java.io.File
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 /** Summary of one detected person, for the review UI. */
@@ -84,16 +85,50 @@ class Analysis(
             )
         }
 
-    /** Censor mask for frame i at mask resolution (before feathering), including look-ahead. */
+    /**
+     * Censor mask for frame i at mask resolution (before feathering), including look-ahead.
+     *
+     * Momentary drop-outs are filled: a pixel censored in both the previous and the next frame is censored in
+     * this one too (a one-frame flash of bare skin is the most visible kind of flicker). Only ever adds — a fast
+     * arm, covered in one frame only, keeps its cover.
+     */
     fun maskFor(i: Int, decisions: Map<Int, Boolean>, settings: CensorSettings, lookahead: Int): ByteMask {
-        var m = Composer.compose(store[i], records[i], decisions, settings.censorUnassigned, spec.ownershipBoxPad, spec.unassignedMinArea)
-        for (j in 1..lookahead) {
-            if (i + j >= records.size) break
-            val next = Composer.compose(store[i + j], records[i + j], decisions, settings.censorUnassigned, spec.ownershipBoxPad, spec.unassignedMinArea)
-            if (next.any()) {
-                if (m.any()) m.maxWith(next) else m = next
+        var m = composed(i, decisions, settings).copy()
+        if (i > 0 && i + 1 < records.size) {
+            val a = composed(i - 1, decisions, settings)
+            val b = composed(i + 1, decisions, settings)
+            if (a.any() && b.any()) {
+                for (k in m.data.indices) {
+                    val v = min(a.data[k].toInt() and 0xFF, b.data[k].toInt() and 0xFF)
+                    if (v > (m.data[k].toInt() and 0xFF)) m.data[k] = v.toByte()
+                }
             }
         }
+        for (j in 1..lookahead) {
+            if (i + j >= records.size) break
+            val next = composed(i + j, decisions, settings)
+            if (next.any()) {
+                if (m.any()) m.maxWith(next) else m = next.copy()
+            }
+        }
+        return m
+    }
+
+    // the last few composed frames: rendering asks for i - 1, i, i + 1 (and the look-ahead) for every frame
+    private var cacheFor: Pair<Map<Int, Boolean>, Boolean>? = null
+    private val cache = LinkedHashMap<Int, ByteMask>()
+
+    @Synchronized
+    private fun composed(i: Int, decisions: Map<Int, Boolean>, settings: CensorSettings): ByteMask {
+        val key = decisions to settings.censorUnassigned
+        if (cacheFor != key) {
+            cache.clear()
+            cacheFor = key
+        }
+        cache[i]?.let { return it }
+        val m = Composer.compose(store[i], records[i], decisions, settings.censorUnassigned, spec.ownershipBoxPad, spec.unassignedMinArea)
+        cache[i] = m
+        while (cache.size > 8) cache.remove(cache.keys.first())
         return m
     }
 

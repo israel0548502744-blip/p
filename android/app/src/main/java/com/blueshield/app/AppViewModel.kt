@@ -54,6 +54,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val photoBusy: StateFlow<Boolean> = _photoBusy.asStateFlow()
     private val thumbs = HashMap<Int, Bitmap?>()
 
+    /** Several photos at once: each is censored with the current settings and saved to the gallery. */
+    data class BatchState(
+        val total: Int, val done: Int = 0, val saved: Int = 0, val failed: List<String> = emptyList(),
+        val current: String? = null, val last: Bitmap? = null, val finished: Boolean = false,
+    )
+    private val _batch = MutableStateFlow<BatchState?>(null)
+    val batch: StateFlow<BatchState?> = _batch.asStateFlow()
+    private var batchJob: kotlinx.coroutines.Job? = null
+
     init {
         viewModelScope.launch {
             ProcessingRepository.state.collect { s ->
@@ -127,6 +136,50 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         getApplication<Application>().contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
             ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
     }.getOrNull()
+
+    fun onPickedMany(uris: List<Uri>) {
+        when {
+            uris.isEmpty() -> Unit
+            uris.size == 1 -> onPicked(uris[0])
+            else -> startBatch(uris)
+        }
+    }
+
+    private fun startBatch(uris: List<Uri>) {
+        clearVideo()
+        clearPhoto()
+        _error.value = null
+        val settings = _settings.value.validated()
+        _batch.value = BatchState(uris.size)
+        batchJob = viewModelScope.launch {
+            for ((i, uri) in uris.withIndex()) {
+                val name = displayName(uri) ?: "photo_${i + 1}.jpg"
+                _batch.value = _batch.value?.copy(current = name)
+                try {
+                    val r = withContext(Dispatchers.Default) { processor().processPhoto(uri, settings) }
+                    withContext(Dispatchers.IO) { Exporter.savePhotoToGallery(getApplication(), r.file, name.substringBeforeLast('.') + "_blueshield.jpg") }
+                    // keep only a small preview: a batch of large photos must not fill the memory
+                    val thumb = withContext(Dispatchers.Default) {
+                        val s = 480f / maxOf(r.censored.width, r.censored.height)
+                        Bitmap.createScaledBitmap(r.censored, maxOf(1, (r.censored.width * s).toInt()), maxOf(1, (r.censored.height * s).toInt()), true)
+                    }
+                    _batch.value = _batch.value?.let { it.copy(done = it.done + 1, saved = it.saved + 1, last = thumb) }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    _batch.value = _batch.value?.let { it.copy(done = it.done + 1, failed = it.failed + name) }
+                }
+            }
+            _batch.value = _batch.value?.copy(current = null, finished = true)
+        }
+    }
+
+    /** Stop the batch (photos already saved stay in the gallery) or close the finished summary. */
+    fun closeBatch() {
+        batchJob?.cancel()
+        batchJob = null
+        _batch.value = null
+    }
 
     /** Censor the picked photo. */
     fun startPhoto() {
