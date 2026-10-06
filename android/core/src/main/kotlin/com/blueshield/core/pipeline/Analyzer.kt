@@ -88,20 +88,24 @@ class Analysis(
     /**
      * Censor mask for frame i at mask resolution (before feathering), including look-ahead.
      *
-     * Momentary drop-outs are filled: a pixel censored in both the previous and the next frame is censored in
-     * this one too (a one-frame flash of bare skin is the most visible kind of flicker). Only ever adds — a fast
-     * arm, covered in one frame only, keeps its cover.
+     * Momentary drop-outs are filled: a pixel censored in one of the previous [FILL_GAP] frames and in one of the
+     * next ones is censored in this one too (a flash of bare skin for a frame or two is the most visible kind of
+     * flicker). Only ever adds — a fast arm, covered in one frame only, keeps its cover.
      */
     fun maskFor(i: Int, decisions: Map<Int, Boolean>, settings: CensorSettings, lookahead: Int): ByteMask {
         var m = composed(i, decisions, settings).copy()
-        if (i > 0 && i + 1 < records.size) {
-            val a = composed(i - 1, decisions, settings)
-            val b = composed(i + 1, decisions, settings)
-            if (a.any() && b.any()) {
-                for (k in m.data.indices) {
-                    val v = min(a.data[k].toInt() and 0xFF, b.data[k].toInt() and 0xFF)
-                    if (v > (m.data[k].toInt() and 0xFF)) m.data[k] = v.toByte()
-                }
+        // covered before (within FILL_GAP frames) and after (within FILL_GAP frames) -> covered now
+        val before = (1..FILL_GAP).mapNotNull { d -> (i - d).takeIf { it >= 0 }?.let { composed(it, decisions, settings) } }.filter { it.any() }
+        val after = (1..FILL_GAP).mapNotNull { d -> (i + d).takeIf { it < records.size }?.let { composed(it, decisions, settings) } }.filter { it.any() }
+        if (before.isNotEmpty() && after.isNotEmpty()) {
+            for (k in m.data.indices) {
+                var a = 0
+                for (x in before) a = max(a, x.data[k].toInt() and 0xFF)
+                if (a <= (m.data[k].toInt() and 0xFF)) continue
+                var b = 0
+                for (x in after) b = max(b, x.data[k].toInt() and 0xFF)
+                val v = min(a, b)
+                if (v > (m.data[k].toInt() and 0xFF)) m.data[k] = v.toByte()
             }
         }
         for (j in 1..lookahead) {
@@ -128,8 +132,13 @@ class Analysis(
         cache[i]?.let { return it }
         val m = Composer.compose(store[i], records[i], decisions, settings.censorUnassigned, spec.ownershipBoxPad, spec.unassignedMinArea)
         cache[i] = m
-        while (cache.size > 8) cache.remove(cache.keys.first())
+        while (cache.size > 12) cache.remove(cache.keys.first())
         return m
+    }
+
+    companion object {
+        /** Drop-outs up to this many frames long are filled (see [maskFor]). */
+        const val FILL_GAP = 2
     }
 
     fun lookahead(): Int {
