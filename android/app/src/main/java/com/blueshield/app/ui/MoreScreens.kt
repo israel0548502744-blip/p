@@ -113,7 +113,9 @@ fun AboutScreen() {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 SectionTitle("מודלים")
                 for (m in listOf(
-                    "MediaPipe Selfie Multiclass, EfficientDet-Lite0, BlazeFace (Apache-2.0)",
+                    "MediaPipe Selfie Multiclass, BlazeFace (Apache-2.0)",
+                    "YOLOX-tiny, Megvii (Apache-2.0)",
+                    "MobileSAM (Apache-2.0)",
                     "מודל מגדר " + ltr("FaceRes, @vladmandic/human-models (MIT)"),
                     "face-api.js AgeGenderNet, @vladmandic/face-api (MIT)",
                     "NudeNet v3 (MIT)",

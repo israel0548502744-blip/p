@@ -64,6 +64,35 @@ def owners(logits: list, min_logit: float, clip_logit: float) -> np.ndarray:
     return out
 
 
+MAJORITY = 0.75
+KEEP_MARGIN = 3.0
+
+
+def follow_arms(own: np.ndarray, skin: np.ndarray, logits: list) -> np.ndarray:
+    """A hand belongs to the arm it's attached to (see PersonMasks.followArms on Android): within each connected
+    skin region, when one person owns >= MAJORITY of the labelled pixels, the rest goes to them too - except
+    pixels another outline claims by more than KEEP_MARGIN logits."""
+    count, comp = cv2.connectedComponents(skin.astype(np.uint8), connectivity=8)
+    k = len(logits) + 1
+    lab = skin & (own > 0)
+    votes = np.bincount(comp[lab] * k + own[lab], minlength=count * k).reshape(count, k)
+    total = votes[:, 1:].sum(1)
+    best = votes[:, 1:].argmax(1) + 1
+    major = np.where((total > 0) & (votes[np.arange(count), best] >= MAJORITY * total), best, 0)
+    major[0] = 0
+    m = major[comp]
+    cand = skin & (m > 0) & (own != m)
+    if not cand.any():
+        return own
+    stack = np.stack([l if l is not None else np.full(skin.shape, -np.inf, np.float32) for l in logits])
+    mine = np.take_along_axis(stack, np.clip(m - 1, 0, None)[None], 0)[0]
+    theirs = np.where(own > 0, np.take_along_axis(stack, np.clip(own - 1, 0, None)[None], 0)[0], -np.inf)
+    flip = cand & np.isfinite(mine) & (theirs <= mine + KEEP_MARGIN)
+    own = own.copy()
+    own[flip] = m[flip]
+    return own
+
+
 def guide(rgb: np.ndarray) -> np.ndarray:
     """Brightness plus a skin-tone channel (red minus green), so skin against a white dress has an edge."""
     f = rgb.astype(np.float32) / 255.0

@@ -31,7 +31,7 @@ class ModelStore(
 
     companion object {
         const val SEGMENTER = "selfie_multiclass_256x256.onnx"
-        const val PERSONS = "efficientdet_lite0.onnx"
+        const val PERSONS = "yolox_tiny.onnx"
         const val FACES = "blaze_face_short_range.onnx"
         const val GENDER = "gender_faceres.onnx"
         const val NUDENET = "nudenet_320n.onnx"

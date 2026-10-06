@@ -21,7 +21,7 @@ e.g. on older women), and the age decides "adult woman" vs. "girl".
 | File | Converted from | Tool | Check vs. original |
 |---|---|---|---|
 | `selfie_multiclass_256x256.onnx` | MediaPipe Selfie Multiclass (TFLite, Apache-2.0) | `tf2onnx --opset 17` | max abs diff 5e-5 |
-| `efficientdet_lite0.onnx` | MediaPipe EfficientDet-Lite0 float32 (TFLite, Apache-2.0) | `tf2onnx` + `shared/tools/fix_onnx_resize.py` | max abs diff 8e-6 |
+| `yolox_tiny.onnx` | [YOLOX](https://github.com/Megvii-BaseDetection/YOLOX) release 0.1.1rc0 `yolox_tiny.onnx` (Apache-2.0), person class only | weights stored fp16 (`fp16_storage` in `shared/tools/build_mobilesam.py`) | max score diff 9e-6 |
 | `blaze_face_short_range.onnx` | MediaPipe BlazeFace short range (TFLite, Apache-2.0) | `tf2onnx` | max abs diff 3e-4 (logits) |
 | `gender_faceres.onnx` | `gender_faceres_fp16.tflite` above | `tf2onnx` | max abs diff 1e-7 |
 | `nudenet_320n.onnx` | NudeNet v3 320n (MIT), unchanged | — | — |

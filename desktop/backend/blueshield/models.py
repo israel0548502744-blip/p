@@ -6,9 +6,9 @@ Models
    Per-pixel classes: background, hair, body-skin, face-skin, clothes, others.
    Downloaded once from Google's public model bucket into ``backend/models``.
 
-2. MediaPipe "EfficientDet-Lite0" object detector (Apache-2.0, Google), COCO
-   classes — only the ``person`` class is used, for person-level detection/tracking.
-   Downloaded once from Google's public model bucket into ``backend/models``.
+2. YOLOX-tiny object detector (Apache-2.0, Megvii), COCO classes — only the ``person`` class is
+   used, for person-level detection/tracking. Committed in the repository (``models/onnx``), as are the
+   MobileSAM per-person outline models (Apache-2.0).
 
 3. MediaPipe "BlazeFace short range" face detector (Apache-2.0, Google) — finds faces
    inside each person's upper-body crop. Downloaded from Google's model bucket.
@@ -41,11 +41,10 @@ SEGMENTER_URL = (
     "https://storage.googleapis.com/mediapipe-models/image_segmenter/"
     "selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite"
 )
-PERSON_FILE = MODELS_DIR / "efficientdet_lite0_float32.tflite"
-PERSON_URL = (
-    "https://storage.googleapis.com/mediapipe-models/object_detector/"
-    "efficientdet_lite0/float32/latest/efficientdet_lite0.tflite"
-)
+PERSON_FILE = ROOT_DIR.parent / "models" / "onnx" / "yolox_tiny.onnx"  # bundled in the repository
+PERSON_URL = "https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_tiny.onnx"
+SAM_FILES = [ROOT_DIR.parent / "models" / "onnx" / f for f in
+             ("mobilesam_encoder_512.onnx", "mobilesam_encoder_1024.onnx", "mobilesam_decoder.onnx")]
 FACE_FILE = MODELS_DIR / "blaze_face_short_range.tflite"
 FACE_URL = (
     "https://storage.googleapis.com/mediapipe-models/face_detector/"
@@ -81,9 +80,8 @@ def ensure_segmenter() -> Path:
 
 
 def ensure_person_detector() -> Path:
-    with _lock:
-        if not PERSON_FILE.exists():
-            _download(PERSON_URL, PERSON_FILE)
+    if not PERSON_FILE.exists():
+        raise FileNotFoundError(f"{PERSON_FILE} is missing (it is committed in the repository's models/onnx)")
     return PERSON_FILE
 
 
@@ -133,8 +131,10 @@ def models_status() -> dict:
     return {
         "segmenter": {"name": "MediaPipe Selfie Multiclass 256", "ready": SEGMENTER_FILE.exists(),
                       "source": SEGMENTER_URL, "license": "Apache-2.0"},
-        "persons": {"name": "MediaPipe EfficientDet-Lite0 (person detector)", "ready": PERSON_FILE.exists(),
-                    "source": PERSON_URL, "license": "Apache-2.0"},
+        "persons": {"name": "YOLOX-tiny (person detector)", "ready": PERSON_FILE.exists(),
+                    "source": PERSON_URL + " (repository: models/onnx/yolox_tiny.onnx)", "license": "Apache-2.0"},
+        "outlines": {"name": "MobileSAM (per-person outlines)", "ready": all(f.exists() for f in SAM_FILES),
+                     "source": "repository: models/onnx/mobilesam_*.onnx", "license": "Apache-2.0"},
         "faces": {"name": "MediaPipe BlazeFace (short range)", "ready": FACE_FILE.exists(),
                   "source": FACE_URL, "license": "Apache-2.0"},
         "gender": {"name": "FaceRes gender classifier (TFLite fp16)", "ready": GENDER_FILE.exists() or GENDER_BUNDLED.exists(),

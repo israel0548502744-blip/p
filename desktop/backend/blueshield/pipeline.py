@@ -2,7 +2,7 @@
 
 Analysis (``analyze``) — analysis resolution, streamed:
     decode → scene cuts → optical flow
-      ├─ person detection (EfficientDet)  ─► person tracking (IoU + appearance, re-id)
+      ├─ person detection (YOLOX-tiny)  ─► person tracking (IoU + appearance, re-id)
       │                                        └─► gender classification per track (face → FaceRes votes)
       ├─ skin segmentation (Selfie Multiclass, keyframes + flow propagation) ─► anti-flicker fusion
       └─ sensitive regions (NudeNet, batched) ─► region tracking ─► assigned to their person
@@ -285,7 +285,7 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
     sens = settings.sensitivity / 100.0
     skin_threshold = 0.72 - 0.42 * sens - (0.08 if settings.aggressive else 0.0)
     det_min_score = 0.50 - 0.30 * sens  # NudeNet: 0.50 .. 0.20
-    person_min_score = 0.45 - 0.20 * sens  # EfficientDet: 0.45 .. 0.25
+    person_min_score = 0.45 - 0.20 * sens  # YOLOX: 0.45 .. 0.25
     labels = AGGRESSIVE_LABELS if settings.aggressive else SENSITIVE_LABELS
     reclassify_every = max(det_stride, int(round(info.fps)))  # once a second after enough votes
 
@@ -556,11 +556,10 @@ def _ownership(st: dict, frame: np.ndarray, flow: FlowEstimator, cut: bool, det_
         x1, y1, x2, y2 = t.box
         bw, bh = x2 - x1, y2 - y1
         near[max(0, int(y1 - 0.1 * bh)):min(ah, int(y2 + 0.1 * bh) + 1), max(0, int(x1 - 0.1 * bw)):min(aw, int(x2 + 0.1 * bw) + 1)] = True
-    labelled = skin_bin & (own > 0)
-    out[labelled] = own[labelled]
     clipped = skin_bin & (own < 0) & near
-    out[clipped] = 0
     skin_bin[clipped] = False
+    own = outlines.follow_arms(own, skin_bin, [masks.get(t.tid) for t in vis])
+    out = np.where(skin_bin, np.where(own > 0, own, 255), 0).astype(np.uint8)
     return out
 
 

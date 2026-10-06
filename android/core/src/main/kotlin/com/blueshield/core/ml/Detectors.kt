@@ -157,42 +157,67 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
 }
 
 /** Stage 1 — person detection (EfficientDet-Lite0, COCO "person"), with SSD anchor decoding. */
+/**
+ * Person boxes: YOLOX-tiny (Megvii, Apache-2.0), COCO class 0. Tighter boxes and many more people in crowds
+ * than the previous EfficientDet-Lite0 (a woman and the man behind her get one box each, not one loose box
+ * spanning both). Input 416 × 416 BGR 0..255, letterboxed top-left with 114 padding; raw outputs decoded on
+ * the 8/16/32 grids.
+ */
 class PersonDetector(private val models: ModelStore) {
-    private val anchors: FloatArray = buildAnchors()
+    private val grid: FloatArray = buildGrid()
 
     fun detect(img: RgbImage, minScore: Float): List<Detection> {
-        val x = img.resize(INPUT, INPUT)
-        val input = FloatArray(INPUT * INPUT * 3) { ((x.data[it].toInt() and 0xFF) - 127f) / 128f }
-        val outs = models.session(ModelStore.PERSONS).runFloat(models.env, input, longArrayOf(1, INPUT.toLong(), INPUT.toLong(), 3))
-        val scores = outs.first { it.first.last() != 4L }
-        val deltas = outs.first { it.first.last() == 4L }.second
-        val numClasses = scores.first.last().toInt()
-        val n = deltas.size / 4
+        val r = min(INPUT.toFloat() / img.width, INPUT.toFloat() / img.height)
+        val nw = max(1, (img.width * r).toInt())
+        val nh = max(1, (img.height * r).toInt())
+        val x = img.resize(nw, nh)
+        val plane = INPUT * INPUT
+        val input = FloatArray(3 * plane) { 114f }
+        for (y in 0 until nh) for (xx in 0 until nw) {
+            val i = (y * nw + xx) * 3
+            val o = y * INPUT + xx
+            input[o] = (x.data[i + 2].toInt() and 0xFF).toFloat() // B
+            input[plane + o] = (x.data[i + 1].toInt() and 0xFF).toFloat() // G
+            input[2 * plane + o] = (x.data[i].toInt() and 0xFF).toFloat() // R
+        }
+        val out = models.session(ModelStore.PERSONS).runFloat(models.env, input, longArrayOf(1, 3, INPUT.toLong(), INPUT.toLong()))[0].second
+        val stride = out.size / (grid.size / 3)
         val boxes = ArrayList<Box>()
         val sc = ArrayList<Float>()
-        val sx = img.width.toFloat() / INPUT
-        val sy = img.height.toFloat() / INPUT
-        for (i in 0 until n) {
-            val s = scores.second[i * numClasses] // class 0 = person
+        for (i in 0 until grid.size / 3) {
+            val o = i * stride
+            val s = out[o + 4] * out[o + 5] // objectness × person
             if (s < minScore) continue
-            val cy = deltas[i * 4] * anchors[i * 4 + 2] + anchors[i * 4]
-            val cx = deltas[i * 4 + 1] * anchors[i * 4 + 3] + anchors[i * 4 + 1]
-            val h = exp(deltas[i * 4 + 2]) * anchors[i * 4 + 2]
-            val w = exp(deltas[i * 4 + 3]) * anchors[i * 4 + 3]
+            val st = grid[i * 3 + 2]
+            val cx = (out[o] + grid[i * 3]) * st / r
+            val cy = (out[o + 1] + grid[i * 3 + 1]) * st / r
+            val w = exp(out[o + 2]) * st / r
+            val h = exp(out[o + 3]) * st / r
             val b = Box(
-                ((cx - w / 2) * sx).coerceIn(0f, img.width.toFloat()), ((cy - h / 2) * sy).coerceIn(0f, img.height.toFloat()),
-                ((cx + w / 2) * sx).coerceIn(0f, img.width.toFloat()), ((cy + h / 2) * sy).coerceIn(0f, img.height.toFloat()),
+                (cx - w / 2).coerceIn(0f, img.width.toFloat()), (cy - h / 2).coerceIn(0f, img.height.toFloat()),
+                (cx + w / 2).coerceIn(0f, img.width.toFloat()), (cy + h / 2).coerceIn(0f, img.height.toFloat()),
             )
             if (b.w > 4 && b.h > 8) {
                 boxes += b
                 sc += s
             }
         }
-        return suppressContained(nms(boxes, sc, 0.5f).map { Detection("person", sc[it], boxes[it]) })
+        return suppressContained(nms(boxes, sc, 0.45f).map { Detection("person", sc[it], boxes[it]) })
     }
 
     companion object {
-        const val INPUT = 320
+        const val INPUT = 416
+
+        /** (grid x, grid y, stride) for every output row: strides 8, 16, 32. */
+        fun buildGrid(): FloatArray {
+            val a = ArrayList<Float>()
+            for (st in intArrayOf(8, 16, 32)) {
+                val g = INPUT / st
+                for (y in 0 until g) for (x in 0 until g) { a += x.toFloat(); a += y.toFloat(); a += st.toFloat() }
+            }
+            return a.toFloatArray()
+        }
+
         /** A box this much inside a bigger one is a partial (e.g. upper-body) duplicate. */
         const val CONTAINED_MIN = 0.8f
 
@@ -208,27 +233,6 @@ class PersonDetector(private val models: ModelStore) {
                 keep += d
             }
             return keep
-        }
-
-        /** EfficientDet anchors: levels 3–7, 3 octaves × 3 aspect ratios, laid out (cy, cx, h, w). */
-        fun buildAnchors(): FloatArray {
-            val out = ArrayList<Float>()
-            for (lvl in 3..7) {
-                val stride = 1 shl lvl
-                val g = ceil(INPUT.toDouble() / stride).toInt()
-                val cfg = ArrayList<Pair<Float, Float>>()
-                for (octave in 0 until 3) for (ar in floatArrayOf(1f, 2f, 0.5f)) {
-                    val base = 4f * stride * Math.pow(2.0, octave / 3.0).toFloat()
-                    cfg += (base / sqrt(ar)) to (base * sqrt(ar))
-                }
-                for (y in 0 until g) for (x in 0 until g) for ((ah, aw) in cfg) {
-                    out += (y + 0.5f) * stride
-                    out += (x + 0.5f) * stride
-                    out += ah
-                    out += aw
-                }
-            }
-            return out.toFloatArray()
         }
     }
 }

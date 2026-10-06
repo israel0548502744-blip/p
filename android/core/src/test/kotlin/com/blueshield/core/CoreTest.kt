@@ -377,7 +377,8 @@ class CoreTest {
         }
     }
 
-    @Test fun anchorsMatchModelOutputs() {
-        assertEquals(19206 * 4, PersonDetector.buildAnchors().size)
+    @Test fun personGridMatchesModelOutputs() {
+        // YOLOX-tiny at 416: 52² + 26² + 13² output rows
+        assertEquals(3549 * 3, PersonDetector.buildGrid().size)
     }
 }

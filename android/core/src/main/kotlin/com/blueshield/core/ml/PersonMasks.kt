@@ -106,6 +106,41 @@ class PersonMasks(private val models: ModelStore, val size: Int) {
             return if (known == logits.size && bestV < clipLogit) -1 else 0
         }
 
+        /**
+         * A hand belongs to the arm it's attached to: where outlines overlap (a man's hand reaching in front of a
+         * woman's head) the decoder can give the hand to the wrong person. Within each connected skin region,
+         * when one person owns at least [MAJORITY] of the labelled pixels, the rest of the region goes to them
+         * too — except pixels another outline claims by a clear margin ([KEEP_MARGIN] logits), e.g. two people's
+         * arms touching. [own]: per-pixel owner (person index + 1, 0 = unknown, < 0 = clipped), updated in place.
+         */
+        fun followArms(own: IntArray, skin: BooleanArray, w: Int, h: Int, logits: List<FloatMask?>) {
+            val (comp, count) = com.blueshield.core.image.MaskOps.connectedComponents(skin, w, h)
+            val k = logits.size + 1
+            val votes = IntArray(count * k)
+            for (i in own.indices) if (skin[i] && own[i] > 0) votes[comp[i] * k + own[i]]++
+            val major = IntArray(count)
+            for (c in 1 until count) {
+                var best = 0
+                var total = 0
+                for (o in 1 until k) {
+                    total += votes[c * k + o]
+                    if (votes[c * k + o] > votes[c * k + best]) best = o
+                }
+                if (best > 0 && votes[c * k + best] >= MAJORITY * total) major[c] = best
+            }
+            for (i in own.indices) {
+                if (!skin[i]) continue
+                val m = major[comp[i]]
+                if (m == 0 || own[i] == m) continue
+                val mine = logits[m - 1]?.data?.get(i) ?: continue
+                val theirs = if (own[i] > 0) logits[own[i] - 1]?.data?.get(i) ?: Float.NEGATIVE_INFINITY else Float.NEGATIVE_INFINITY
+                if (theirs <= mine + KEEP_MARGIN) own[i] = m
+            }
+        }
+
+        const val MAJORITY = 0.75f
+        const val KEEP_MARGIN = 3f
+
         fun clampBox(b: Box, w: Int, h: Int) = Box(max(0f, b.x1), max(0f, b.y1), min(w.toFloat(), b.x2), min(h.toFloat(), b.y2))
     }
 }

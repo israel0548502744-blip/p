@@ -354,14 +354,15 @@ class Analyzer(
             val y1 = minOf(height, (b.y2 + 0.1f * b.h).toInt() + 1)
             for (y in y0 until y1) java.util.Arrays.fill(nearPeople, y * width + x0, y * width + max(x0, x1), true)
         }
+        val own = IntArray(n)
         for (i in 0 until n) {
             if (!skinBin[i]) continue
             val o = PersonMasks.owners(logits, i, pm.ownerMinLogit, pm.clipLogit)
-            when {
-                o > 0 -> out[i] = o.toByte()
-                o < 0 && nearPeople[i] -> { out[i] = 0; skinBin[i] = false }
-            }
+            own[i] = o
+            if (o < 0 && nearPeople[i]) skinBin[i] = false
         }
+        PersonMasks.followArms(own, skinBin, width, height, logits)
+        for (i in 0 until n) if (skinBin[i] && own[i] > 0) out[i] = own[i].toByte() else if (!skinBin[i]) out[i] = 0
         return out
     }
 
