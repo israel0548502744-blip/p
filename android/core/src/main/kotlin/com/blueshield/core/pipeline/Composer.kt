@@ -186,8 +186,10 @@ object Composer {
         if (!mask.any()) return mask
         val diag = hypot(frameW.toFloat(), frameH.toFloat())
         val toMask = mask.width.toFloat() / frameW
-        val featherPx = softness / 100f * 0.012f * diag
-        val grow = featherPx * 0.6f + (if (aggressive) 0.006f else 0.002f) * diag
+        // The skin edges are fitted to the frame by colour during analysis, so only a small safety margin is
+        // grown (it used to be twice as wide, which read as a puffy blob around arms).
+        val featherPx = softness / 100f * 0.008f * diag
+        val grow = featherPx * 0.5f + (if (aggressive) 0.004f else 0.001f) * diag
         val bin = ByteMask(mask.width, mask.height, ByteArray(mask.data.size) { if ((mask.data[it].toInt() and 0xFF) > 96) -1 else 0 })
         val grown = MaskOps.dilate(bin, (grow * toMask).roundToInt())
         return MaskOps.gaussianApprox(grown, featherPx * toMask)

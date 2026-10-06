@@ -30,10 +30,11 @@ class BlueCensor:
         self.w, self.h = width, height
         self.bgr = np.array(hex_to_bgr(color), np.float32)
         diag = math.hypot(width, height)
-        # softness 0..100 -> feather radius up to ~1.2% of the diagonal
-        self.feather = max(0.0, softness / 100.0 * 0.012 * diag)
-        # grow masks slightly so feathering never exposes the original edge
-        grow = self.feather * 0.6 + (0.006 * diag if aggressive else 0.002 * diag)
+        # softness 0..100 -> feather radius up to ~0.8% of the diagonal
+        self.feather = max(0.0, softness / 100.0 * 0.008 * diag)
+        # grow masks slightly so feathering never exposes the original edge (the skin edges are already fitted to
+        # the frame by colour during analysis, so the margin is small)
+        grow = self.feather * 0.5 + (0.004 * diag if aggressive else 0.001 * diag)
         self.grow = int(round(grow))
         self.margin = int(self.grow + 3 * self.feather + 4)
         self.animated = animated
