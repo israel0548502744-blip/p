@@ -21,7 +21,7 @@ for _d in (UPLOAD_DIR, OUTPUT_DIR, WORK_DIR, MODELS_DIR):
 # Analysis frames are downscaled so their long side is at most this many pixels.
 ANALYSIS_MAX_SIDE = int(os.environ.get("BLUESHIELD_ANALYSIS_SIDE", 768))
 # Masks are stored on disk at this (long side) resolution between the two passes.
-MASK_MAX_SIDE = int(os.environ.get("BLUESHIELD_MASK_SIDE", 480))
+MASK_MAX_SIDE = int(os.environ.get("BLUESHIELD_MASK_SIDE", 768))
 
 ALLOWED_EXTENSIONS = {
     ".mp4", ".m4v", ".mov", ".webm", ".mkv", ".avi", ".wmv", ".flv", ".mpg",

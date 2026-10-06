@@ -8,6 +8,7 @@
     "aggressive": false,
     "animated": false,
     "include_face": false,
+    "speed": "quality",
     "target": "female",
     "gender_threshold": 70,
     "uncertain_policy": "censor"
@@ -18,8 +19,10 @@
     "person_min_score": { "strict": 0.45, "sensitive": 0.25 },
     "face_min_score": 0.5,
     "min_face_px": 14,
-    "face_exclusion": 0.35
+    "face_exclusion": 0.35,
+    "skin_color": { "max_blue_over_red": 6, "min_luma": 28 }
   },
+  "roi": { "side_scale": 1.15, "paste_pad": 0.08, "min_side_px": 24 },
   "gender": {
     "vote_factor": 0.35,
     "max_logit": 6.0,
@@ -48,5 +51,5 @@
   "ownership_box_pad": 0.06,
   "unassigned_min_area": 0.001,
   "analysis_max_side": 768,
-  "mask_max_side": 480
+  "mask_max_side": 768
 }

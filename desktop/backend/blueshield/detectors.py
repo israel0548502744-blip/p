@@ -65,20 +65,73 @@ class SkinSegmenter:
             self._seg = vision.ImageSegmenter.create_from_options(opts)
 
     def _run(self, rgb: np.ndarray) -> np.ndarray:
-        """Return per-class probabilities (H, W, 6) at the input's resolution."""
+        """Return per-class probabilities (H, W, 6) at the input's resolution.
+
+        Non-square inputs are letterboxed (edge-replicated) to a square instead of being squashed,
+        so a portrait video keeps its proportions and arms keep their shape.
+        """
         h, w = rgb.shape[:2]
         if self.backend == "litert":
-            x = cv2.resize(rgb, (self.SIZE, self.SIZE), interpolation=cv2.INTER_LINEAR).astype(np.float32)
+            side = max(h, w)
+            top, left = (side - h) // 2, (side - w) // 2
+            sq = rgb if side == h == w else cv2.copyMakeBorder(rgb, top, side - h - top, left, side - w - left,
+                                                               cv2.BORDER_REPLICATE)
+            x = cv2.resize(sq, (self.SIZE, self.SIZE), interpolation=cv2.INTER_LINEAR).astype(np.float32)
             x = x * (1 / 127.5) - 1.0
             self._it.set_tensor(self._in, x[None])
             self._it.invoke()
             logits = self._it.get_tensor(self._out)[0]
             e = np.exp(logits - logits.max(-1, keepdims=True))
-            probs = e / e.sum(-1, keepdims=True)
-            return cv2.resize(probs, (w, h), interpolation=cv2.INTER_LINEAR)
+            probs = cv2.resize(e / e.sum(-1, keepdims=True), (side, side), interpolation=cv2.INTER_LINEAR)
+            return np.ascontiguousarray(probs[top:top + h, left:left + w])
         img = self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=np.ascontiguousarray(rgb))
         res = self._seg.segment(img)
         return np.stack([np.squeeze(m.numpy_view()).astype(np.float32) for m in res.confidence_masks], -1)
+
+    def segment_rois(self, bgr: np.ndarray, boxes: list[tuple[float, float, float, float]], base: SegResult,
+                     include_face: bool = False, side_scale: float = 1.15, paste_pad: float = 0.08,
+                     min_side: int = 24) -> SegResult:
+        """Re-segment each person at much higher effective resolution.
+
+        The model only sees 256x256 pixels, so on a whole frame an arm is a handful of pixels. Here every
+        person gets their own square crop (``side_scale`` x the longer box side, no distortion), and the
+        result replaces ``base`` inside that person's (slightly padded) box.
+        """
+        h, w = bgr.shape[:2]
+        skin, person, face = base.skin.copy(), base.person.copy(), base.face.copy()
+        roi_skin = np.zeros_like(skin)
+        roi_person = np.zeros_like(person)
+        roi_face = np.zeros_like(face)
+        cover = np.zeros(skin.shape, bool)
+        rgb_full = None
+        for (x1, y1, x2, y2) in boxes:
+            bw, bh = x2 - x1, y2 - y1
+            side = int(round(max(bw, bh) * side_scale))
+            if side < min_side:
+                continue
+            cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+            a, b = int(round(cx - side / 2)), int(round(cy - side / 2))
+            # edge-replicated crop (the box may reach past the frame)
+            pad = (max(0, -b), max(0, b + side - h), max(0, -a), max(0, a + side - w))
+            crop = bgr[max(0, b):min(h, b + side), max(0, a):min(w, a + side)]
+            if crop.size == 0:
+                continue
+            crop = cv2.copyMakeBorder(crop, *pad, cv2.BORDER_REPLICATE)
+            s_, p_, f_ = self._masks(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB), include_face)
+            # region of the frame this person owns: their padded box, intersected with the crop
+            px, py = paste_pad * bw, paste_pad * bh
+            rx1, ry1 = max(0, int(x1 - px), a), max(0, int(y1 - py), b)
+            rx2, ry2 = min(w, int(x2 + px) + 1, a + side), min(h, int(y2 + py) + 1, b + side)
+            if rx2 <= rx1 or ry2 <= ry1:
+                continue
+            src = (slice(ry1 - b, ry2 - b), slice(rx1 - a, rx2 - a))
+            dst = (slice(ry1, ry2), slice(rx1, rx2))
+            np.maximum(roi_skin[dst], s_[src], out=roi_skin[dst])
+            np.maximum(roi_person[dst], p_[src], out=roi_person[dst])
+            np.maximum(roi_face[dst], f_[src], out=roi_face[dst])
+            cover[dst] = True
+        skin[cover], person[cover], face[cover] = roi_skin[cover], roi_person[cover], roi_face[cover]
+        return SegResult(skin=skin, person=person, face=face)
 
     def segment(self, bgr: np.ndarray, include_face: bool = False, tiled: bool = False) -> SegResult:
         """Segment a BGR frame.
@@ -194,6 +247,20 @@ class SensitiveRegionDetector:
                                           (x, y, x + bw, y + bh)))
             results.append(dets)
         return results
+
+
+SKIN_MAX_BLUE_OVER_RED = 6  # a skin pixel is never clearly bluer than it is red
+SKIN_MIN_LUMA = 28  # …and never almost black (navy / black clothes are the usual false positives)
+
+
+def skin_color_plausible(bgr: np.ndarray) -> np.ndarray:
+    """1.0 where the pixel colour *could* be skin, 0.0 for bluish or near-black pixels (soft-edged)."""
+    b = bgr[..., 0].astype(np.int32)
+    g = bgr[..., 1].astype(np.int32)
+    r = bgr[..., 2].astype(np.int32)
+    luma = (299 * r + 587 * g + 114 * b) // 1000
+    ok = ((b - r) <= SKIN_MAX_BLUE_OVER_RED) & (luma >= SKIN_MIN_LUMA)
+    return cv2.GaussianBlur(ok.astype(np.float32), (0, 0), 1.0)
 
 
 def color_skin_probability(bgr: np.ndarray) -> np.ndarray:

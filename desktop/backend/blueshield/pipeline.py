@@ -33,8 +33,8 @@ import numpy as np
 from . import media
 from .censor import BlueCensor, hex_to_bgr
 from .config import ANALYSIS_MAX_SIDE, MASK_MAX_SIDE, WORK_DIR
-from .detectors import (AGGRESSIVE_LABELS, FACE_LABELS, SENSITIVE_LABELS, SensitiveRegionDetector, SkinSegmenter,
-                        color_skin_probability)
+from .detectors import (SegResult, AGGRESSIVE_LABELS, FACE_LABELS, SENSITIVE_LABELS, SensitiveRegionDetector, SkinSegmenter,
+                        color_skin_probability, skin_color_plausible)
 from .gender import GenderClassifier, censor_decision
 from .maskstore import MaskStore
 from .people import PersonTrack, PersonTracker
@@ -62,7 +62,7 @@ class CensorSettings:
     aggressive: bool = False
     animated: bool = False
     include_face: bool = False
-    speed: str = "balanced"
+    speed: str = "quality"  # quality = every frame, per-person high-resolution skin segmentation
     quality: str = "balanced"
     keep_audio: bool = True
     # who is censored
@@ -301,7 +301,8 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
                            gallery_frames=int(round(12 * info.fps)))
     fuser = TemporalFuser(release=0.35 if not settings.aggressive else 0.2, on_threshold=skin_threshold)
     last_cls: dict[int, int] = {}
-    state = {"prev_small": None, "last_skin": None, "since_seg": 10 ** 9, "analyzed": 0, "face_map": None}
+    state = {"prev_small": None, "last_skin": None, "since_seg": 10 ** 9, "analyzed": 0, "face_map": None,
+             "last_person": None}
     CHUNK = 8 * det_stride  # frames buffered so detector keyframes can be batched
 
     def process_chunk(frames: list[np.ndarray], start_index: int) -> None:
@@ -321,13 +322,30 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
                 people.reset(idx)
             flow.update(frame)
 
-            # ── skin segmentation (keyframes) + optical-flow propagation ──
+            # ── stage 1+3: person detection & tracking (before segmentation: the boxes drive per-person ROIs) ──
+            people.predict(flow)
+            regions.predict(flow)
+            faces.predict(flow)
+            if k in nude:
+                people.update(frame, person_model.detect(frame, person_min_score), idx)
+                regions.update([d for d in nude[k] if d.label in labels])
+                faces.update([d for d in nude[k] if d.label in FACE_LABELS])
+
+            # ── skin segmentation: whole frame on detection keyframes, per-person crops on every analysed frame ──
+            boxes = [tuple(t.box) for t in people.visible()]
             fast_motion = False
             if flow.flow_full is not None and state["since_seg"] >= 1:
                 fast_motion = float(np.abs(flow.flow_full[::8, ::8]).mean()) > 0.012 * max(aw, ah)
             fresh = state["last_skin"] is None or cut or state["since_seg"] + 1 >= seg_stride or fast_motion
             if fresh:
-                seg = seg_model.segment(frame, include_face=settings.include_face, tiled=settings.aggressive)
+                full_due = state["last_skin"] is None or cut or not boxes or k in nude
+                if full_due:
+                    seg = seg_model.segment(frame, include_face=settings.include_face, tiled=settings.aggressive)
+                else:  # between whole-frame passes: carry the last result along with the motion
+                    seg = SegResult(flow.warp(state["last_skin"]), flow.warp(state["last_person"]),
+                                    flow.warp(state["face_map"]))
+                if boxes:
+                    seg = seg_model.segment_rois(frame, boxes, seg, include_face=settings.include_face)
                 skin = seg.skin
                 if settings.aggressive:
                     person_px = cv2.dilate((seg.person > 0.4).astype(np.uint8), np.ones((9, 9), np.uint8))
@@ -336,21 +354,14 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
                         face = cv2.dilate((seg.face > 0.3).astype(np.uint8), np.ones((15, 15), np.uint8))
                         backup *= 1 - face
                     skin = np.maximum(skin, backup)
-                state["last_skin"], state["since_seg"] = skin, 0
+                skin = skin * skin_color_plausible(frame)
+                state["last_skin"], state["last_person"], state["since_seg"] = skin, seg.person, 0
                 state["face_map"] = seg.face
             else:
                 state["last_skin"] = flow.warp(state["last_skin"])
                 state["since_seg"] += 1
             skin_bin = fuser.update(state["last_skin"], flow, fresh)
-
-            # ── stage 1+3: person detection & tracking ──
-            people.predict(flow)
-            regions.predict(flow)
-            faces.predict(flow)
             if k in nude:
-                people.update(frame, person_model.detect(frame, person_min_score), idx)
-                regions.update([d for d in nude[k] if d.label in labels])
-                faces.update([d for d in nude[k] if d.label in FACE_LABELS])
                 # ── stage 2: gender classification, only where it's still useful ──
                 for t in people.visible():
                     if t.misses:
