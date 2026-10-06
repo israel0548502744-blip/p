@@ -4,7 +4,7 @@ Runs on GitHub Actions (open internet). For every search query, takes the first 
 limit, cuts a short clip (720p max, no audio), and writes clips + a manifest with source URL, author and
 license to OUT_DIR. Only Creative Commons / public-domain files are kept.
 """
-import json, os, subprocess, sys, urllib.parse, urllib.request
+import json, os, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
 
 OUT = sys.argv[1]
 QUERIES = sys.argv[2].split("|")
@@ -14,14 +14,29 @@ UA = {"User-Agent": "BlueShield-test-fetch/1.0 (github actions; test clips)"}
 os.makedirs(OUT, exist_ok=True)
 
 def get(url):
-    return urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=60).read()
+    """GET with polite pacing and back-off on 429 / 5xx (Wikimedia rate-limits bursts)."""
+    for attempt in range(6):
+        time.sleep(2)
+        try:
+            return urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=90).read()
+        except urllib.error.HTTPError as e:
+            if e.code not in (429, 500, 502, 503, 504):
+                raise
+            wait = int(e.headers.get("Retry-After") or 0) or 10 * (attempt + 1)
+            print("retry in", wait, "s:", e.code)
+            time.sleep(min(wait, 120))
+    raise RuntimeError("gave up: " + url)
 
 manifest = []
 for q in QUERIES:
     params = {"action": "query", "format": "json", "generator": "search", "gsrnamespace": 6, "gsrlimit": 50,
               "gsrsearch": f"filetype:video {q}", "prop": "imageinfo",
               "iiprop": "url|size|mime|extmetadata", "iiurlwidth": 0}
-    data = json.loads(get(API + "?" + urllib.parse.urlencode(params)))
+    try:
+        data = json.loads(get(API + "?" + urllib.parse.urlencode(params)))
+    except Exception as e:  # noqa: BLE001
+        print("query failed", q, e)
+        continue
     pages = sorted(data.get("query", {}).get("pages", {}).values(), key=lambda p: p.get("index", 0))
     taken = 0
     for p in pages:
