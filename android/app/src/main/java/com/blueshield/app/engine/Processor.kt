@@ -272,7 +272,8 @@ class Processor(private val context: Context) {
             val px = IntArray(img.width * img.height) { i ->
                 Color.rgb(img.data[i * 3].toInt() and 0xFF, img.data[i * 3 + 1].toInt() and 0xFF, img.data[i * 3 + 2].toInt() and 0xFF)
             }
-            return Bitmap.createBitmap(px, img.width, img.height, Bitmap.Config.ARGB_8888)
+            // createBitmap(int[]…) returns an *immutable* bitmap; the live preview draws on it, so make it mutable
+            return Bitmap.createBitmap(img.width, img.height, Bitmap.Config.ARGB_8888).also { it.setPixels(px, 0, img.width, 0, 0, img.width, img.height) }
         }
     }
 }
