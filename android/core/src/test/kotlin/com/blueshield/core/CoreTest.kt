@@ -283,6 +283,17 @@ class CoreTest {
         assertTrue(com.blueshield.core.gender.GenderClassifier.ensemble(0.6f, 0.05f) < 0.3f)
     }
 
+    @Test fun ownFaceIsTheTopmostNotTheBiggest() {
+        fun face(x: Float, y: Float, s: Float) = com.blueshield.core.ml.FaceDetector.Face(Box(x, y, x + s, y + s), 0.9f, 0f to 0f, 0f to 0f)
+        val adult = face(100f, 10f, 40f)
+        val childInFront = face(90f, 120f, 50f) // bigger (closer to the camera) but lower in the box
+        val pick = com.blueshield.core.gender.GenderClassifier.Companion::pickFace
+        assertEquals(adult, pick(listOf(childInFront, adult), 256f, false))
+        assertEquals(childInFront, pick(listOf(childInFront, face(5f, 5f, 12f)), 256f, false)) // a tiny face far off is ignored
+        val centre = face(103f, 103f, 50f)
+        assertEquals(centre, pick(listOf(adult, centre), 256f, true)) // a head crop is centred on its face
+    }
+
     @Test fun neckIsFreeButALowNecklineIsCensored() {
         val w = 200; val h = 300
         val face = Box(70f, 40f, 130f, 110f) // 60 × 70 px

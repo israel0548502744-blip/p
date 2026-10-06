@@ -47,18 +47,13 @@ class Renderer(private val context: Context, private val meta: VideoMeta) {
         val audioTmp = if (opts.keepAudio && meta.hasAudio) prepareAudio() else null
         val muxer = MediaMuxer(out.path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         muxer.setOrientationHint(meta.rotation)
-        val w = meta.codedWidth
-        val h = meta.codedHeight
-        val encFormat = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, evenUp(w), evenUp(h)).apply {
-            setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-            setInteger(MediaFormat.KEY_BIT_RATE, bitrate(w, h, meta.fps, opts.quality))
-            setInteger(MediaFormat.KEY_FRAME_RATE, Math.round(meta.fps).toInt().coerceAtLeast(1))
-            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
-        }
-        val encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
-        encoder.configure(encFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-        val inputSurface = encoder.createInputSurface()
-        encoder.start()
+        // The encoder may need a slightly different size than the video (alignment, minimum size): the frame is
+        // drawn to fill it, so a 200×112 clip comes out e.g. 208×112 (or scaled up) instead of failing to start.
+        val enc = EncoderPicker.open(meta.codedWidth, meta.codedHeight, meta.fps) { ew, eh -> bitrate(ew, eh, meta.fps, opts.quality) }
+        val encoder = enc.codec
+        val inputSurface = enc.surface
+        val w = enc.width
+        val h = enc.height
         val egl = EglSurface(inputSurface)
         val shader = CensorShader(meta.rotation)
         val st = SurfaceTexture(shader.videoTex)
@@ -168,11 +163,11 @@ class Renderer(private val context: Context, private val meta: VideoMeta) {
                     }
                     val m = source.mask(index, decInfo.presentationTimeUs)
                     if (m != null) shader.uploadMask(m.width, m.height, m.data) else shader.uploadMask(1, 1, ZERO)
-                    shader.draw(evenUp(w), evenUp(h), st4, opts.rgb, (decInfo.presentationTimeUs / 1e6).toFloat(), opts.animated)
+                    shader.draw(w, h, st4, opts.rgb, (decInfo.presentationTimeUs / 1e6).toFloat(), opts.animated)
                     val now = System.nanoTime()
                     if (now - lastPreview > 700_000_000L) {
                         lastPreview = now
-                        onPreview(readPreview(evenUp(w), evenUp(h)))
+                        onPreview(readPreview(w, h))
                     }
                     egl.setPresentationTime(decInfo.presentationTimeUs * 1000)
                     egl.swap()
@@ -271,7 +266,6 @@ class Renderer(private val context: Context, private val meta: VideoMeta) {
 
     companion object {
         private val ZERO = ByteArray(1)
-        private fun evenUp(v: Int) = (v + 1) and 1.inv()
 
         fun bitrate(w: Int, h: Int, fps: Double, quality: String): Int {
             val bpp = when (quality) { "high" -> 0.20; "small" -> 0.07; else -> 0.12 }

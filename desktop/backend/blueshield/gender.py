@@ -243,10 +243,9 @@ class GenderClassifier:
         or the face is in profile.
         """
         crops = []
-        if face_map is not None:
-            head = head_crop(frame, box, face_map)
-            if head is not None:
-                crops.append(head)
+        head = head_crop(frame, box, face_map) if face_map is not None else None
+        if head is not None:
+            crops.append(head)
         top = top_crop(frame, box)
         if top is not None:
             crops.append(top)
@@ -254,10 +253,11 @@ class GenderClassifier:
         if ub is not None:
             a, b, _, _ = _ub_rect(frame.shape, box)
             crops.append((ub, crop_scale(frame, box, 256), (float(a), float(b))))
-        for crop, scale, origin in crops:
+        for n, (crop, scale, origin) in enumerate(crops):
             faces = [f for f in self.faces.detect(crop, 0.5) if (f.box[1] + f.box[3]) / 2 < 0.75 * crop.shape[0]]
-            if faces:
-                return crop, max(faces, key=lambda f: f.score * (f.box[2] - f.box[0])), scale, origin
+            face = pick_face(faces, crop.shape[1], centred=n == 0 and head is not None)
+            if face is not None:
+                return crop, face, scale, origin
         return None
 
     def classify_person(self, frame: np.ndarray, box: tuple[float, float, float, float],
@@ -307,6 +307,19 @@ def top_crop(frame: np.ndarray, box, size: int = 256):
     return cv2.resize(crop, (size, size), interpolation=cv2.INTER_LINEAR), side / size, (float(a), float(b))
 
 
+def pick_face(faces, side: float, centred: bool):
+    """The face that belongs to the person: among the clearly-sized faces the topmost (a person's own head is
+    at the top of their box, a child in front must not lend an adult its face); in a head crop, the one
+    nearest the centre."""
+    if not faces:
+        return None
+    biggest = max(f.box[2] - f.box[0] for f in faces)
+    sized = [f for f in faces if f.box[2] - f.box[0] >= 0.6 * biggest]
+    if centred:
+        return min(sized, key=lambda f: abs((f.box[0] + f.box[2]) / 2 - side / 2) + abs((f.box[1] + f.box[3]) / 2 - side / 2))
+    return min(sized, key=lambda f: f.box[1])
+
+
 def head_crop(frame: np.ndarray, box, face_map: np.ndarray, size: int = 256):
     """Square crop centred on the largest facial-skin blob in the top part of the person box."""
     h, w = frame.shape[:2]
@@ -319,10 +332,13 @@ def head_crop(frame: np.ndarray, box, face_map: np.ndarray, size: int = 256):
     n, _, stats, _ = cv2.connectedComponentsWithStats(region)
     if n <= 1:
         return None
-    k = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
-    fx, fy, fw, fh, area = stats[k]
-    if area < 30:
+    # The topmost sizeable blob is this person's face; a larger one lower down is someone in front.
+    areas = stats[1:, cv2.CC_STAT_AREA]
+    if areas.max() < 30:
         return None
+    big = [i for i in range(1, n) if stats[i, cv2.CC_STAT_AREA] >= 0.35 * areas.max()]
+    k = min(big, key=lambda i: stats[i, cv2.CC_STAT_TOP])
+    fx, fy, fw, fh, area = stats[k]
     cx, cy = x1 + fx + fw / 2, y1 + fy + fh / 2
     side = max(fw, fh) * 2.4
     a, b = int(round(cx - side / 2)), int(round(cy - side / 2))

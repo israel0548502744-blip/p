@@ -7,6 +7,7 @@ import com.blueshield.core.image.RgbImage
 import com.blueshield.core.ml.AgeGenderModel
 import com.blueshield.core.ml.FaceDetector
 import com.blueshield.core.ml.GenderModel
+import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.max
@@ -32,12 +33,14 @@ class GenderClassifier(
      */
     fun classify(frame: RgbImage, box: Box, faceMap: FloatMask?): Observation? {
         val crops = ArrayList<Pair<RgbImage, Float>>()
-        if (faceMap != null) headCrop(frame, box, faceMap)?.let { crops += it }
+        val head = if (faceMap != null) headCrop(frame, box, faceMap) else null
+        head?.let { crops += it }
         topCrop(frame, box)?.let { crops += it }
         upperBodyCrop(frame, box)?.let { crops += it }
-        for ((crop, scale) in crops) {
+        for ((n, pair) in crops.withIndex()) {
+            val (crop, scale) = pair
             val found = faces.detect(crop, minFaceScore).filter { it.box.cy < 0.75f * crop.height }
-            val face = found.maxByOrNull { it.score * it.box.w } ?: continue
+            val face = pickFace(found, crop.width.toFloat(), centred = n == 0 && head != null) ?: continue
             val facePx = face.box.w * scale
             if (facePx < minFacePx) continue
             val weight = face.score * min(1f, facePx / 48f)
@@ -51,6 +54,18 @@ class GenderClassifier(
 
     companion object {
         const val CROP = 256
+
+        /**
+         * The face that belongs to the person: a person's own head is at the top of their box, so among the
+         * clearly-sized faces take the topmost (a child standing in front of an adult must not lend the adult
+         * its face). In a head crop the face is the one nearest the centre.
+         */
+        fun pickFace(found: List<FaceDetector.Face>, side: Float, centred: Boolean): FaceDetector.Face? {
+            val biggest = found.maxOfOrNull { it.box.w } ?: return null
+            val sized = found.filter { it.box.w >= 0.6f * biggest }
+            return if (centred) sized.minByOrNull { abs(it.box.cx - side / 2) + abs(it.box.cy - side / 2) }
+            else sized.minByOrNull { it.box.y1 }
+        }
 
         /** Mean of the two log-odds, back to a probability. */
         fun ensemble(a: Float, b: Float): Float {
@@ -84,8 +99,10 @@ class GenderClassifier(
                 minX[l] = min(minX[l], x); maxX[l] = max(maxX[l], x)
                 minY[l] = min(minY[l], y); maxY[l] = max(maxY[l], y)
             }
-            val k = (1 until count).maxByOrNull { area[it] } ?: return null
-            if (area[k] < 30) return null
+            // The topmost sizeable blob is this person's face; a larger one lower down is someone in front.
+            val biggest = (1 until count).maxOfOrNull { area[it] } ?: return null
+            if (biggest < 30) return null
+            val k = (1 until count).filter { area[it] >= 0.35f * biggest }.minByOrNull { minY[it] } ?: return null
             val fw = maxX[k] - minX[k] + 1
             val fh = maxY[k] - minY[k] + 1
             val cx = x0 + minX[k] + fw / 2f

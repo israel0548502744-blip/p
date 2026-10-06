@@ -31,15 +31,15 @@ class PipelineE2ETest {
         return Uri.fromFile(f)
     }
 
-    private fun checkOutput(file: File?, w: Int, h: Int, seconds: Double) {
-        assertTrue("output missing", file != null && file.exists() && file.length() > 20_000)
+    private fun checkOutput(file: File?, w: Int, h: Int, seconds: Double, audio: Boolean = true) {
+        assertTrue("output missing", file != null && file.exists() && file.length() > (if (audio) 20_000 else 1_000))
         val r = MediaMetadataRetriever()
         r.setDataSource(file!!.path)
         assertEquals(w, r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)!!.toInt())
         assertEquals(h, r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)!!.toInt())
         val dur = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)!!.toLong() / 1000.0
         assertTrue("duration $dur vs $seconds", Math.abs(dur - seconds) < 0.6)
-        assertTrue("audio track missing", r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO) == "yes")
+        if (audio) assertTrue("audio track missing", r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO) == "yes")
         r.release()
     }
 
@@ -52,6 +52,26 @@ class PipelineE2ETest {
         checkOutput(result.output, 768, 432, meta.durationSec)
         val people = p.analysis!!.summaries(CensorSettings(), emptyMap()).filter { it.frames > p.analysis!!.frameCount / 2 }
         assertEquals("people: $people", setOf("female", "male"), people.map { it.gender }.toSet())
+        p.close()
+    }
+
+    /** A tiny portrait phone clip (200×112 coded, rotated, 17 fps, no audio): used to crash in MediaCodec.start(). */
+    @Test fun tinyVideoEndToEnd() {
+        val meta = VideoMeta.probe(ctx, fixture("tiny_portrait.mp4"))
+        assertEquals(112, meta.width); assertEquals(200, meta.height)
+        val p = Processor(ctx)
+        val result = p.run(meta, CensorSettings(speed = "fast")) { }
+        assertEquals("error: ${result.error}", JobState.Stage.COMPLETE, result.stage)
+        val r = MediaMetadataRetriever()
+        r.setDataSource(result.output!!.path)
+        val rot = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)!!.toInt()
+        val cw = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)!!.toInt()
+        val ch = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)!!.toInt()
+        r.release()
+        // The encoder may pad or scale the size, but the shape and orientation must be kept.
+        val (dw, dh) = if (rot % 180 != 0) ch to cw else cw to ch
+        assertTrue("size ${dw}x$dh (rotation $rot)", dh > dw && Math.abs(dw.toDouble() / dh - 112.0 / 200) < 0.06)
+        assertTrue("output too small", result.output!!.length() > 1_000)
         p.close()
     }
 
