@@ -246,10 +246,8 @@ class Analyzer(
                     val need = t.gender.votes < spec.gender.votesBeforeSlowdown || idx - t.lastClassified >= reclassifyEvery
                     if (!need) continue
                     t.lastClassified = idx
-                    classifier.classify(frame, t.box, faceMap)?.let { o ->
-                        // A face belongs to one person: skip it when it sits where another person's head is
-                        // (a child in front of her mother must not make the mother a child).
-                        if (o.face != null && !GenderClassifier.ownsFace(o.face, t.box, seen.filter { it !== t }.map { it.box })) return@let
+                    // other people's boxes: a face that is their head is never this person's
+                    classifier.classify(frame, t.box, faceMap, seen.filter { it !== t }.map { it.box })?.let { o ->
                         t.gender.add(o.pMale, o.weight)
                         t.gender.addAge(o.age)
                     }

@@ -31,20 +31,24 @@ class GenderClassifier(
      * average of both models' log-odds: their mistakes are largely independent (e.g. older women, whom
      * FaceRes alone often calls male), so the ensemble is much steadier than either.
      */
-    fun classify(frame: RgbImage, box: Box, faceMap: FloatMask?): Observation? {
+    fun classify(frame: RgbImage, box: Box, faceMap: FloatMask?, others: List<Box> = emptyList()): Observation? {
         val crops = ArrayList<Crop>()
-        val head = if (faceMap != null) headCrop(frame, box, faceMap) else null
+        val head = if (faceMap != null) headCrop(frame, box, faceMap, others) else null
         head?.let { crops += it }
         topCrop(frame, box)?.let { crops += it }
         upperBodyCrop(frame, box)?.let { crops += it }
         for ((n, pair) in crops.withIndex()) {
             val (crop, scale, ox, oy) = pair
-            val found = faces.detect(crop, minFaceScore).filter { it.box.cy < 0.75f * crop.height }
+            fun inFrame(b: Box) = Box(ox + b.x1 * scale, oy + b.y1 * scale, ox + b.x2 * scale, oy + b.y2 * scale)
+            // A face belongs to one person: skip faces that sit where another person's head is
+            // (a child in front of her mother, the man next to the woman in a crowded photo).
+            val found = faces.detect(crop, minFaceScore)
+                .filter { it.box.cy < 0.75f * crop.height && ownsFace(inFrame(it.box), box, others) }
             val face = pickFace(found, crop.width.toFloat(), centred = n == 0 && head != null) ?: continue
             val facePx = face.box.w * scale
             if (facePx < minFacePx) continue
             val weight = face.score * min(1f, facePx / 48f)
-            val inFrame = Box(ox + face.box.x1 * scale, oy + face.box.y1 * scale, ox + face.box.x2 * scale, oy + face.box.y2 * scale)
+            val inFrame = inFrame(face.box)
             val aligned = model.align(crop, face)
             val p1 = model.pMale(aligned)
             val second = ageGender?.predict(aligned) ?: return Observation(p1, weight, Float.NaN, inFrame)
@@ -93,7 +97,7 @@ class GenderClassifier(
         }
 
         /** Square crop around the largest facial-skin blob in the top 60 % of the person box. */
-        fun headCrop(frame: RgbImage, box: Box, faceMap: FloatMask): Crop? {
+        fun headCrop(frame: RgbImage, box: Box, faceMap: FloatMask, others: List<Box> = emptyList()): Crop? {
             val x0 = max(0, box.x1.roundToInt())
             val y0 = max(0, box.y1.roundToInt())
             val x1 = min(frame.width, box.x2.roundToInt())
@@ -118,10 +122,13 @@ class GenderClassifier(
                 minX[l] = min(minX[l], x); maxX[l] = max(maxX[l], x)
                 minY[l] = min(minY[l], y); maxY[l] = max(maxY[l], y)
             }
-            // The topmost sizeable blob is this person's face; a larger one lower down is someone in front.
+            // Of the sizeable facial-skin blobs, the one that sits best where this person's head should be and is
+            // not a better fit for someone else's head (a neighbour's face inside a loose box, a child in front).
             val biggest = (1 until count).maxOfOrNull { area[it] } ?: return null
             if (biggest < 30) return null
-            val k = (1 until count).filter { area[it] >= 0.35f * biggest }.minByOrNull { minY[it] } ?: return null
+            fun blobBox(l: Int) = Box((x0 + minX[l]).toFloat(), (y0 + minY[l]).toFloat(), (x0 + maxX[l] + 1).toFloat(), (y0 + maxY[l] + 1).toFloat())
+            val k = (1 until count).filter { area[it] >= max(30f, 0.2f * biggest) && ownsFace(blobBox(it), box, others) }
+                .minByOrNull { headScore(blobBox(it), box) } ?: return null
             val fw = maxX[k] - minX[k] + 1
             val fh = maxY[k] - minY[k] + 1
             val cx = x0 + minX[k] + fw / 2f

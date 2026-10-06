@@ -235,7 +235,7 @@ class GenderClassifier:
         return float(gender[0]), float(age)
 
     def find_face(self, frame: np.ndarray, box: tuple[float, float, float, float],
-                  face_map: Optional[np.ndarray] = None) -> Optional[tuple[np.ndarray, Face, float, tuple[float, float]]]:
+                  face_map: Optional[np.ndarray] = None, others=()) -> Optional[tuple[np.ndarray, Face, float, tuple[float, float]]]:
         """Locate a person's face: (crop, face-in-crop, frame px per crop px, crop origin in frame) or None.
 
         ``face_map`` (facial-skin probability from the segmentation model, frame-sized)
@@ -243,7 +243,7 @@ class GenderClassifier:
         or the face is in profile.
         """
         crops = []
-        head = head_crop(frame, box, face_map) if face_map is not None else None
+        head = head_crop(frame, box, face_map, others=others) if face_map is not None else None
         if head is not None:
             crops.append(head)
         top = top_crop(frame, box)
@@ -254,20 +254,24 @@ class GenderClassifier:
             a, b, _, _ = _ub_rect(frame.shape, box)
             crops.append((ub, crop_scale(frame, box, 256), (float(a), float(b))))
         for n, (crop, scale, origin) in enumerate(crops):
-            faces = [f for f in self.faces.detect(crop, 0.5) if (f.box[1] + f.box[3]) / 2 < 0.75 * crop.shape[0]]
+            def in_frame(b, scale=scale, origin=origin):
+                return (origin[0] + b[0] * scale, origin[1] + b[1] * scale, origin[0] + b[2] * scale, origin[1] + b[3] * scale)
+            # a face that sits where another person's head is belongs to them, not to this person
+            faces = [f for f in self.faces.detect(crop, 0.5)
+                     if (f.box[1] + f.box[3]) / 2 < 0.75 * crop.shape[0] and owns_face(in_frame(f.box), box, others)]
             face = pick_face(faces, crop.shape[1], centred=n == 0 and head is not None)
             if face is not None:
                 return crop, face, scale, origin
         return None
 
     def classify_person(self, frame: np.ndarray, box: tuple[float, float, float, float],
-                        face_map: Optional[np.ndarray] = None, found=None) -> Optional[tuple[float, float, float, tuple]]:
+                        face_map: Optional[np.ndarray] = None, found=None, others=()) -> Optional[tuple[float, float, float, tuple]]:
         """Return (P(male), vote weight, age, face box in the frame) for the person in ``box``, or None if no usable face.
 
         P(male) averages the log-odds of both face models: their mistakes are largely independent (e.g. older
         women, whom FaceRes alone often calls male), so the ensemble is much steadier than either.
         """
-        found = found if found is not None else self.find_face(frame, box, face_map)
+        found = found if found is not None else self.find_face(frame, box, face_map, others)
         if found is None:
             return None
         crop, face, scale, (ox, oy) = found
@@ -336,8 +340,8 @@ def pick_face(faces, side: float, centred: bool):
     return min(sized, key=lambda f: f.box[1])
 
 
-def head_crop(frame: np.ndarray, box, face_map: np.ndarray, size: int = 256):
-    """Square crop centred on the largest facial-skin blob in the top part of the person box."""
+def head_crop(frame: np.ndarray, box, face_map: np.ndarray, size: int = 256, others=()):
+    """Square crop centred on this person's facial-skin blob in the top part of the person box."""
     h, w = frame.shape[:2]
     x1, y1, x2, y2 = (int(round(v)) for v in box)
     x1, y1 = max(0, x1), max(0, y1)
@@ -348,12 +352,19 @@ def head_crop(frame: np.ndarray, box, face_map: np.ndarray, size: int = 256):
     n, _, stats, _ = cv2.connectedComponentsWithStats(region)
     if n <= 1:
         return None
-    # The topmost sizeable blob is this person's face; a larger one lower down is someone in front.
+    # Of the sizeable facial-skin blobs, the one that sits best where this person's head should be and is not
+    # a better fit for someone else's head (a neighbour's face inside a loose box, a child in front).
     areas = stats[1:, cv2.CC_STAT_AREA]
     if areas.max() < 30:
         return None
-    big = [i for i in range(1, n) if stats[i, cv2.CC_STAT_AREA] >= 0.35 * areas.max()]
-    k = min(big, key=lambda i: stats[i, cv2.CC_STAT_TOP])
+
+    def blob_box(i):
+        bx, by, bw, bh = stats[i, :4]
+        return (float(x1 + bx), float(y1 + by), float(x1 + bx + bw), float(y1 + by + bh))
+    big = [i for i in range(1, n) if stats[i, cv2.CC_STAT_AREA] >= max(30, 0.2 * areas.max()) and owns_face(blob_box(i), box, others)]
+    if not big:
+        return None
+    k = min(big, key=lambda i: head_score(blob_box(i), box))
     fx, fy, fw, fh, area = stats[k]
     cx, cy = x1 + fx + fw / 2, y1 + fy + fh / 2
     side = max(fw, fh) * 2.4
