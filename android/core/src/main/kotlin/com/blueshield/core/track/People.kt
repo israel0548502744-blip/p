@@ -52,7 +52,8 @@ class PersonTracker(
         }
     }
 
-    fun update(frame: RgbImage, dets: List<Detection>, frameIndex: Int) {
+    /** [faces]: face boxes seen in this frame — two tracks holding the same face are the same person. */
+    fun update(frame: RgbImage, dets: List<Detection>, frameIndex: Int, faces: List<Box> = emptyList()) {
         val hists = dets.map { Appearance.torso(frame, it.box) }
         data class Pair3(val score: Float, val t: Int, val d: Int)
         val pairs = ArrayList<Pair3>()
@@ -102,22 +103,25 @@ class PersonTracker(
             active += t
             all[t.id] = t
         }
-        mergeDuplicates()
+        mergeDuplicates(faces)
     }
 
     /**
      * Two tracks on the same person (one box inside the other, same look, for several detection
      * rounds) become one identity, so the gender evidence isn't split between them.
      */
-    private fun mergeDuplicates() {
+    private fun mergeDuplicates(faces: List<Box>) {
         val pending = ArrayList<Pair<PersonTrack, PersonTrack>>()
         for (small in active) for (big in active) {
             if (small === big || small.misses != 0 || big.misses != 0) continue
             if (small.box.area > big.box.area || (small.box.area == big.box.area && small.id >= big.id)) continue
-            val same = small.box.containedIn(big.box) > CONTAINED_MIN && Appearance.similarity(small.appearance, big.appearance) > 0.6f
-            val n = if (same) (small.dupRounds[big.id] ?: 0) + 1 else 0
+            val contained = small.box.containedIn(big.box)
+            val sameLook = contained > CONTAINED_MIN && Appearance.similarity(small.appearance, big.appearance) > 0.6f
+            // both boxes hold the same face in their upper part (a lying or reaching person often gets two boxes)
+            val sameFace = contained > 0.5f && faces.any { f -> holdsFace(small.box, f) && holdsFace(big.box, f) }
+            val n = if (sameLook || sameFace) (small.dupRounds[big.id] ?: 0) + 1 else 0
             small.dupRounds[big.id] = n
-            if (n >= 3) pending += small to big
+            if (n >= (if (sameFace) 2 else 3)) pending += small to big
         }
         for ((small, big) in pending) {
             if (small !in active || big !in active) continue
@@ -132,6 +136,9 @@ class PersonTracker(
             for ((k, v) in aliases.entries.toList()) if (v == drop.id) aliases[k] = keep.id
         }
     }
+
+    private fun holdsFace(box: Box, face: Box): Boolean =
+        face.cx in box.x1..box.x2 && face.cy in box.y1..(box.y1 + 0.65f * box.h) && face.containedIn(box) > 0.7f
 
     fun visible(): List<PersonTrack> = active.filter { it.misses <= maxMisses }
 

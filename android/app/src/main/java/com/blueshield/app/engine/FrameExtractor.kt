@@ -10,6 +10,8 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import com.blueshield.core.image.Orientation
 import com.blueshield.core.image.RgbImage
+import kotlin.math.ceil
+import kotlin.math.max
 
 /**
  * Hardware-decodes the video with MediaCodec (ByteBuffer/YUV output, never the whole
@@ -17,6 +19,11 @@ import com.blueshield.core.image.RgbImage
  * the YUV→RGB conversion samples only the pixels it needs, so it's cheap even for 4K.
  */
 class FrameExtractor(private val context: Context, private val meta: VideoMeta, private val outW: Int, private val outH: Int) {
+    private companion object {
+        /** At most MAX_SUB² source samples per output pixel (4K → 768 px still averages 3×3). */
+        const val MAX_SUB = 3
+    }
+
 
     /** Calls [onFrame] for every decoded frame in presentation order; return false to stop. */
     fun run(onFrame: (index: Int, ptsUs: Long, frame: RgbImage) -> Boolean) {
@@ -70,7 +77,7 @@ class FrameExtractor(private val context: Context, private val meta: VideoMeta, 
         }
     }
 
-    /** YUV_420_888 → upright RGB at outW × outH (nearest-neighbour sampling of the crop rect). */
+    /** YUV_420_888 → upright RGB at outW × outH (area-averaged sampling of the crop rect). */
     private fun toRgb(img: Image): RgbImage {
         // 8-bit video arrives as YUV_420_888. 10-bit (HDR / many phone recordings) arrives as P010: 16-bit
         // little-endian samples with the 10 bits in the top, so the second byte is an 8-bit approximation.
@@ -92,23 +99,27 @@ class FrameExtractor(private val context: Context, private val meta: VideoMeta, 
         // display (upright) size
         val dw = if (rot % 180 == 0) cw else ch
         val dh = if (rot % 180 == 0) ch else cw
+        // Area sampling: when shrinking, average an s×s grid of source pixels per output pixel (like the
+        // desktop's INTER_AREA), so the models see clean frames instead of aliased nearest-pixel samples.
+        val ratio = max(dw.toFloat() / outW, dh.toFloat() / outH)
+        val sub = ceil(ratio).toInt().coerceIn(1, MAX_SUB)
         // coded pixel = column part + row part (rotation by 0/90/180/270 is separable), computed once per call
-        val colX = IntArray(outW)
-        val colY = IntArray(outW)
-        val rowX = IntArray(outH)
-        val rowY = IntArray(outH)
-        for (ox in 0 until outW) {
-            val dx = ((ox + 0.5f) * dw / outW).toInt().coerceIn(0, dw - 1)
+        val (bx, by) = Orientation.displayToCoded(0, 0, rot, cw, ch)
+        val colX = IntArray(outW * sub)
+        val colY = IntArray(outW * sub)
+        val rowX = IntArray(outH * sub)
+        val rowY = IntArray(outH * sub)
+        for (ox in 0 until outW) for (j in 0 until sub) {
+            val dx = ((ox + (j + 0.5f) / sub) * dw / outW).toInt().coerceIn(0, dw - 1)
             val (cx, cy) = Orientation.displayToCoded(dx, 0, rot, cw, ch)
-            val (bx, by) = Orientation.displayToCoded(0, 0, rot, cw, ch)
-            colX[ox] = cx - bx
-            colY[ox] = cy - by
+            colX[ox * sub + j] = cx - bx
+            colY[ox * sub + j] = cy - by
         }
-        for (oy in 0 until outH) {
-            val dy = ((oy + 0.5f) * dh / outH).toInt().coerceIn(0, dh - 1)
+        for (oy in 0 until outH) for (j in 0 until sub) {
+            val dy = ((oy + (j + 0.5f) / sub) * dh / outH).toInt().coerceIn(0, dh - 1)
             val (cx, cy) = Orientation.displayToCoded(0, dy, rot, cw, ch)
-            rowX[oy] = cx
-            rowY[oy] = cy
+            rowX[oy * sub + j] = cx
+            rowY[oy * sub + j] = cy
         }
         val yRow = y.rowStride
         val yPix = y.pixelStride
@@ -116,20 +127,31 @@ class FrameExtractor(private val context: Context, private val meta: VideoMeta, 
         val uPix = u.pixelStride
         val vRow = v.rowStride
         val vPix = v.pixelStride
+        val n = sub * sub
         for (oy in 0 until outH) {
             for (ox in 0 until outW) {
-                val px = (rowX[oy] + colX[ox]).coerceIn(0, cw - 1) + crop.left
-                val py = (rowY[oy] + colY[ox]).coerceIn(0, ch - 1) + crop.top
-                val yy = (yb.get(py * yRow + px * yPix + hi).toInt() and 0xFF) - 16
-                val uvx = px / 2
-                val uvy = py / 2
-                val uu = (ub.get(uvy * uRow + uvx * uPix + hi).toInt() and 0xFF) - 128
-                val vv = (vb.get(uvy * vRow + uvx * vPix + hi).toInt() and 0xFF) - 128
-                val c = 1.164f * yy
+                var sr = 0
+                var sg = 0
+                var sb = 0
+                for (jy in 0 until sub) for (jx in 0 until sub) {
+                    val r = oy * sub + jy
+                    val c = ox * sub + jx
+                    val px = (rowX[r] + colX[c]).coerceIn(0, cw - 1) + crop.left
+                    val py = (rowY[r] + colY[c]).coerceIn(0, ch - 1) + crop.top
+                    val yy = (yb.get(py * yRow + px * yPix + hi).toInt() and 0xFF) - 16
+                    val uvx = px / 2
+                    val uvy = py / 2
+                    val uu = (ub.get(uvy * uRow + uvx * uPix + hi).toInt() and 0xFF) - 128
+                    val vv = (vb.get(uvy * vRow + uvx * vPix + hi).toInt() and 0xFF) - 128
+                    val l = 1.164f * yy
+                    sr += (l + 1.596f * vv).toInt().coerceIn(0, 255)
+                    sg += (l - 0.392f * uu - 0.813f * vv).toInt().coerceIn(0, 255)
+                    sb += (l + 2.017f * uu).toInt().coerceIn(0, 255)
+                }
                 val o = (oy * outW + ox) * 3
-                d[o] = (c + 1.596f * vv).toInt().coerceIn(0, 255).toByte()
-                d[o + 1] = (c - 0.392f * uu - 0.813f * vv).toInt().coerceIn(0, 255).toByte()
-                d[o + 2] = (c + 2.017f * uu).toInt().coerceIn(0, 255).toByte()
+                d[o] = ((sr + n / 2) / n).toByte()
+                d[o + 1] = ((sg + n / 2) / n).toByte()
+                d[o + 2] = ((sb + n / 2) / n).toByte()
             }
         }
         return out

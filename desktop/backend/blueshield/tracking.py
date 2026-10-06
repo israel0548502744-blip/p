@@ -96,6 +96,7 @@ class Track:
     score: float
     hits: int = 1
     misses: int = 0  # consecutive detection rounds without a match
+    cleavage_frames: int = 0  # face tracks: frames with a low neckline seen below this face (sticky)
     age: int = 0
 
 

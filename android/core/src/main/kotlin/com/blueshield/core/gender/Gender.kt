@@ -17,6 +17,12 @@ class GenderEstimate(
     private val maxLogit: Double,
     private val minVotes: Int,
     private val minWeight: Double = 0.0,
+    /** Calling someone male needs at least this confidence, whatever the user's threshold (missing a woman costs more). */
+    private val maleMinConfidence: Double = 0.0,
+    /** Median estimated age below this = a child (not censored when only women are). */
+    private val adultMinAge: Double = 18.0,
+    /** Age observations needed before a person can be called a child; until then they count as adults. */
+    private val minAgeVotes: Int = 4,
 ) {
     var logit = 0.0
         private set
@@ -24,6 +30,26 @@ class GenderEstimate(
         private set
     var weight = 0.0
         private set
+
+    private val ages = ArrayList<Float>()
+
+    fun addAge(age: Float) {
+        if (age.isFinite()) ages += age
+    }
+
+    val ageVotes: Int get() = ages.size
+
+    /** Median of the age estimates (robust to the odd bad crop), or null without any. */
+    val ageMedian: Double?
+        get() {
+            if (ages.isEmpty()) return null
+            val s = ages.sorted()
+            val n = s.size
+            return if (n % 2 == 1) s[n / 2].toDouble() else (s[n / 2 - 1] + s[n / 2]) / 2.0
+        }
+
+    /** Clearly a child: enough age observations with a median below the adult age. Unknown age counts as adult. */
+    val isChild: Boolean get() = ages.size >= minAgeVotes && (ageMedian ?: Double.MAX_VALUE) < adultMinAge
 
     fun add(pMale: Float, weight: Float = 1f) {
         val p = pMale.toDouble().coerceIn(0.02, 0.98)
@@ -37,6 +63,7 @@ class GenderEstimate(
         logit = (logit + other.logit).coerceIn(-maxLogit, maxLogit)
         votes += other.votes
         weight += other.weight
+        ages += other.ages
     }
 
     val pFemale: Double get() = 1.0 / (1.0 + exp(-logit))
@@ -45,7 +72,7 @@ class GenderEstimate(
     fun label(threshold: Double): Label = when {
         votes < minVotes || weight < minWeight -> Label.UNCERTAIN
         pFemale >= threshold -> Label.FEMALE
-        pFemale <= 1 - threshold -> Label.MALE
+        pFemale <= 1 - max(threshold, maleMinConfidence) -> Label.MALE
         else -> Label.UNCERTAIN
     }
 
@@ -60,13 +87,19 @@ enum class Override(val key: String) {
     }
 }
 
-/** Should this person be censored? target: "female"|"everyone"; uncertainPolicy: "censor"|"keep". */
-fun censorDecision(label: GenderEstimate.Label, target: String, uncertainPolicy: String, override: Override = Override.AUTO): Boolean =
+/**
+ * Should this person be censored? target: "female" (adult women only — girls are not censored) | "everyone";
+ * uncertainPolicy: "censor"|"keep".
+ */
+fun censorDecision(
+    label: GenderEstimate.Label, target: String, uncertainPolicy: String, override: Override = Override.AUTO, child: Boolean = false,
+): Boolean =
     when (override) {
         Override.CENSOR -> true
         Override.KEEP -> false
         Override.AUTO -> when {
             target == "everyone" -> true
+            child -> false
             label == GenderEstimate.Label.FEMALE -> true
             label == GenderEstimate.Label.MALE -> false
             else -> uncertainPolicy == "censor"

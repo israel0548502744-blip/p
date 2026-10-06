@@ -16,13 +16,29 @@ data class PipelineSpec(
     @SerialName("sensitive_labels") val sensitiveLabels: List<String>,
     @SerialName("aggressive_extra_labels") val aggressiveExtraLabels: List<String>,
     @SerialName("ownership_box_pad") val ownershipBoxPad: Float,
+    /** A skin blob up to this many box sizes outside a person's box still belongs to them (mirrors Composer.OWNER_REACH). */
+    @SerialName("owner_reach") val ownerReach: Float,
     /** Unattributed skin blobs smaller than this fraction of the frame are noise, never censored. */
     @SerialName("unassigned_min_area") val unassignedMinArea: Float,
     @SerialName("analysis_max_side") val analysisMaxSide: Int,
     @SerialName("mask_max_side") val maskMaxSide: Int,
     /** Per-person region-of-interest segmentation parameters. */
     val roi: Roi,
+    /** Face / neck / neckline rules and speck removal (sizes relative to the face box). */
+    val neckline: Neckline,
 ) {
+    @Serializable
+    data class Neckline(
+        @SerialName("band_half_width") val bandHalfWidth: Float,
+        @SerialName("band_height") val bandHeight: Float,
+        @SerialName("probe_half_width") val probeHalfWidth: Float,
+        @SerialName("probe_height") val probeHeight: Float,
+        @SerialName("cleavage_min_fill") val cleavageMinFill: Float,
+        @SerialName("cleavage_start") val cleavageStart: Float,
+        @SerialName("speck_person_frac") val speckPersonFrac: Float,
+        @SerialName("speck_frame_frac") val speckFrameFrac: Float,
+    )
+
     @Serializable
     data class Roi(
         @SerialName("side_scale") val sideScale: Float,
@@ -70,6 +86,9 @@ data class PipelineSpec(
         @SerialName("min_weight") val minWeight: Double,
         @SerialName("votes_before_slowdown") val votesBeforeSlowdown: Int,
         @SerialName("reclassify_seconds") val reclassifySeconds: Double,
+        @SerialName("male_min_confidence") val maleMinConfidence: Double,
+        @SerialName("adult_min_age") val adultMinAge: Double,
+        @SerialName("min_age_votes") val minAgeVotes: Int,
     )
 
     @Serializable
@@ -87,6 +106,11 @@ data class PipelineSpec(
 
     @Serializable
     data class SpeedPreset(@SerialName("seg_stride") val segStride: Int, @SerialName("det_stride") val detStride: Int)
+
+    /** A fresh per-person gender/age evidence accumulator with the shared constants. */
+    fun newGenderEstimate() = com.blueshield.core.gender.GenderEstimate(
+        gender.voteFactor, gender.maxLogit, gender.minVotes, gender.minWeight, gender.maleMinConfidence, gender.adultMinAge, gender.minAgeVotes,
+    )
 
     companion object {
         private val json = Json { ignoreUnknownKeys = true }

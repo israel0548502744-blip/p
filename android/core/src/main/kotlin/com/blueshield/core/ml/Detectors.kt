@@ -256,6 +256,30 @@ class FaceDetector(private val models: ModelStore) {
 }
 
 /** Gender model (FaceRes MobileNet): eye-aligned 224×224 RGB face (0..255) -> P(male). */
+/**
+ * Second face model (face-api.js AgeGenderNet, TinyXception, trained on UTKFace — which includes children):
+ * P(male) and an age estimate from the same eye-aligned 224 px face crop the FaceRes model sees.
+ */
+class AgeGenderModel(private val models: ModelStore) {
+    class Result(val pMale: Float, val age: Float)
+
+    fun predict(aligned224: RgbImage): Result {
+        // the aligned crop is 1.4× the face box; this model was trained on tighter face crops
+        val m = Math.round(aligned224.width * (1 - TIGHT) / 2)
+        val face = aligned224.crop(m, m, aligned224.width - 2 * m, aligned224.height - 2 * m).resize(INPUT, INPUT)
+        val input = FloatArray(INPUT * INPUT * 3) { (face.data[it].toInt() and 0xFF).toFloat() }
+        val outs = models.session(ModelStore.AGE_GENDER).runFloat(models.env, input, longArrayOf(1, INPUT.toLong(), INPUT.toLong(), 3))
+        val age = outs.first { it.second.size == 1 }.second[0]
+        val gender = outs.first { it.second.size == 2 }.second
+        return Result(gender[0], age)
+    }
+
+    companion object {
+        const val INPUT = 112
+        const val TIGHT = 0.85f
+    }
+}
+
 class GenderModel(private val models: ModelStore) {
     fun pMale(face: RgbImage): Float {
         require(face.width == INPUT && face.height == INPUT)

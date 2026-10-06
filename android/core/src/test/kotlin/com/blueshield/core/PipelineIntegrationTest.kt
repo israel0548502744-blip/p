@@ -93,11 +93,12 @@ class PipelineIntegrationTest {
         var right = 0
         for (i in 0 until a.frameCount) {
             val m = Composer.feather(a.maskFor(i, d, s, a.lookahead()), 768, 432, s.softness, false)
-            for (y in 0 until m.height) for (x in 0 until m.width) if (m[x, y] > 128) { if (x < m.width / 2) left++ else right++ }
+            // the man stands right of x ≈ 0.6 (the woman's arm may reach a little past the middle)
+            for (y in 0 until m.height) for (x in 0 until m.width) if (m[x, y] > 128) { if (x < m.width / 2) left++ else if (x > m.width * 0.62) right++ }
         }
         println("masked pixels left=$left right=$right")
         assertTrue(left > 5000)
-        assertTrue(right < left * 0.02)
+        assertTrue(right < left * 0.01)
     }
 
     @Test fun overrideInvertsDecisions() {

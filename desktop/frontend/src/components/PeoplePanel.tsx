@@ -75,8 +75,9 @@ export function PeoplePanel({ job, onApply }: { job: Job; onApply: (o: Record<st
                     )}
                     title={`${p.votes} face observations · P(female) = ${(p.p_female * 100).toFixed(1)}%`}
                   >
-                    {GENDER_TEXT[p.gender]}
+                    {p.child ? (p.gender === "female" ? "Girl" : "Child") : GENDER_TEXT[p.gender]}
                     {p.gender !== "uncertain" && ` ${Math.round(p.confidence * 100)}%`}
+                    {p.age != null && ` · ~${Math.round(p.age)} y`}
                   </span>
                 </div>
                 <div className="text-[10.5px] text-ink-400">
@@ -118,6 +119,7 @@ export function PeoplePanel({ job, onApply }: { job: Job; onApply: (o: Record<st
 function autoDecision(p: PersonInfo, job: Job): boolean {
   const s = job.settings;
   if (s.target === "everyone") return true;
+  if (p.child) return false;
   if (p.gender === "female") return true;
   if (p.gender === "male") return false;
   return s.uncertain_policy === "censor";

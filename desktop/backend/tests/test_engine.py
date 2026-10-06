@@ -147,3 +147,43 @@ def test_duplicate_tracks_merge_and_keep_their_evidence():
     assert len(t2.active) == 1
     survivor = t2.active[0]
     assert survivor.gender.votes == 6 and list(t2.aliases.values()) == [survivor.tid]
+
+
+def test_children_are_not_censored_when_only_women_are():
+    from blueshield.gender import GenderEstimate, censor_decision
+    g = GenderEstimate()
+    for _ in range(8):
+        g.add(0.1)
+        g.add_age(9)
+    assert g.is_child
+    assert not censor_decision(g.label(0.7), "female", "censor", "auto", g.is_child)
+    assert censor_decision(g.label(0.7), "everyone", "censor", "auto", g.is_child)
+    few = GenderEstimate()
+    for _ in range(3):
+        few.add_age(8)
+    assert not few.is_child  # too little evidence: treated as an adult (the safe side)
+
+
+def test_male_needs_stronger_evidence():
+    from blueshield.gender import GenderEstimate
+    g = GenderEstimate()
+    for _ in range(8):
+        g.add(0.62)
+    assert g.p_female < 0.3 and g.label(0.7) == "uncertain"
+
+
+def test_neck_is_free_but_a_low_neckline_is_censored():
+    from blueshield.pipeline import CLEAVAGE_START, apply_neckline
+    face = (70, 40, 130, 110)
+
+    def body(cleavage):
+        m = np.zeros((300, 200), bool)
+        m[40:(251 if cleavage else 152), 75:126] = True
+        return m
+    plain = body(False)
+    apply_neckline(plain, face)
+    assert not plain.any()
+    low = body(True)
+    apply_neckline(low, face)
+    start = int(110 + CLEAVAGE_START * 70)
+    assert not low[start - 2, 100] and low[start + 3, 100] and low[200, 100]

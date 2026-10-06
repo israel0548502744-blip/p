@@ -10,6 +10,7 @@ import com.blueshield.core.image.ByteMask
 import com.blueshield.core.image.FloatMask
 import com.blueshield.core.image.MaskOps
 import com.blueshield.core.image.RgbImage
+import com.blueshield.core.ml.AgeGenderModel
 import com.blueshield.core.ml.ColorSkin
 import com.blueshield.core.ml.FaceDetector
 import com.blueshield.core.ml.GenderModel
@@ -40,6 +41,10 @@ data class PersonSummary(
     val frames: Int,
     val startSec: Double,
     val endSec: Double,
+    /** Median estimated age (null when no face was seen). */
+    val age: Double? = null,
+    /** Classified as a child: not censored when only women are. */
+    val child: Boolean = false,
 )
 
 /** Everything the render stage needs; kept so overrides only require re-rendering. */
@@ -57,7 +62,7 @@ class Analysis(
 
     fun decisions(settings: CensorSettings, overrides: Map<Int, Override>): Map<Int, Boolean> {
         val out = HashMap(people.mapValues { (id, t) ->
-            censorDecision(t.gender.label(settings.threshold01), settings.target, settings.uncertainPolicy, overrides[id] ?: Override.AUTO)
+            censorDecision(t.gender.label(settings.threshold01), settings.target, settings.uncertainPolicy, overrides[id] ?: Override.AUTO, t.gender.isChild)
         })
         // frames recorded before two duplicate tracks were merged still carry the merged-away id
         for ((old, new) in aliases) out[new]?.let { out[old] = it }
@@ -70,8 +75,8 @@ class Analysis(
             val ov = overrides[t.id] ?: Override.AUTO
             PersonSummary(
                 t.id, label.key, t.gender.pFemale, t.gender.confidence, t.gender.votes,
-                censorDecision(label, settings.target, settings.uncertainPolicy, ov), ov, t.frames,
-                t.firstFrame / fps, t.lastFrame / fps,
+                censorDecision(label, settings.target, settings.uncertainPolicy, ov, t.gender.isChild), ov, t.frames,
+                t.firstFrame / fps, t.lastFrame / fps, t.gender.ageMedian, t.gender.isChild,
             )
         }
 
@@ -126,7 +131,9 @@ class Analyzer(
     private val segmenter = SkinSegmenter(models, spec.thresholds.faceExclusion)
     private val personDetector = PersonDetector(models)
     private val nudeNet = NudeNet(models)
-    private val classifier = GenderClassifier(FaceDetector(models), GenderModel(models), spec.thresholds.faceMinScore, spec.thresholds.minFacePx)
+    private val classifier = GenderClassifier(
+        FaceDetector(models), GenderModel(models), spec.thresholds.faceMinScore, spec.thresholds.minFacePx, AgeGenderModel(models),
+    )
 
     private val flow = OpticalFlow(width, height)
     private val sceneCut = SceneCutDetector(spec.tracking.sceneCutThreshold)
@@ -137,7 +144,7 @@ class Analyzer(
         maxMisses = max(3, (spec.tracking.personLostSeconds * fps / detStride).roundToInt()),
         galleryFrames = (spec.tracking.reidGallerySeconds * fps).roundToInt(),
         reidMinSimilarity = spec.tracking.reidMinSimilarity,
-    ) { GenderEstimate(spec.gender.voteFactor, spec.gender.maxLogit, spec.gender.minVotes, spec.gender.minWeight) }
+    ) { spec.newGenderEstimate() }
     private val fuser = TemporalFuser(
         spec.tracking.fuserMemory,
         if (settings.aggressive) spec.tracking.fuserLiftAggressive else spec.tracking.fuserLift,
@@ -153,10 +160,12 @@ class Analyzer(
         private set
 
     /** Most recent frame's state, for live previews. */
+    /** Most recent frame's (pre-fusion) skin probability, for debugging tools. */
+    val lastSkinProbability: FloatMask? get() = lastSkin
     var lastSkinBinary: BooleanArray? = null
         private set
     fun visiblePeople(): List<PersonTrack> = people.visible()
-    fun currentDecision(t: PersonTrack) = censorDecision(t.gender.label(settings.threshold01), settings.target, settings.uncertainPolicy)
+    fun currentDecision(t: PersonTrack) = censorDecision(t.gender.label(settings.threshold01), settings.target, settings.uncertainPolicy, child = t.gender.isChild)
 
     /** Analyse a chunk of consecutive frames (all at width × height). */
     fun process(frames: List<RgbImage>, onFrame: (Int) -> Unit = {}) {
@@ -180,7 +189,7 @@ class Analyzer(
             regions.predict(flow, width, height)
             faces.predict(flow, width, height)
             nude[k]?.let { dets ->
-                people.update(frame, personDetector.detect(frame, personMin), idx)
+                people.update(frame, personDetector.detect(frame, personMin), idx, dets.filter { it.label in FACE_LABELS }.map { it.box })
                 regions.update(dets.filter { it.label in labels })
                 faces.update(dets.filter { it.label in FACE_LABELS })
             }
@@ -228,14 +237,21 @@ class Analyzer(
                     val need = t.gender.votes < spec.gender.votesBeforeSlowdown || idx - t.lastClassified >= reclassifyEvery
                     if (!need) continue
                     t.lastClassified = idx
-                    classifier.classify(frame, t.box, faceMap)?.let { (pMale, weight) -> t.gender.add(pMale, weight) }
+                    classifier.classify(frame, t.box, faceMap)?.let { o ->
+                        t.gender.add(o.pMale, o.weight)
+                        t.gender.addAge(o.age)
+                    }
                 }
             }
             if (!settings.includeFace) {
-                // Faces are never censored unless asked. The segmenter sometimes labels a whole face as
-                // body skin, so clear every tracked face box (forehead to chin, not the neck).
-                for (f in faces.tracks) clearFace(skinBin, f.box)
+                // Faces and necks are never censored unless asked (the segmenter sometimes labels a whole face as
+                // body skin); a low neckline is censored from just below the chin. See [Neckline].
+                for (f in faces.tracks) {
+                    val known = f.cleavageFrames >= CLEAVAGE_STICKY_FRAMES
+                    if (Neckline.apply(skinBin, width, height, f.box, spec.neckline, faceMap?.data, known)) f.cleavageFrames++
+                }
             }
+            Neckline.removeSpecks(skinBin, width, height, people.visible().map { it.box }, spec.neckline.speckPersonFrac, spec.neckline.speckFrameFrac)
             people.markFrame(frame, idx)
 
             val vis = people.visible()
@@ -270,27 +286,12 @@ class Analyzer(
         }
     }
 
-    private fun clearFace(skin: BooleanArray, b: com.blueshield.core.image.Box) {
-        val cx = b.cx
-        val cy = b.cy - 0.12f * b.h
-        val ax = 0.65f * b.w
-        val ay = 0.78f * b.h
-        if (ax < 1f || ay < 1f) return
-        val y0 = max(0, (cy - ay).toInt())
-        val y1 = minOf(height - 1, (cy + ay).toInt() + 1)
-        val x0 = max(0, (cx - ax).toInt())
-        val x1 = minOf(width - 1, (cx + ax).toInt() + 1)
-        for (y in y0..y1) for (x in x0..x1) {
-            val dx = (x + 0.5f - cx) / ax
-            val dy = (y + 0.5f - cy) / ay
-            if (dx * dx + dy * dy <= 1f) skin[y * width + x] = false
-        }
-    }
-
     fun finish(): Analysis = Analysis(settings, spec, fps, store, records.toList(), people.all.filterValues { it.frames > 0 }, people.aliases.toMap())
 
     companion object {
         val FACE_LABELS = setOf("FACE_FEMALE", "FACE_MALE")
+        /** A low neckline seen in this many frames counts for the rest of the shot (no flicker on head turns). */
+        const val CLEAVAGE_STICKY_FRAMES = 3
 
         /** Size with long side ≤ maxSide and even dimensions (same as desktop `scaled_size`). */
         fun scaledSize(w: Int, h: Int, maxSide: Int): Pair<Int, Int> {

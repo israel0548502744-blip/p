@@ -35,7 +35,8 @@ class ModelStore(
         const val FACES = "blaze_face_short_range.onnx"
         const val GENDER = "gender_faceres.onnx"
         const val NUDENET = "nudenet_320n.onnx"
-        val ALL = listOf(SEGMENTER, PERSONS, FACES, GENDER, NUDENET)
+        const val AGE_GENDER = "faceapi_agegender.onnx"
+        val ALL = listOf(SEGMENTER, PERSONS, FACES, GENDER, NUDENET, AGE_GENDER)
     }
 }
 

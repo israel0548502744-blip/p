@@ -34,6 +34,7 @@ def test_mask_constants_match():
     from blueshield import detectors
     assert (detectors.ROI_MAX_FRAME_RATIO, detectors.ROI_FULL_EVERY_DET) == (
         SPEC["roi"]["max_frame_ratio"], SPEC["roi"]["full_every_det"])
+    assert pipeline.OWNER_REACH == SPEC["owner_reach"]
     t = SPEC["tracking"]
     assert (pipeline.FUSER_MEMORY, pipeline.FUSER_LIFT, pipeline.FUSER_LIFT_AGGRESSIVE) == (
         t["fuser_memory"], t["fuser_lift"], t["fuser_lift_aggressive"])
@@ -42,9 +43,21 @@ def test_mask_constants_match():
 def test_gender_constants_match():
     g = SPEC["gender"]
     assert gender.MAX_LOGIT == g["max_logit"] and gender.MIN_VOTES == g["min_votes"] and gender.MIN_WEIGHT == g["min_weight"]
+    assert (gender.MALE_MIN_CONFIDENCE, gender.ADULT_MIN_AGE, gender.MIN_AGE_VOTES) == (
+        g["male_min_confidence"], g["adult_min_age"], g["min_age_votes"])
     from blueshield.detectors import FACE_EXCLUSION
     assert FACE_EXCLUSION == SPEC["thresholds"]["face_exclusion"]
     est = gender.GenderEstimate()
     est.add(0.2)  # one vote: logit = factor * ln(0.8/0.2)
     import math
     assert abs(est.logit - g["vote_factor"] * math.log(4)) < 1e-6
+
+
+def test_neckline_constants_match():
+    from blueshield import pipeline as p
+    n = SPEC["neckline"]
+    assert (p.NECK_BAND_HALF_WIDTH, p.NECK_BAND_HEIGHT, p.NECK_PROBE_HALF_WIDTH, p.NECK_PROBE_HEIGHT, p.CLEAVAGE_MIN_FILL,
+            p.CLEAVAGE_START, p.SPECK_PERSON_FRAC, p.SPECK_FRAME_FRAC) == (
+        n["band_half_width"], n["band_height"], n["probe_half_width"], n["probe_height"], n["cleavage_min_fill"],
+        n["cleavage_start"], n["speck_person_frac"], n["speck_frame_frac"])
+

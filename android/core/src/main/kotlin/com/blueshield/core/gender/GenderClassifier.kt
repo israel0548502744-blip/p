@@ -4,8 +4,11 @@ import com.blueshield.core.image.Box
 import com.blueshield.core.image.FloatMask
 import com.blueshield.core.image.MaskOps
 import com.blueshield.core.image.RgbImage
+import com.blueshield.core.ml.AgeGenderModel
 import com.blueshield.core.ml.FaceDetector
 import com.blueshield.core.ml.GenderModel
+import kotlin.math.exp
+import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -15,9 +18,19 @@ import kotlin.math.roundToInt
  * else an upper-body crop), detect the face, align it by the eyes, run the gender model.
  * Returns (P(male), vote weight) or null when there is no usable face.
  */
-class GenderClassifier(private val faces: FaceDetector, private val model: GenderModel, private val minFaceScore: Float, private val minFacePx: Float) {
+class GenderClassifier(
+    private val faces: FaceDetector, private val model: GenderModel, private val minFaceScore: Float, private val minFacePx: Float,
+    private val ageGender: AgeGenderModel? = null,
+) {
+    /** One look at a face: combined P(male), vote weight, estimated age (NaN when unknown). */
+    data class Observation(val pMale: Float, val weight: Float, val age: Float)
 
-    fun classify(frame: RgbImage, box: Box, faceMap: FloatMask?): Pair<Float, Float>? {
+    /**
+     * Returns an [Observation] or null when there is no usable face. With the second model, P(male) is the
+     * average of both models' log-odds: their mistakes are largely independent (e.g. older women, whom
+     * FaceRes alone often calls male), so the ensemble is much steadier than either.
+     */
+    fun classify(frame: RgbImage, box: Box, faceMap: FloatMask?): Observation? {
         val crops = ArrayList<Pair<RgbImage, Float>>()
         if (faceMap != null) headCrop(frame, box, faceMap)?.let { crops += it }
         topCrop(frame, box)?.let { crops += it }
@@ -28,13 +41,22 @@ class GenderClassifier(private val faces: FaceDetector, private val model: Gende
             val facePx = face.box.w * scale
             if (facePx < minFacePx) continue
             val weight = face.score * min(1f, facePx / 48f)
-            return model.pMale(model.align(crop, face)) to weight
+            val aligned = model.align(crop, face)
+            val p1 = model.pMale(aligned)
+            val second = ageGender?.predict(aligned) ?: return Observation(p1, weight, Float.NaN)
+            return Observation(ensemble(p1, second.pMale), weight, second.age)
         }
         return null
     }
 
     companion object {
         const val CROP = 256
+
+        /** Mean of the two log-odds, back to a probability. */
+        fun ensemble(a: Float, b: Float): Float {
+            fun logit(p: Float): Double = p.toDouble().coerceIn(0.02, 0.98).let { ln(it / (1 - it)) }
+            return (1.0 / (1.0 + exp(-(logit(a) + logit(b)) / 2))).toFloat()
+        }
 
         /** Square crop around the largest facial-skin blob in the top 60 % of the person box. */
         fun headCrop(frame: RgbImage, box: Box, faceMap: FloatMask): Pair<RgbImage, Float>? {

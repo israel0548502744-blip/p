@@ -53,6 +53,8 @@ FACE_URL = (
 )
 GENDER_FILE = MODELS_DIR / "gender_faceres_fp16.tflite"
 GENDER_BUNDLED = ROOT_DIR.parent / "models" / "gender_faceres_fp16.tflite"
+AGE_GENDER_FILE = MODELS_DIR / "faceapi_agegender.tflite"
+AGE_GENDER_BUNDLED = ROOT_DIR.parent / "models" / "faceapi_agegender.tflite"
 NUDENET_FILE = MODELS_DIR / "nudenet_320n.onnx"
 NUDENET_URL = "https://github.com/notAI-tech/NudeNet/releases/download/v3.4-weights/320n.onnx"
 
@@ -99,6 +101,15 @@ def ensure_gender_model() -> Path:
                 raise RuntimeError(f"Gender model missing: expected {GENDER_BUNDLED} (part of the repository)")
             shutil.copyfile(GENDER_BUNDLED, GENDER_FILE)
     return GENDER_FILE
+
+
+def ensure_age_gender_model() -> Path:
+    with _lock:
+        if not AGE_GENDER_FILE.exists():
+            if not AGE_GENDER_BUNDLED.exists():
+                raise RuntimeError(f"Age/gender model missing: expected {AGE_GENDER_BUNDLED} (part of the repository)")
+            shutil.copyfile(AGE_GENDER_BUNDLED, AGE_GENDER_FILE)
+    return AGE_GENDER_FILE
 
 
 def ensure_nudenet() -> Path:

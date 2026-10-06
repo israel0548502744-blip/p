@@ -252,6 +252,73 @@ class CoreTest {
         assertEquals(survivor.id, tracker2.aliases.values.single())
     }
 
+    @Test fun childrenAreNotCensoredWhenOnlyWomenAre() {
+        val g = spec.newGenderEstimate()
+        repeat(8) { g.add(0.1f); g.addAge(9f) }
+        assertTrue(g.isChild)
+        val F = GenderEstimate.Label.FEMALE
+        assertFalse(censorDecision(g.label(0.7), "female", "censor", Override.AUTO, g.isChild))
+        assertTrue(censorDecision(g.label(0.7), "everyone", "censor", Override.AUTO, g.isChild))
+        assertTrue(censorDecision(F, "female", "censor", Override.CENSOR, child = true))
+        // too few age looks: treated as an adult (the safe side)
+        val few = spec.newGenderEstimate().apply { repeat(spec.gender.minAgeVotes - 1) { addAge(8f) } }
+        assertFalse(few.isChild)
+        val adult = spec.newGenderEstimate().apply { listOf(16f, 40f, 45f, 50f, 38f).forEach { addAge(it) } }
+        assertFalse(adult.isChild)
+    }
+
+    @Test fun maleNeedsStrongerEvidence() {
+        val g = spec.newGenderEstimate()
+        repeat(8) { g.add(0.62f) } // leaning male, but not clearly
+        assertTrue(g.pFemale < 0.3)
+        assertEquals(GenderEstimate.Label.UNCERTAIN, g.label(0.7))
+        val m = spec.newGenderEstimate().apply { repeat(8) { add(0.95f) } }
+        assertEquals(GenderEstimate.Label.MALE, m.label(0.7))
+    }
+
+    @Test fun ensembleAveragesLogOdds() {
+        val e = com.blueshield.core.gender.GenderClassifier.ensemble(0.8f, 0.2f)
+        assertTrue(abs(e - 0.5f) < 1e-4)
+        assertTrue(com.blueshield.core.gender.GenderClassifier.ensemble(0.6f, 0.05f) < 0.3f)
+    }
+
+    @Test fun neckIsFreeButALowNecklineIsCensored() {
+        val w = 200; val h = 300
+        val face = Box(70f, 40f, 130f, 110f) // 60 × 70 px
+        fun body(cleavage: Boolean) = BooleanArray(w * h) { i ->
+            val x = i % w; val y = i / w
+            // face + neck skin column, plus (optionally) chest skin continuing below
+            (x in 75..125 && y in 40..(if (cleavage) 250 else 151))
+        }
+        val plain = body(false)
+        com.blueshield.core.pipeline.Neckline.apply(plain, w, h, face, spec.neckline)
+        assertTrue(plain.none { it }, "a normal neck must stay uncensored")
+        val low = body(true)
+        com.blueshield.core.pipeline.Neckline.apply(low, w, h, face, spec.neckline)
+        val start = (110 + spec.neckline.cleavageStart * 70).toInt()
+        assertFalse(low[(start - 2) * w + 100], "just under the chin stays free")
+        assertTrue(low[(start + 3) * w + 100] && low[200 * w + 100], "the neckline is censored from ~1 cm below the chin")
+    }
+
+    @Test fun armOutsideTheBoxFollowsItsOwner() {
+        assertEquals(spec.ownerReach, Composer.OWNER_REACH)
+        // person 7's box covers x 0.2..0.5; a hand blob just right of it (x 0.55..0.6) belongs to them
+        val skin = ByteMask(100, 100).also { for (y in 40..50) for (x in 55..60) it[x, y] = 255 }
+        val rec = FrameRecord(floatArrayOf(7f, 0.2f, 0.2f, 0.5f, 0.9f), FloatArray(0))
+        val kept = Composer.compose(skin, rec, mapOf(7 to false), censorUnassigned = true, boxPad = 0.06f)
+        assertFalse(kept.any(), "a kept person's hand must not be censored as 'unassigned'")
+        val censored = Composer.compose(skin, rec, mapOf(7 to true), censorUnassigned = false, boxPad = 0.06f)
+        assertTrue(censored.any())
+    }
+
+    @Test fun tinySpecksAreRemoved() {
+        val w = 100; val h = 100
+        val m = BooleanArray(w * h) { i -> val x = i % w; val y = i / w; (x in 10..40 && y in 10..60) || (x in 70..71 && y in 70..71) }
+        com.blueshield.core.pipeline.Neckline.removeSpecks(m, w, h, listOf(Box(0f, 0f, 100f, 100f)), 0.006f, 0.0006f)
+        assertTrue(m[30 * w + 20])
+        assertFalse(m[70 * w + 70])
+    }
+
     @Test fun orientationMappingIsSeparable() {
         // the Android frame extractor precomputes a column part and a row part of displayToCoded
         for (rot in listOf(0, 90, 180, 270)) {

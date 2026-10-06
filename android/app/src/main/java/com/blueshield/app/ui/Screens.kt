@@ -361,6 +361,7 @@ private fun PeoplePanel(
                     Override.KEEP -> false
                     Override.AUTO -> com.blueshield.core.gender.censorDecision(
                         com.blueshield.core.gender.GenderEstimate.Label.entries.first { it.key == p.gender }, settings.target, settings.uncertainPolicy,
+                        child = p.child,
                     )
                 }
                 Row(
@@ -378,9 +379,16 @@ private fun PeoplePanel(
                     }
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
-                        val gender = when (p.gender) { "female" -> "Female"; "male" -> "Male"; else -> "Unsure" }
+                        val gender = when {
+                            p.child && p.gender == "female" -> "Girl"
+                            p.child -> "Child"
+                            p.gender == "female" -> "Female"
+                            p.gender == "male" -> "Male"
+                            else -> "Unsure"
+                        }
                         Text(
-                            "#${p.id}  $gender" + if (p.gender != "uncertain") " ${(p.confidence * 100).toInt()}%" else "",
+                            "#${p.id}  $gender" + (if (p.gender != "uncertain") " ${(p.confidence * 100).toInt()}%" else "") +
+                                (p.age?.let { " · ~${it.toInt()} y" } ?: ""),
                             color = if (p.gender == "uncertain") Palette.Amber else Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold,
                         )
                         Text("${formatDuration(p.startSec)}–${formatDuration(p.endSec)} · ${p.votes} face looks", color = Palette.Ink400, fontSize = 11.sp)

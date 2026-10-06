@@ -130,6 +130,8 @@ object Appearance {
 /** One tracked sensitive region (NudeNet detection). */
 class RegionTrack(var label: String, var box: Box, var score: Float) {
     var misses = 0
+    /** Face tracks: frames in which a low neckline was seen below this face (sticky once established). */
+    var cleavageFrames = 0
 }
 
 /** IoU tracker for sensitive regions with flow prediction and box smoothing. */

@@ -84,7 +84,9 @@ class PersonTracker:
             dx, dy = flow.box_shift(tuple(t.box))
             t.box = [t.box[0] + dx, t.box[1] + dy, t.box[2] + dx, t.box[3] + dy]
 
-    def update(self, frame: np.ndarray, dets: list[PersonBox], frame_index: int) -> None:
+    def update(self, frame: np.ndarray, dets: list[PersonBox], frame_index: int,
+               faces: Optional[list[tuple[float, float, float, float]]] = None) -> None:
+        """``faces``: face boxes seen in this frame — two tracks holding the same face are the same person."""
         hists = [appearance(frame, d.box) for d in dets]
         # greedy matching on a combined IoU + appearance cost
         pairs = []
@@ -143,9 +145,9 @@ class PersonTracker:
             self._next += 1
             self.active.append(t)
             self.all[t.tid] = t
-        self._merge_duplicates()
+        self._merge_duplicates(faces or [])
 
-    def _merge_duplicates(self) -> None:
+    def _merge_duplicates(self, faces: list) -> None:
         """Two tracks on the same person (one box inside the other, same look, for several detection
         rounds) become one identity, so the gender evidence isn't split between them."""
         pending = []
@@ -155,11 +157,13 @@ class PersonTracker:
                     continue
                 if (_area(small.box), small.tid) >= (_area(big.box), big.tid):
                     continue
-                same = (containment(tuple(small.box), tuple(big.box)) > CONTAINED_MIN
-                        and hist_sim(small.hist, big.hist) > 0.6)
-                n = small.dup_rounds.get(big.tid, 0) + 1 if same else 0
+                contained = containment(tuple(small.box), tuple(big.box))
+                same_look = contained > CONTAINED_MIN and hist_sim(small.hist, big.hist) > 0.6
+                # both boxes hold the same face in their upper part (a lying or reaching person often gets two)
+                same_face = contained > 0.5 and any(_holds_face(small.box, f) and _holds_face(big.box, f) for f in faces)
+                n = small.dup_rounds.get(big.tid, 0) + 1 if (same_look or same_face) else 0
                 small.dup_rounds[big.tid] = n
-                if n >= 3:
+                if n >= (2 if same_face else 3):
                     pending.append((small, big))
         for small, big in pending:
             if small not in self.active or big not in self.active:
@@ -195,6 +199,12 @@ class PersonTracker:
                     crop = _thumb(frame, t.box)
                     if crop is not None:
                         t.thumb, t.thumb_quality = crop, quality
+
+
+def _holds_face(box, face) -> bool:
+    fx, fy = (face[0] + face[2]) / 2, (face[1] + face[3]) / 2
+    return (box[0] <= fx <= box[2] and box[1] <= fy <= box[1] + 0.65 * (box[3] - box[1])
+            and containment(tuple(face), tuple(box)) > 0.7)
 
 
 def _area(box) -> float:

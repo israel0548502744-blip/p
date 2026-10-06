@@ -207,8 +207,10 @@ def person_summary(t: PersonTrack, settings: CensorSettings, override: str, fps:
         "p_female": round(t.gender.p_female, 3),
         "confidence": round(t.gender.confidence(), 3),
         "votes": t.gender.votes,
-        "censored": censor_decision(label, settings.target, settings.uncertain_policy, override),
+        "censored": censor_decision(label, settings.target, settings.uncertain_policy, override, t.gender.is_child),
         "override": override,
+        "age": None if t.gender.age_median is None else round(t.gender.age_median, 1),
+        "child": t.gender.is_child,
         "frames": t.frames,
         "start": round(t.first_frame / max(fps, 1e-6), 2),
         "end": round(t.last_frame / max(fps, 1e-6), 2),
@@ -329,7 +331,8 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
             regions.predict(flow)
             faces.predict(flow)
             if k in nude:
-                people.update(frame, person_model.detect(frame, person_min_score), idx)
+                people.update(frame, person_model.detect(frame, person_min_score), idx,
+                              faces=[tuple(d.box) for d in nude[k] if d.label in FACE_LABELS])
                 regions.update([d for d in nude[k] if d.label in labels])
                 faces.update([d for d in nude[k] if d.label in FACE_LABELS])
 
@@ -376,12 +379,16 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
                         res = gender_model.classify_person(frame, tuple(t.box), state["face_map"])
                         last_cls[t.tid] = idx
                         if res is not None:
-                            t.gender.add(*res)
+                            p_male, weight, age = res
+                            t.gender.add(p_male, weight)
+                            t.gender.add_age(age)
             if not settings.include_face:
-                # Faces are never censored unless asked. The segmenter sometimes labels a whole face as
-                # body skin, so clear every tracked face box (NudeNet face detections, flow-tracked).
+                # Faces and necks are never censored unless asked (the segmenter sometimes labels a whole face as
+                # body skin); a low neckline is censored from just below the chin. See apply_neckline.
                 for f in faces.tracks:
-                    _clear_face(skin_bin, tuple(f.box))
+                    if apply_neckline(skin_bin, tuple(f.box), state["face_map"], f.cleavage_frames >= CLEAVAGE_STICKY_FRAMES):
+                        f.cleavage_frames += 1
+            remove_specks(skin_bin, [tuple(t.box) for t in people.visible()])
             people.mark_frame(frame, idx)
 
             # ── per-frame record (normalised coordinates) ──
@@ -439,7 +446,7 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
 def decisions_for(analysis: Analysis, settings: CensorSettings, overrides: dict[int, str]) -> dict[int, bool]:
     th = settings.gender_threshold / 100.0
     out = {tid: censor_decision(t.gender.label(th), settings.target, settings.uncertain_policy,
-                                overrides.get(tid, "auto"))
+                                overrides.get(tid, "auto"), t.gender.is_child)
            for tid, t in analysis.people.items()}
     # frames recorded before two duplicate tracks were merged still carry the merged-away id
     for old, new in analysis.aliases.items():
@@ -452,6 +459,7 @@ def decisions_for(analysis: Analysis, settings: CensorSettings, overrides: dict[
 FUSER_MEMORY = 0.4
 FUSER_LIFT = 0.35
 FUSER_LIFT_AGGRESSIVE = 0.5
+OWNER_REACH = 0.6  # a skin blob up to this many box sizes outside a person's box still belongs to them (arms)
 UNASSIGNED_MIN_AREA = 0.001  # fraction of the frame; smaller unattributed blobs are noise, not people
 
 
@@ -528,6 +536,26 @@ def _owned_skin(skin: np.ndarray, persons: np.ndarray, flags: np.ndarray, unassi
     votes = np.bincount(comp[sure] * (n + 1) + nearest[sure], minlength=count * (n + 1)).reshape(count, n + 1)
     has = votes[:, 1:].sum(1) > 0
     comp_owner = np.where(has, votes[:, 1:].argmax(1) + 1, 0)
+    # a blob entirely outside every box (an arm stretched beyond the detector's box) belongs to the nearest
+    # person within arm's reach — so it follows that person's decision, not the "unassigned" fallback
+    orphans = np.where(~has)[0]
+    orphans = orphans[orphans > 0]
+    if len(orphans):
+        on_px = np.nonzero(on)
+        cnt = np.bincount(comp[on_px], minlength=count)
+        sx = np.bincount(comp[on_px], weights=on_px[1], minlength=count)
+        sy = np.bincount(comp[on_px], weights=on_px[0], minlength=count)
+        for c in orphans:
+            if cnt[c] == 0:
+                continue
+            mx, my = sx[c] / cnt[c], sy[c] / cnt[c]
+            best, best_r = 0, OWNER_REACH
+            for i, (_, x1, y1, x2, y2) in enumerate(persons):
+                bw, bh = max((x2 - x1) * mw, 1.0), max((y2 - y1) * mh, 1.0)
+                r = max(max(0.0, x1 * mw - mx, mx - x2 * mw) / bw, max(0.0, y1 * mh - my, my - y2 * mh) / bh)
+                if r <= best_r:
+                    best, best_r = i + 1, r
+            comp_owner[c] = best
     owner = np.where(sure, nearest, comp_owner[comp])
     # ambiguous pixels with no component majority fall back to the nearest box (if any)
     owner = np.where((owner == 0) & (cover > 0), nearest, owner)
@@ -644,16 +672,79 @@ def run_pipeline(engine: Engine, info: media.VideoInfo, settings: CensorSettings
     return result
 
 
-def _clear_face(skin: np.ndarray, face: tuple[float, float, float, float]) -> None:
-    """Remove skin inside an ellipse around a face box — forehead to chin, not the neck."""
+# face / neck / neckline rules (sizes relative to the face box) — mirror shared/pipeline.json "neckline"
+NECK_BAND_HALF_WIDTH = 0.6
+NECK_BAND_HEIGHT = 0.7
+NECK_PROBE_HALF_WIDTH = 0.35
+NECK_PROBE_HEIGHT = 0.6
+CLEAVAGE_MIN_FILL = 0.12
+CLEAVAGE_START = 0.06  # ≈ 1 cm below the chin
+SPECK_PERSON_FRAC = 0.006
+SPECK_FRAME_FRAC = 0.0006
+CLEAVAGE_STICKY_FRAMES = 3  # a low neckline seen in this many frames counts for the rest of the shot
+_FACE_INNER = 0.75
+_FACE_EDGE_PROB = 0.2
+_JAW = 0.25
+
+
+def apply_neckline(skin: np.ndarray, face: tuple[float, float, float, float],
+                   face_prob: Optional[np.ndarray] = None, known_cleavage: bool = False) -> bool:
+    """Face and neck stay uncensored; a low neckline (bare skin continuing into the chest) is censored from
+    about one centimetre below the chin. Same algorithm as the Android ``Neckline.apply``.
+
+    Returns whether a low neckline was seen in this frame; ``known_cleavage`` (seen on this face before) makes
+    the decision stick, so the censoring doesn't flicker when the head turns or tilts."""
+    h, w = skin.shape
     x1, y1, x2, y2 = face
-    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2 - 0.12 * (y2 - y1)
-    ax, ay = 0.65 * (x2 - x1), 0.78 * (y2 - y1)
-    if ax < 1 or ay < 1:
+    fw, fh = x2 - x1, y2 - y1
+    if fw < 2 or fh < 2:
+        return False
+    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2 - 0.12 * fh
+    ax, ay = 0.65 * fw, 0.72 * fh
+    # face ellipse: the core always, the rim only where the segmenter sees face skin (a hand at the cheek stays)
+    ex0, ex1 = max(0, int(cx - ax)), min(w, int(cx + ax) + 1)
+    ey0, ey1 = max(0, int(cy - ay)), min(h, int(cy + ay) + 1)
+    if ex1 > ex0 and ey1 > ey0:
+        yy, xx = np.mgrid[ey0:ey1, ex0:ex1]
+        r2 = ((xx + 0.5 - cx) / ax) ** 2 + ((yy + 0.5 - cy) / ay) ** 2
+        clear = r2 <= _FACE_INNER ** 2
+        if face_prob is not None:
+            clear |= (r2 <= 1) & (face_prob[ey0:ey1, ex0:ex1] >= _FACE_EDGE_PROB)
+        else:
+            clear |= r2 <= 1
+        skin[ey0:ey1, ex0:ex1][clear] = False
+    chin = y2
+    band_bottom = chin + NECK_BAND_HEIGHT * fh
+    px0, px1 = max(0, int(cx - NECK_PROBE_HALF_WIDTH * fw)), min(w, int(cx + NECK_PROBE_HALF_WIDTH * fw) + 1)
+    py0, py1 = max(0, int(band_bottom)), min(h, int(band_bottom + NECK_PROBE_HEIGHT * fh) + 1)
+    probe = skin[py0:py1, px0:px1]
+    seen = bool(probe.size > 0 and probe.sum() >= CLEAVAGE_MIN_FILL * probe.size)
+    clear_to = chin + CLEAVAGE_START * fh if (seen or known_cleavage) else band_bottom
+    bx0, bx1 = max(0, int(cx - NECK_BAND_HALF_WIDTH * fw)), min(w, int(cx + NECK_BAND_HALF_WIDTH * fw) + 1)
+    by0, by1 = max(0, int(chin - _JAW * fh)), min(h, int(clear_to) + 1)
+    if bx1 > bx0 and by1 > by0:
+        skin[by0:by1, bx0:bx1] = False
+    return seen
+
+
+def remove_specks(skin: np.ndarray, boxes: list[tuple[float, float, float, float]]) -> None:
+    """Drop tiny isolated skin specks (patterned or pink clothes): smaller than SPECK_PERSON_FRAC of the person
+    box they sit in, or SPECK_FRAME_FRAC of the frame outside every box."""
+    h, w = skin.shape
+    n, labels, stats, cents = cv2.connectedComponentsWithStats(skin.astype(np.uint8), connectivity=8)
+    if n <= 1:
         return
-    hole = np.zeros(skin.shape, np.uint8)
-    cv2.ellipse(hole, (int(cx), int(cy)), (int(ax), int(ay)), 0, 0, 360, 1, -1)
-    skin[hole.astype(bool)] = False
+    drop = np.zeros(n, bool)
+    for l in range(1, n):
+        mx, my = cents[l]
+        inside = [b for b in boxes if b[0] <= mx <= b[2] and b[1] <= my <= b[3]]
+        if inside:
+            b = min(inside, key=lambda b: (b[2] - b[0]) * (b[3] - b[1]))
+            min_area = min(SPECK_PERSON_FRAC * (b[2] - b[0]) * (b[3] - b[1]), SPECK_FRAME_FRAC * w * h * 4)
+        else:
+            min_area = SPECK_FRAME_FRAC * w * h
+        drop[l] = stats[l, cv2.CC_STAT_AREA] < min_area
+    skin[drop[labels]] = False
 
 
 def _timeline(s: np.ndarray, c: np.ndarray) -> list[float]:
@@ -667,7 +758,8 @@ def _analysis_preview(frame: np.ndarray, skin: np.ndarray, vis: list[PersonTrack
     out = frame.copy()
     h, w = frame.shape[:2]
     th = settings.gender_threshold / 100.0
-    decisions = {t.tid: censor_decision(t.gender.label(th), settings.target, settings.uncertain_policy) for t in vis}
+    decisions = {t.tid: censor_decision(t.gender.label(th), settings.target, settings.uncertain_policy,
+                                        child=t.gender.is_child) for t in vis}
     persons = (np.array([[t.tid, t.box[0] / w, t.box[1] / h, t.box[2] / w, t.box[3] / h] for t in vis], np.float32)
                if vis else _EMPTY_P)
     unassigned = settings.target == "everyone" or settings.uncertain_policy == "censor"

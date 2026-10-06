@@ -41,6 +41,10 @@ export interface PersonInfo {
   start: number;
   end: number;
   has_thumbnail: boolean;
+  /** Median estimated age (null when no face was seen). */
+  age?: number | null;
+  /** Classified as a child: not censored when only women are. */
+  child?: boolean;
   thumbnail_url: string | null;
 }
 

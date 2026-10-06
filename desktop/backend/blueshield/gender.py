@@ -39,8 +39,13 @@ from . import models
 MAX_LOGIT = 6.0
 MIN_VOTES = 6  # face observations needed before calling anyone female or male
 MIN_WEIGHT = 3.0  # …and their summed quality weight (small / low-confidence faces count less)
+MALE_MIN_CONFIDENCE = 0.8  # calling someone male needs at least this, whatever the threshold (missing a woman costs more)
+ADULT_MIN_AGE = 18.0  # median estimated age below this = a child (not censored when only women are)
+MIN_AGE_VOTES = 4  # age observations needed before anyone can be called a child; until then: adult
 FACE_INPUT = 128
 GENDER_INPUT = 224
+AGE_INPUT = 112
+AGE_TIGHT = 0.85
 
 
 @dataclass
@@ -48,6 +53,20 @@ class GenderEstimate:
     logit: float = 0.0  # log-odds of "female"
     votes: int = 0
     weight: float = 0.0
+    ages: list = field(default_factory=list)
+
+    def add_age(self, age: float) -> None:
+        if age is not None and math.isfinite(age):
+            self.ages.append(float(age))
+
+    @property
+    def age_median(self) -> Optional[float]:
+        return float(np.median(self.ages)) if self.ages else None
+
+    @property
+    def is_child(self) -> bool:
+        """Clearly a child: enough age observations with a median below the adult age (unknown age = adult)."""
+        return len(self.ages) >= MIN_AGE_VOTES and self.age_median < ADULT_MIN_AGE
 
     def add(self, p_male: float, weight: float = 1.0) -> None:
         p = float(np.clip(p_male, 0.02, 0.98))
@@ -62,6 +81,7 @@ class GenderEstimate:
         self.logit = float(np.clip(self.logit + other.logit, -MAX_LOGIT, MAX_LOGIT))
         self.votes += other.votes
         self.weight += other.weight
+        self.ages.extend(other.ages)
 
     @property
     def p_female(self) -> float:
@@ -74,7 +94,7 @@ class GenderEstimate:
         p = self.p_female
         if p >= threshold:
             return "female"
-        if p <= 1.0 - threshold:
+        if p <= 1.0 - max(threshold, MALE_MIN_CONFIDENCE):
             return "male"
         return "uncertain"
 
@@ -82,10 +102,11 @@ class GenderEstimate:
         return max(self.p_female, 1.0 - self.p_female)
 
 
-def censor_decision(label: str, target: str, uncertain_policy: str, override: str = "auto") -> bool:
+def censor_decision(label: str, target: str, uncertain_policy: str, override: str = "auto",
+                    child: bool = False) -> bool:
     """Should this person be censored?
 
-    target: 'female' (only women) | 'everyone'
+    target: 'female' (adult women only — girls are not censored) | 'everyone'
     uncertain_policy: 'censor' (safe default) | 'keep'
     override: 'auto' | 'censor' | 'keep'
     """
@@ -95,6 +116,8 @@ def censor_decision(label: str, target: str, uncertain_policy: str, override: st
         return False
     if target == "everyone":
         return True
+    if child:
+        return False
     if label == "female":
         return True
     if label == "male":
@@ -169,6 +192,10 @@ class GenderClassifier:
         self._it = _interpreter(str(models.ensure_gender_model()))
         self._in = self._it.get_input_details()[0]["index"]
         self._out = self._it.get_output_details()[0]["index"]
+        # second face model: face-api.js AgeGenderNet (P(male) + age; trained on UTKFace, which includes children)
+        self._ag = _interpreter(str(models.ensure_age_gender_model()))
+        self._ag_in = self._ag.get_input_details()[0]["index"]
+        self._ag_out = [d["index"] for d in self._ag.get_output_details()]
 
     def aligned_face(self, img: np.ndarray, face: Face) -> np.ndarray:
         (rx, ry), (lx, ly) = face.right_eye, face.left_eye
@@ -190,6 +217,19 @@ class GenderClassifier:
         self._it.set_tensor(self._in, x[None])
         self._it.invoke()
         return float(self._it.get_tensor(self._out).ravel()[0])
+
+    def age_gender(self, face_bgr: np.ndarray) -> tuple[float, float]:
+        """(P(male), age) from the second model, on the same aligned crop (cut to the tighter face it was trained on)."""
+        s = face_bgr.shape[0]
+        m = int(round(s * (1 - AGE_TIGHT) / 2))
+        x = cv2.resize(cv2.cvtColor(face_bgr[m:s - m, m:s - m], cv2.COLOR_BGR2RGB), (AGE_INPUT, AGE_INPUT),
+                       interpolation=cv2.INTER_AREA).astype(np.float32)
+        self._ag.set_tensor(self._ag_in, x[None])
+        self._ag.invoke()
+        outs = [self._ag.get_tensor(i).ravel() for i in self._ag_out]
+        age = next(o for o in outs if o.size == 1)[0]
+        gender = next(o for o in outs if o.size == 2)
+        return float(gender[0]), float(age)
 
     def find_face(self, frame: np.ndarray, box: tuple[float, float, float, float],
                   face_map: Optional[np.ndarray] = None) -> Optional[tuple[np.ndarray, Face, float, tuple[float, float]]]:
@@ -218,8 +258,12 @@ class GenderClassifier:
         return None
 
     def classify_person(self, frame: np.ndarray, box: tuple[float, float, float, float],
-                        face_map: Optional[np.ndarray] = None, found=None) -> Optional[tuple[float, float]]:
-        """Return (P(male), vote weight) for the person in ``box``, or None if no usable face."""
+                        face_map: Optional[np.ndarray] = None, found=None) -> Optional[tuple[float, float, float]]:
+        """Return (P(male), vote weight, age) for the person in ``box``, or None if no usable face.
+
+        P(male) averages the log-odds of both face models: their mistakes are largely independent (e.g. older
+        women, whom FaceRes alone often calls male), so the ensemble is much steadier than either.
+        """
         found = found if found is not None else self.find_face(frame, box, face_map)
         if found is None:
             return None
@@ -228,7 +272,17 @@ class GenderClassifier:
         if face_px < 14:
             return None  # too small to classify meaningfully
         weight = face.score * min(1.0, face_px / 48.0)
-        return self.p_male(self.aligned_face(crop, face)), weight
+        aligned = self.aligned_face(crop, face)
+        p2, age = self.age_gender(aligned)
+        return ensemble(self.p_male(aligned), p2), weight, age
+
+
+def ensemble(a: float, b: float) -> float:
+    """Mean of two P(male) log-odds, back to a probability."""
+    def logit(p: float) -> float:
+        p = min(max(p, 0.02), 0.98)
+        return math.log(p / (1 - p))
+    return 1.0 / (1.0 + math.exp(-(logit(a) + logit(b)) / 2))
 
 
 def top_crop(frame: np.ndarray, box, size: int = 256):

@@ -32,6 +32,9 @@ class FrameRecord(
  * box centre. Unattributable skin follows `censorUnassigned`.
  */
 object Composer {
+    /** A skin blob up to this many box sizes outside a person's box still belongs to them (arms). */
+    const val OWNER_REACH = 0.6f
+
     fun compose(
         skin: ByteMask, rec: FrameRecord, decisions: Map<Int, Boolean>, censorUnassigned: Boolean, boxPad: Float,
         unassignedMinArea: Float = 0.001f,
@@ -110,6 +113,37 @@ object Composer {
                 best = k
             }
             best
+        }
+        // a blob entirely outside every box (an arm stretched beyond the detector's box) belongs to the nearest
+        // person within arm's reach — so it follows that person's decision, not the "unassigned" fallback
+        val sx = DoubleArray(count)
+        val sy = DoubleArray(count)
+        for (i in 0 until w * h) if (on[i]) {
+            sx[comp[i]] += (i % w).toDouble()
+            sy[comp[i]] += (i / w).toDouble()
+        }
+        for (c in 1 until count) {
+            if (compOwner[c] != 0 || compArea[c] == 0) continue
+            var hasVote = false
+            for (k in 1..n) if (votes[c * (n + 1) + k] > 0) hasVote = true
+            if (hasVote) continue
+            val mx = (sx[c] / compArea[c]).toFloat()
+            val my = (sy[c] / compArea[c]).toFloat()
+            var bestR = OWNER_REACH
+            for (k in 0 until n) {
+                val o = k * 5
+                val bx1 = rec.persons[o + 1] * w
+                val by1 = rec.persons[o + 2] * h
+                val bx2 = rec.persons[o + 3] * w
+                val by2 = rec.persons[o + 4] * h
+                val bw = max(bx2 - bx1, 1f)
+                val bh = max(by2 - by1, 1f)
+                val r = max(max(0f, max(bx1 - mx, mx - bx2)) / bw, max(0f, max(by1 - my, my - by2)) / bh)
+                if (r <= bestR) {
+                    bestR = r
+                    compOwner[c] = k + 1
+                }
+            }
         }
         val out = ByteMask(w, h)
         for (i in 0 until w * h) {
