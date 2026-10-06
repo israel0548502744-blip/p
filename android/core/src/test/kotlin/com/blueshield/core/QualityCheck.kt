@@ -34,7 +34,8 @@ class QualityCheck {
         val settings = (if (parts.size > 4) kotlinx.serialization.json.Json.decodeFromString(CensorSettings.serializer(), parts[4]) else CensorSettings()).validated()
         val repo = File(System.getProperty("blueshield.repo") ?: "../..")
         val models = ModelStore({ File(repo, "models/onnx/$it").readBytes() })
-        val spec = PipelineSpec.bundled
+        // -Dblueshield.spec=file.json: measure a variant of shared/pipeline.json (ablations)
+        val spec = System.getProperty("blueshield.spec")?.let { PipelineSpec.parse(File(it).readText()) } ?: PipelineSpec.bundled
         val (vw, vh, fps) = PipelineIntegrationTest.probe(inFile)
         val (aw, ah) = Analyzer.scaledSize(vw, vh, spec.analysisMaxSide)
         // -Dblueshield.nearest=true: sample frames exactly like the Android FrameExtractor (nearest pixel)
