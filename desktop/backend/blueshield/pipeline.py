@@ -478,14 +478,14 @@ PERSON_GATE = 0.3  # segmenter "person" probability a skin pixel must (nearly) t
 MIN_BODY_AREA = 0.02  # away from every person box, a smaller "person" blob is an object (a mug, a lamp)
 REFINE_RADIUS = 0.004  # guided-filter window, fraction of (width + height)
 REFINE_EPS = 0.004
-REFINE_COLOR_BAND = 0.012  # band around the skin boundary decided by colour, fraction of the frame diagonal
+REFINE_COLOR_BAND = 0.008  # band around the skin boundary decided by colour, fraction of the frame diagonal
 # per-person outlines (MobileSAM): see outlines.PersonMasks and shared/pipeline.json "person_masks"
 PM_VIDEO_SIZE = 512
 PM_PHOTO_SIZE = 1024
 PM_EVERY_SEC = 0.5
 PM_SPEEDS = ("quality", "balanced")
 PM_OWNER_MIN_LOGIT = 0.0
-PM_CLIP_LOGIT = -2.0
+PM_CLIP_LOGIT = -1000.0
 
 
 def guided_filter(guide: np.ndarray, p: np.ndarray, r: int, eps: float) -> np.ndarray:

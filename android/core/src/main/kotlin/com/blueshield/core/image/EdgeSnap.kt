@@ -58,7 +58,10 @@ object EdgeSnap {
         val n = w * h
         val inside = ByteMask(w, h, ByteArray(n) { if (p[it] > 0.5f) -1 else 0 })
         if (!inside.any()) return
-        val core = MaskOps.erode(inside, band)
+        // sure skin: deep inside the mask — but thin limbs (crowds, far people) have no "deep inside": then the
+        // whole mask is the sample
+        var core = MaskOps.erode(inside, band)
+        if (core.data.count { it.toInt() != 0 } < 50) core = inside
         val outer = MaskOps.dilate(inside, band)
         val ring = MaskOps.dilate(inside, 2 * band)
         val bins = 16
@@ -83,10 +86,16 @@ object EdgeSnap {
             val a = sk[b] * ks
             val o = ot[b] * ko
             val like = (a + 1e-6f) / (a + o + 2e-6f)
-            // keep some of the model's opinion: colour alone can't tell skin from a skin-coloured wall
-            p[i] = 0.75f * like + 0.25f * p[i]
+            // Only clear colour evidence moves the boundary: a pixel inside the mask is removed only when its
+            // colour is clearly not this skin, one outside is added only when it clearly is. Ambiguous colours
+            // (another person's skin next to this one in a crowd) keep the model's opinion.
+            val inMask = inside.data[i].toInt() != 0
+            if ((inMask && like < REMOVE_BELOW) || (!inMask && like > ADD_ABOVE)) p[i] = 0.75f * like + 0.25f * p[i]
         }
     }
+
+    const val REMOVE_BELOW = 0.25f
+    const val ADD_ABOVE = 0.8f
 
     private fun blur3(hist: FloatArray, bins: Int): FloatArray {
         var cur = hist

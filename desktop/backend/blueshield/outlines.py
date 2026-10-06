@@ -64,6 +64,8 @@ def owners(logits: list, min_logit: float, clip_logit: float) -> np.ndarray:
     return out
 
 
+REMOVE_BELOW = 0.25
+ADD_ABOVE = 0.8
 MAJORITY = 0.75
 KEEP_MARGIN = 3.0
 
@@ -119,6 +121,8 @@ def recolour(p: np.ndarray, rgb: np.ndarray, band: int) -> np.ndarray:
         return p
     k = lambda r: np.ones((2 * r + 1, 2 * r + 1), np.uint8)  # noqa: E731 - square, like MaskOps.dilate
     core = cv2.erode(inside, k(band)) > 0
+    if core.sum() < 50:  # thin limbs (crowds, far people): the whole mask is the skin sample
+        core = inside > 0
     outer = cv2.dilate(inside, k(band)) > 0
     ring = cv2.dilate(inside, k(2 * band)) > 0
     q = (rgb >> 4).astype(np.int32)
@@ -132,7 +136,13 @@ def recolour(p: np.ndarray, rgb: np.ndarray, band: int) -> np.ndarray:
     ot /= ot.sum()
     sel = outer & ~core
     a, o = sk[bins[sel]], ot[bins[sel]]
+    like = (a + 1e-6) / (a + o + 2e-6)
+    # only clear colour evidence moves the boundary (see EdgeSnap.recolour): remove inside pixels whose colour is
+    # clearly not this skin, add outside pixels whose colour clearly is; ambiguous colours keep the model's opinion
+    in_mask = inside[sel] > 0
+    move = (in_mask & (like < REMOVE_BELOW)) | (~in_mask & (like > ADD_ABOVE))
     out = p.copy()
-    # keep some of the model's opinion: colour alone can't tell skin from a skin-coloured wall
-    out[sel] = 0.75 * (a + 1e-6) / (a + o + 2e-6) + 0.25 * p[sel]
+    vals = p[sel]
+    vals[move] = 0.75 * like[move] + 0.25 * vals[move]
+    out[sel] = vals
     return out

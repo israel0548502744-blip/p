@@ -25,7 +25,7 @@
     "min_body_area": 0.02
   },
   "roi": { "side_scale": 1.15, "paste_pad": 0.08, "min_side_px": 24, "max_frame_ratio": 0.9, "full_every_det": 2 },
-  "refine": { "radius": 0.004, "eps": 0.004, "color_band": 0.012 },
+  "refine": { "radius": 0.004, "eps": 0.004, "color_band": 0.008 },
   "neckline": {
     "band_half_width": 0.6, "band_height": 0.7, "probe_half_width": 0.35, "probe_height": 0.6,
     "cleavage_min_fill": 0.12, "cleavage_start": 0.06,
@@ -67,12 +67,12 @@
   "analysis_max_side": 768,
   "mask_max_side": 768,
   "person_masks": {
-    "$comment": "MobileSAM outline per person (box prompt): decides which person every skin pixel belongs to, and drops skin clearly outside every silhouette. Refreshed on detection frames at most every every_sec, carried by the motion in between.",
+    "$comment": "MobileSAM outline per person (box prompt): decides which person every skin pixel belongs to. Refreshed on detection frames at most every every_sec, carried by the motion in between. clip_logit drops skin clearly outside every outline; off (-1000): outlines of people lying in bed are often incomplete and clipping removed real skin (measured).",
     "video_size": 512,
     "photo_size": 1024,
     "every_sec": 0.5,
     "speeds": ["quality", "balanced"],
     "owner_min_logit": 0.0,
-    "clip_logit": -2.0
+    "clip_logit": -1000.0
   }
 }
