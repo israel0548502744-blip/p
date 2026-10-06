@@ -20,7 +20,22 @@ data class PipelineSpec(
     @SerialName("unassigned_min_area") val unassignedMinArea: Float,
     @SerialName("analysis_max_side") val analysisMaxSide: Int,
     @SerialName("mask_max_side") val maskMaxSide: Int,
+    /** Per-person region-of-interest segmentation parameters. */
+    val roi: Roi,
 ) {
+    @Serializable
+    data class Roi(
+        @SerialName("side_scale") val sideScale: Float,
+        @SerialName("paste_pad") val pastePad: Float,
+        @SerialName("min_side_px") val minSidePx: Int,
+    )
+
+    @Serializable
+    data class SkinColor(
+        @SerialName("max_blue_over_red") val maxBlueOverRed: Int,
+        @SerialName("min_luma") val minLuma: Int,
+    )
+
     @Serializable
     data class Range(val strict: Float, val sensitive: Float) {
         /** Linear interpolation by sensitivity in 0..1. */
@@ -39,6 +54,8 @@ data class PipelineSpec(
         @SerialName("min_face_px") val minFacePx: Float,
         /** Facial-skin probability above which a pixel is never body skin (unless faces are censored). */
         @SerialName("face_exclusion") val faceExclusion: Float,
+        /** Colour sanity check: skin is never clearly bluer than red, nor almost black. */
+        @SerialName("skin_color") val skinColor: SkinColor,
     )
 
     @Serializable

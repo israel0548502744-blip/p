@@ -139,6 +139,7 @@ class Analyzer(
     val store = MaskStore(storeFile, maskWidth, maskHeight)
     private val records = ArrayList<FrameRecord>()
     private var lastSkin: FloatMask? = null
+    private var lastPerson: FloatMask? = null
     private var faceMap: FloatMask? = null
     private var sinceSeg = Int.MAX_VALUE / 2
     var processed = 0
@@ -167,11 +168,28 @@ class Analyzer(
             }
             flow.update(frame)
 
-            // skin segmentation on keyframes, optical-flow propagation in between
+            // stages 1+3: person detection & tracking first — the boxes drive the per-person ROI segmentation
+            people.predict(flow, width, height)
+            regions.predict(flow, width, height)
+            faces.predict(flow, width, height)
+            nude[k]?.let { dets ->
+                people.update(frame, personDetector.detect(frame, personMin), idx)
+                regions.update(dets.filter { it.label in labels })
+                faces.update(dets.filter { it.label in FACE_LABELS })
+            }
+
+            // skin: whole frame on detection keyframes, per-person crops on every analysed frame
+            val boxes = people.visible().map { it.box }
             val fastMotion = sinceSeg >= 1 && flow.meanMotion() > 0.012f * max(width, height)
             val fresh = lastSkin == null || cut || sinceSeg + 1 >= segStride || fastMotion
             if (fresh) {
-                val seg = segmenter.segment(frame, settings.includeFace, tiled = settings.aggressive)
+                val fullDue = lastSkin == null || cut || boxes.isEmpty() || nude.containsKey(k)
+                var seg = if (fullDue) {
+                    segmenter.segment(frame, settings.includeFace, tiled = settings.aggressive)
+                } else { // between whole-frame passes: carry the last result along with the motion
+                    SkinSegmenter.Result(flow.warp(lastSkin!!), flow.warp(lastPerson!!), flow.warp(faceMap!!))
+                }
+                if (boxes.isNotEmpty()) seg = segmenter.segmentRois(frame, boxes, seg, settings.includeFace, spec.roi)
                 var skin = seg.skin
                 if (settings.aggressive) {
                     val color = ColorSkin.probability(frame)
@@ -183,7 +201,10 @@ class Analyzer(
                         max(seg.skin.data[i], b)
                     })
                 }
+                val plausible = ColorSkin.plausible(frame, spec.thresholds.skinColor.maxBlueOverRed, spec.thresholds.skinColor.minLuma)
+                skin = FloatMask(width, height, FloatArray(width * height) { skin.data[it] * plausible.data[it] })
                 lastSkin = skin
+                lastPerson = seg.person
                 faceMap = seg.face
                 sinceSeg = 0
             } else {
@@ -192,13 +213,7 @@ class Analyzer(
             }
             val skinBin = fuser.update(lastSkin!!, flow, fresh)
 
-            people.predict(flow, width, height)
-            regions.predict(flow, width, height)
-            faces.predict(flow, width, height)
-            nude[k]?.let { dets ->
-                people.update(frame, personDetector.detect(frame, personMin), idx)
-                regions.update(dets.filter { it.label in labels })
-                faces.update(dets.filter { it.label in FACE_LABELS })
+            nude[k]?.let {
                 for (t in people.visible()) {
                     if (t.misses != 0) continue
                     val need = t.gender.votes < spec.gender.votesBeforeSlowdown || idx - t.lastClassified >= reclassifyEvery

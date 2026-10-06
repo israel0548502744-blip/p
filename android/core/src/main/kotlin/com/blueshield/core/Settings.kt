@@ -12,7 +12,7 @@ data class CensorSettings(
     val aggressive: Boolean = false,
     val animated: Boolean = false,
     @SerialName("include_face") val includeFace: Boolean = false,
-    val speed: String = "balanced",
+    val speed: String = "quality",
     val quality: String = "balanced",
     @SerialName("keep_audio") val keepAudio: Boolean = true,
     /** "female" = only people classified as women, "everyone" = every detected person. */
@@ -26,7 +26,7 @@ data class CensorSettings(
         sensitivity = sensitivity.coerceIn(0, 100),
         softness = softness.coerceIn(0, 100),
         genderThreshold = genderThreshold.coerceIn(51, 99),
-        speed = if (speed in setOf("quality", "balanced", "fast")) speed else "balanced",
+        speed = if (speed in setOf("quality", "balanced", "fast")) speed else "quality",
         quality = if (quality in setOf("high", "balanced", "small")) quality else "balanced",
         target = if (target in setOf("female", "everyone")) target else "female",
         uncertainPolicy = if (uncertainPolicy in setOf("censor", "keep")) uncertainPolicy else "censor",
