@@ -220,7 +220,14 @@ class Analyzer(
                     })
                 }
                 val plausible = ColorSkin.plausible(frame, spec.thresholds.skinColor.maxBlueOverRed, spec.thresholds.skinColor.minLuma)
-                skin = FloatMask(width, height, FloatArray(width * height) { skin.data[it] * plausible.data[it] })
+                // skin only counts on a person: skin-coloured objects (wood, a mug, a lamp) are not people
+                val personPx = MaskOps.dilate(
+                    ByteMask(width, height, ByteArray(width * height) { if (seg.person.data[it] >= spec.thresholds.personGate) -1 else 0 }),
+                    max(2, (0.004f * (width + height)).roundToInt()),
+                )
+                skin = FloatMask(width, height, FloatArray(width * height) {
+                    if (personPx.data[it].toInt() == 0) 0f else skin.data[it] * plausible.data[it]
+                })
                 lastSkin = skin
                 lastPerson = seg.person
                 faceMap = seg.face

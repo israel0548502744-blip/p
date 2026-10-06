@@ -20,7 +20,8 @@
     "face_min_score": 0.5,
     "min_face_px": 14,
     "face_exclusion": 0.35,
-    "skin_color": { "max_blue_over_red": 6, "min_luma": 28 }
+    "skin_color": { "max_blue_over_red": 6, "min_luma": 28 },
+    "person_gate": 0.3
   },
   "roi": { "side_scale": 1.15, "paste_pad": 0.08, "min_side_px": 24, "max_frame_ratio": 0.9, "full_every_det": 2 },
   "neckline": {

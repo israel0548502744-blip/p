@@ -35,6 +35,7 @@ def test_mask_constants_match():
     assert (detectors.ROI_MAX_FRAME_RATIO, detectors.ROI_FULL_EVERY_DET) == (
         SPEC["roi"]["max_frame_ratio"], SPEC["roi"]["full_every_det"])
     assert pipeline.OWNER_REACH == SPEC["owner_reach"]
+    assert pipeline.PERSON_GATE == SPEC["thresholds"]["person_gate"]
     t = SPEC["tracking"]
     assert (pipeline.FUSER_MEMORY, pipeline.FUSER_LIFT, pipeline.FUSER_LIFT_AGGRESSIVE) == (
         t["fuser_memory"], t["fuser_lift"], t["fuser_lift_aggressive"])

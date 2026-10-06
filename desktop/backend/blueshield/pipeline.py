@@ -363,6 +363,10 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
                         backup *= 1 - face
                     skin = np.maximum(skin, backup)
                 skin = skin * skin_color_plausible(frame)
+                # skin only counts on a person: skin-coloured objects (wood, a mug, a lamp) are not people
+                r = max(2, int(round(0.004 * (aw + ah))))
+                person_px = cv2.dilate((seg.person >= PERSON_GATE).astype(np.uint8), np.ones((2 * r + 1, 2 * r + 1), np.uint8))
+                skin = skin * person_px
                 state["last_skin"], state["last_person"], state["since_seg"] = skin, seg.person, 0
                 state["face_map"] = seg.face
             else:
@@ -459,6 +463,7 @@ def decisions_for(analysis: Analysis, settings: CensorSettings, overrides: dict[
 FUSER_MEMORY = 0.4
 FUSER_LIFT = 0.35
 FUSER_LIFT_AGGRESSIVE = 0.5
+PERSON_GATE = 0.3  # segmenter "person" probability a skin pixel must (nearly) touch to count
 OWNER_REACH = 0.6  # a skin blob up to this many box sizes outside a person's box still belongs to them (arms)
 UNASSIGNED_MIN_AREA = 0.001  # fraction of the frame; smaller unattributed blobs are noise, not people
 

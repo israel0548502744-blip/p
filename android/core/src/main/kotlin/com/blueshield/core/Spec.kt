@@ -76,6 +76,8 @@ data class PipelineSpec(
         @SerialName("face_exclusion") val faceExclusion: Float,
         /** Colour sanity check: skin is never clearly bluer than red, nor almost black. */
         @SerialName("skin_color") val skinColor: SkinColor,
+        /** Segmenter "person" probability a skin pixel must (nearly) touch to count. */
+        @SerialName("person_gate") val personGate: Float,
     )
 
     @Serializable
