@@ -190,13 +190,15 @@ class Analyzer(
             val fastMotion = sinceSeg >= 1 && flow.meanMotion() > 0.012f * max(width, height)
             val fresh = lastSkin == null || cut || sinceSeg + 1 >= segStride || fastMotion
             if (fresh) {
-                val fullDue = lastSkin == null || cut || boxes.isEmpty() || nude.containsKey(k)
+                // (with nobody in view, every detection round — the motion-carried mask covers the frames between)
+                val fullDue = lastSkin == null || cut ||
+                    (nude.containsKey(k) && (boxes.isEmpty() || idx / detStride % spec.roi.fullEveryDet == 0))
                 var seg = if (fullDue) {
                     segmenter.segment(frame, settings.includeFace, tiled = settings.aggressive)
                 } else { // between whole-frame passes: carry the last result along with the motion
                     SkinSegmenter.Result(flow.warp(lastSkin!!), flow.warp(lastPerson!!), flow.warp(faceMap!!))
                 }
-                if (boxes.isNotEmpty()) seg = segmenter.segmentRois(frame, boxes, seg, settings.includeFace, spec.roi)
+                if (boxes.isNotEmpty()) seg = segmenter.segmentRois(frame, boxes, seg, settings.includeFace, spec.roi, baseIsFresh = fullDue)
                 var skin = seg.skin
                 if (settings.aggressive) {
                     val color = ColorSkin.probability(frame)

@@ -23,6 +23,11 @@ CAT_BACKGROUND, CAT_HAIR, CAT_BODY_SKIN, CAT_FACE_SKIN, CAT_CLOTHES, CAT_OTHERS 
 FACE_EXCLUSION = 0.35  # facial-skin probability above which a pixel is never treated as body skin
 
 
+# per-person crops: skipped when they'd be (almost) the whole frame anyway; whole-frame pass every Nth detection round
+ROI_MAX_FRAME_RATIO = 0.9
+ROI_FULL_EVERY_DET = 2
+
+
 @dataclass
 class SegResult:
     skin: np.ndarray  # float32 HxW in [0,1] — body skin (+ face if requested)
@@ -90,7 +95,8 @@ class SkinSegmenter:
 
     def segment_rois(self, bgr: np.ndarray, boxes: list[tuple[float, float, float, float]], base: SegResult,
                      include_face: bool = False, side_scale: float = 1.15, paste_pad: float = 0.08,
-                     min_side: int = 24) -> SegResult:
+                     min_side: int = 24, base_is_fresh: bool = False,
+                     max_frame_ratio: float = ROI_MAX_FRAME_RATIO) -> SegResult:
         """Re-segment each person at much higher effective resolution.
 
         The model only sees 256x256 pixels, so on a whole frame an arm is a handful of pixels. Here every
@@ -109,6 +115,8 @@ class SkinSegmenter:
             side = int(round(max(bw, bh) * side_scale))
             if side < min_side:
                 continue
+            if base_is_fresh and side >= max_frame_ratio * max(h, w):
+                continue  # the crop would be the whole frame again: the fresh full pass already is that
             cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
             a, b = int(round(cx - side / 2)), int(round(cy - side / 2))
             # edge-replicated crop (the box may reach past the frame)

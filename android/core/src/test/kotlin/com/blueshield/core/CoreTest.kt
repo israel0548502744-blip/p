@@ -252,6 +252,21 @@ class CoreTest {
         assertEquals(survivor.id, tracker2.aliases.values.single())
     }
 
+    @Test fun orientationMappingIsSeparable() {
+        // the Android frame extractor precomputes a column part and a row part of displayToCoded
+        for (rot in listOf(0, 90, 180, 270)) {
+            val (cw, ch) = 64 to 36
+            val (dw, dh) = if (rot % 180 == 0) cw to ch else ch to cw
+            val o = com.blueshield.core.image.Orientation.displayToCoded(0, 0, rot, cw, ch)
+            for (dy in 0 until dh step 5) for (dx in 0 until dw step 7) {
+                val full = com.blueshield.core.image.Orientation.displayToCoded(dx, dy, rot, cw, ch)
+                val col = com.blueshield.core.image.Orientation.displayToCoded(dx, 0, rot, cw, ch)
+                val row = com.blueshield.core.image.Orientation.displayToCoded(0, dy, rot, cw, ch)
+                assertEquals(full, (col.first - o.first + row.first) to (col.second - o.second + row.second))
+            }
+        }
+    }
+
     @Test fun orientationMappingsAreInverse() {
         val cw = 16
         val ch = 9

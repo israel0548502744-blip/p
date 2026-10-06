@@ -92,18 +92,39 @@ class FrameExtractor(private val context: Context, private val meta: VideoMeta, 
         // display (upright) size
         val dw = if (rot % 180 == 0) cw else ch
         val dh = if (rot % 180 == 0) ch else cw
+        // coded pixel = column part + row part (rotation by 0/90/180/270 is separable), computed once per call
+        val colX = IntArray(outW)
+        val colY = IntArray(outW)
+        val rowX = IntArray(outH)
+        val rowY = IntArray(outH)
+        for (ox in 0 until outW) {
+            val dx = ((ox + 0.5f) * dw / outW).toInt().coerceIn(0, dw - 1)
+            val (cx, cy) = Orientation.displayToCoded(dx, 0, rot, cw, ch)
+            val (bx, by) = Orientation.displayToCoded(0, 0, rot, cw, ch)
+            colX[ox] = cx - bx
+            colY[ox] = cy - by
+        }
         for (oy in 0 until outH) {
-            val dy = (oy + 0.5f) * dh / outH
+            val dy = ((oy + 0.5f) * dh / outH).toInt().coerceIn(0, dh - 1)
+            val (cx, cy) = Orientation.displayToCoded(0, dy, rot, cw, ch)
+            rowX[oy] = cx
+            rowY[oy] = cy
+        }
+        val yRow = y.rowStride
+        val yPix = y.pixelStride
+        val uRow = u.rowStride
+        val uPix = u.pixelStride
+        val vRow = v.rowStride
+        val vPix = v.pixelStride
+        for (oy in 0 until outH) {
             for (ox in 0 until outW) {
-                val dx = (ox + 0.5f) * dw / outW
-                val (cx, cy) = Orientation.displayToCoded(dx.toInt(), dy.toInt(), rot, cw, ch)
-                val px = (cx.coerceIn(0, cw - 1) + crop.left)
-                val py = (cy.coerceIn(0, ch - 1) + crop.top)
-                val yy = (yb.get(py * y.rowStride + px * y.pixelStride + hi).toInt() and 0xFF) - 16
+                val px = (rowX[oy] + colX[ox]).coerceIn(0, cw - 1) + crop.left
+                val py = (rowY[oy] + colY[ox]).coerceIn(0, ch - 1) + crop.top
+                val yy = (yb.get(py * yRow + px * yPix + hi).toInt() and 0xFF) - 16
                 val uvx = px / 2
                 val uvy = py / 2
-                val uu = (ub.get(uvy * u.rowStride + uvx * u.pixelStride + hi).toInt() and 0xFF) - 128
-                val vv = (vb.get(uvy * v.rowStride + uvx * v.pixelStride + hi).toInt() and 0xFF) - 128
+                val uu = (ub.get(uvy * uRow + uvx * uPix + hi).toInt() and 0xFF) - 128
+                val vv = (vb.get(uvy * vRow + uvx * vPix + hi).toInt() and 0xFF) - 128
                 val c = 1.164f * yy
                 val o = (oy * outW + ox) * 3
                 d[o] = (c + 1.596f * vv).toInt().coerceIn(0, 255).toByte()

@@ -31,6 +31,9 @@ def test_mask_constants_match():
     assert pipeline.UNASSIGNED_MIN_AREA == SPEC["unassigned_min_area"]
     assert config.ANALYSIS_MAX_SIDE == SPEC["analysis_max_side"]
     assert config.MASK_MAX_SIDE == SPEC["mask_max_side"]
+    from blueshield import detectors
+    assert (detectors.ROI_MAX_FRAME_RATIO, detectors.ROI_FULL_EVERY_DET) == (
+        SPEC["roi"]["max_frame_ratio"], SPEC["roi"]["full_every_det"])
     t = SPEC["tracking"]
     assert (pipeline.FUSER_MEMORY, pipeline.FUSER_LIFT, pipeline.FUSER_LIFT_AGGRESSIVE) == (
         t["fuser_memory"], t["fuser_lift"], t["fuser_lift_aggressive"])

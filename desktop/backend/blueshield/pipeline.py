@@ -33,7 +33,7 @@ import numpy as np
 from . import media
 from .censor import BlueCensor, hex_to_bgr
 from .config import ANALYSIS_MAX_SIDE, MASK_MAX_SIDE, WORK_DIR
-from .detectors import (SegResult, AGGRESSIVE_LABELS, FACE_LABELS, SENSITIVE_LABELS, SensitiveRegionDetector, SkinSegmenter,
+from .detectors import (ROI_FULL_EVERY_DET, SegResult, AGGRESSIVE_LABELS, FACE_LABELS, SENSITIVE_LABELS, SensitiveRegionDetector, SkinSegmenter,
                         color_skin_probability, skin_color_plausible)
 from .gender import GenderClassifier, censor_decision
 from .maskstore import MaskStore
@@ -340,14 +340,17 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
                 fast_motion = float(np.abs(flow.flow_full[::8, ::8]).mean()) > 0.012 * max(aw, ah)
             fresh = state["last_skin"] is None or cut or state["since_seg"] + 1 >= seg_stride or fast_motion
             if fresh:
-                full_due = state["last_skin"] is None or cut or not boxes or k in nude
+                # (with nobody in view, every detection round — the motion-carried mask covers the frames between)
+                full_due = (state["last_skin"] is None or cut
+                            or (k in nude and (not boxes or (start_index + k) // det_stride % ROI_FULL_EVERY_DET == 0)))
                 if full_due:
                     seg = seg_model.segment(frame, include_face=settings.include_face, tiled=settings.aggressive)
                 else:  # between whole-frame passes: carry the last result along with the motion
                     seg = SegResult(flow.warp(state["last_skin"]), flow.warp(state["last_person"]),
                                     flow.warp(state["face_map"]))
                 if boxes:
-                    seg = seg_model.segment_rois(frame, boxes, seg, include_face=settings.include_face)
+                    seg = seg_model.segment_rois(frame, boxes, seg, include_face=settings.include_face,
+                                                 base_is_fresh=full_due)
                 skin = seg.skin
                 if settings.aggressive:
                     person_px = cv2.dilate((seg.person > 0.4).astype(np.uint8), np.ones((9, 9), np.uint8))

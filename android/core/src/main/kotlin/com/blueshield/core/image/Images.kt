@@ -23,7 +23,7 @@ class RgbImage(val width: Int, val height: Int, val data: ByteArray = ByteArray(
         val sx = width.toFloat() / w
         val sy = height.toFloat() / h
         val d = out.data
-        for (y in 0 until h) {
+        Par.rows(h, w) { y ->
             val fy = max(0f, (y + 0.5f) * sy - 0.5f)
             val y0 = min(floor(fy).toInt(), height - 1)
             val y1 = min(y0 + 1, height - 1)
@@ -136,40 +136,87 @@ class FloatMask(val width: Int, val height: Int, val data: FloatArray = FloatArr
     fun resize(w: Int, h: Int): FloatMask {
         if (w == width && h == height) return this
         val out = FloatMask(w, h)
-        val sx = width.toFloat() / w
-        val sy = height.toFloat() / h
-        for (y in 0 until h) {
-            val fy = ((y + 0.5f) * sy - 0.5f).coerceIn(0f, height - 1f)
-            val y0 = floor(fy).toInt()
-            val y1 = min(y0 + 1, height - 1)
-            val wy = fy - y0
-            for (x in 0 until w) {
-                val fx = ((x + 0.5f) * sx - 0.5f).coerceIn(0f, width - 1f)
-                val x0 = floor(fx).toInt()
-                val x1 = min(x0 + 1, width - 1)
-                val wx = fx - x0
-                val top = data[y0 * width + x0] + (data[y0 * width + x1] - data[y0 * width + x0]) * wx
-                val bot = data[y1 * width + x0] + (data[y1 * width + x1] - data[y1 * width + x0]) * wx
-                out.data[y * w + x] = top + (bot - top) * wy
-            }
-        }
+        Resample.bilinear(data, width, height, width.toFloat() / w, height.toFloat() / h, 0f, 0f, out.data, w, 0, 0, w, h, max = false)
         return out
     }
 
     /** Bilinear sample with zero outside the image. */
     fun sample(x: Float, y: Float): Float {
         if (x < -1f || y < -1f || x > width || y > height) return 0f
-        val x0 = floor(x).toInt()
-        val y0 = floor(y).toInt()
-        val wx = x - x0
-        val wy = y - y0
-        fun px(xx: Int, yy: Int) = if (xx < 0 || yy < 0 || xx >= width || yy >= height) 0f else data[yy * width + xx]
-        val top = px(x0, y0) + (px(x0 + 1, y0) - px(x0, y0)) * wx
-        val bot = px(x0, y0 + 1) + (px(x0 + 1, y0 + 1) - px(x0, y0 + 1)) * wx
+        val fx = floor(x)
+        val fy = floor(y)
+        val x0 = fx.toInt()
+        val y0 = fy.toInt()
+        val wx = x - fx
+        val wy = y - fy
+        val x1 = x0 + 1
+        val y1 = y0 + 1
+        val d = data
+        val w = width
+        if (x0 >= 0 && y0 >= 0 && x1 < w && y1 < height) { // fast path: all four neighbours inside
+            val r0 = y0 * w
+            val r1 = r0 + w
+            val top = d[r0 + x0] + (d[r0 + x1] - d[r0 + x0]) * wx
+            val bot = d[r1 + x0] + (d[r1 + x1] - d[r1 + x0]) * wx
+            return top + (bot - top) * wy
+        }
+        val okX0 = x0 >= 0 && x0 < w
+        val okX1 = x1 >= 0 && x1 < w
+        val okY0 = y0 >= 0 && y0 < height
+        val okY1 = y1 >= 0 && y1 < height
+        val a = if (okX0 && okY0) d[y0 * w + x0] else 0f
+        val b = if (okX1 && okY0) d[y0 * w + x1] else 0f
+        val c = if (okX0 && okY1) d[y1 * w + x0] else 0f
+        val e = if (okX1 && okY1) d[y1 * w + x1] else 0f
+        val top = a + (b - a) * wx
+        val bot = c + (e - c) * wx
         return top + (bot - top) * wy
     }
 
     fun mean(): Float = if (data.isEmpty()) 0f else data.sum() / data.size
+}
+
+/** Fast bilinear resampling kernels (per-column indices and weights are computed once per call). */
+object Resample {
+    /**
+     * Writes into the rectangle [dx0, dx1) × [dy0, dy1) of [out] (row length [outW]) the bilinear sample of
+     * [src] (sw × sh) at source position ((x + offX + 0.5) · kx − 0.5, (y + offY + 0.5) · ky − 0.5),
+     * clamped to the source. With [max] the result is max-combined with what [out] already holds.
+     */
+    fun bilinear(
+        src: FloatArray, sw: Int, sh: Int, kx: Float, ky: Float, offX: Float, offY: Float,
+        out: FloatArray, outW: Int, dx0: Int, dy0: Int, dx1: Int, dy1: Int, max: Boolean,
+    ) {
+        val n = dx1 - dx0
+        if (n <= 0 || dy1 <= dy0) return
+        val xi0 = IntArray(n)
+        val xi1 = IntArray(n)
+        val xw = FloatArray(n)
+        for (i in 0 until n) {
+            val fx = ((dx0 + i + offX + 0.5f) * kx - 0.5f).coerceIn(0f, sw - 1f)
+            val x0 = fx.toInt()
+            xi0[i] = x0
+            xi1[i] = min(x0 + 1, sw - 1)
+            xw[i] = fx - x0
+        }
+        Par.range(dy0, dy1, n) { y ->
+            val fy = ((y + offY + 0.5f) * ky - 0.5f).coerceIn(0f, sh - 1f)
+            val y0 = fy.toInt()
+            val r0 = y0 * sw
+            val r1 = min(y0 + 1, sh - 1) * sw
+            val wy = fy - y0
+            val o = y * outW + dx0
+            for (i in 0 until n) {
+                val a = src[r0 + xi0[i]]
+                val b = src[r0 + xi1[i]]
+                val c = src[r1 + xi0[i]]
+                val d = src[r1 + xi1[i]]
+                val top = a + (b - a) * xw[i]
+                val v = top + (c + (d - c) * xw[i] - top) * wy
+                if (!max || v > out[o + i]) out[o + i] = v
+            }
+        }
+    }
 }
 
 /** Single-channel 8-bit mask (0..255). */

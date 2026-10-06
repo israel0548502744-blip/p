@@ -2,6 +2,7 @@ package com.blueshield.core.track
 
 import com.blueshield.core.image.Box
 import com.blueshield.core.image.FloatMask
+import com.blueshield.core.image.Par
 import com.blueshield.core.image.RgbImage
 import kotlin.math.abs
 import kotlin.math.max
@@ -31,6 +32,7 @@ class OpticalFlow(val width: Int, val height: Int, flowSide: Int = 128) {
         prev = null
         u = null
         v = null
+        maxFlowCache = -1f
     }
 
     fun update(frame: RgbImage) {
@@ -41,6 +43,7 @@ class OpticalFlow(val width: Int, val height: Int, flowSide: Int = 128) {
         if (p == null) {
             u = null
             v = null
+            maxFlowCache = -1f
             return
         }
         // estimate flow from current -> previous, coarse to fine
@@ -58,6 +61,7 @@ class OpticalFlow(val width: Int, val height: Int, flowSide: Int = 128) {
         }
         u = fu
         v = fv
+        maxFlowCache = -1f
     }
 
     /** Mean absolute motion in analysis pixels (for adaptive keyframes). */
@@ -69,18 +73,65 @@ class OpticalFlow(val width: Int, val height: Int, flowSide: Int = 128) {
         return s / (uu.size / 4f) / scale / 2f
     }
 
-    /** Warp a mask (at analysis resolution) from the previous frame into the current one. */
+    /** Largest |flow| component in flow pixels (cached per update). */
+    private var maxFlowCache = -1f
+
+    private fun maxFlow(): Float {
+        if (maxFlowCache >= 0f) return maxFlowCache
+        var m = 0f
+        u?.let { for (x in it) m = max(m, abs(x)) }
+        v?.let { for (x in it) m = max(m, abs(x)) }
+        maxFlowCache = m
+        return m
+    }
+
+    /**
+     * Warp a mask (at analysis resolution) from the previous frame into the current one.
+     * Only the neighbourhood of the mask's non-zero pixels (grown by the largest motion) can be
+     * non-zero afterwards, so only that rectangle is resampled — masks are mostly empty.
+     */
     fun warp(mask: FloatMask): FloatMask {
         val uu = u ?: return mask
         val vv = v ?: return mask
-        val out = FloatMask(mask.width, mask.height)
-        val sx = fw.toFloat() / mask.width
-        val sy = fh.toFloat() / mask.height
-        for (y in 0 until mask.height) for (x in 0 until mask.width) {
-            val fx = ((x + 0.5f) * sx - 0.5f).coerceIn(0f, fw - 1f)
-            val fy = ((y + 0.5f) * sy - 0.5f).coerceIn(0f, fh - 1f)
-            val i = fy.toInt() * fw + fx.toInt()
-            out.data[y * mask.width + x] = mask.sample(x + uu[i] / sx, y + vv[i] / sy)
+        val mw = mask.width
+        val mh = mask.height
+        val out = FloatMask(mw, mh)
+        var bx0 = mw
+        var by0 = mh
+        var bx1 = -1
+        var by1 = -1
+        val d = mask.data
+        for (y in 0 until mh) {
+            val r = y * mw
+            var first = -1
+            var last = -1
+            for (x in 0 until mw) if (d[r + x] != 0f) {
+                if (first < 0) first = x
+                last = x
+            }
+            if (first >= 0) {
+                if (first < bx0) bx0 = first
+                if (last > bx1) bx1 = last
+                if (y < by0) by0 = y
+                by1 = y
+            }
+        }
+        if (bx1 < 0) return out
+        val sx = fw.toFloat() / mw
+        val sy = fh.toFloat() / mh
+        val grow = (maxFlow() / min(sx, sy)).toInt() + 2
+        val x0 = max(0, bx0 - grow)
+        val x1 = min(mw - 1, bx1 + grow)
+        val y0 = max(0, by0 - grow)
+        val y1 = min(mh - 1, by1 + grow)
+        val col = IntArray(x1 - x0 + 1) { ((x0 + it + 0.5f) * sx - 0.5f).coerceIn(0f, fw - 1f).toInt() }
+        Par.range(y0, y1 + 1, x1 - x0 + 1) { y ->
+            val row = ((y + 0.5f) * sy - 0.5f).coerceIn(0f, fh - 1f).toInt() * fw
+            val o = y * mw
+            for (x in x0..x1) {
+                val i = row + col[x - x0]
+                out.data[o + x] = mask.sample(x + uu[i] / sx, y + vv[i] / sy)
+            }
         }
         return out
     }
@@ -156,7 +207,7 @@ class OpticalFlow(val width: Int, val height: Int, flowSide: Int = 128) {
         repeat(iterations) {
             val nu = u.copyOf()
             val nv = v.copyOf()
-            for (y in 0 until h) for (x in 0 until w) {
+            Par.rows(h, w * n) { y -> for (x in 0 until w) {
                 var a11 = 0f
                 var a12 = 0f
                 var a22 = 0f
@@ -191,7 +242,7 @@ class OpticalFlow(val width: Int, val height: Int, flowSide: Int = 128) {
                     nv[i0] = prior.second[i0]
                     conf[i0] = 0f
                 }
-            }
+            } }
             System.arraycopy(nu, 0, u, 0, u.size)
             System.arraycopy(nv, 0, v, 0, v.size)
         }

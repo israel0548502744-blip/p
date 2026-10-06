@@ -28,6 +28,10 @@ data class PipelineSpec(
         @SerialName("side_scale") val sideScale: Float,
         @SerialName("paste_pad") val pastePad: Float,
         @SerialName("min_side_px") val minSidePx: Int,
+        /** A crop this close to the whole frame adds nothing over a fresh full-frame pass. */
+        @SerialName("max_frame_ratio") val maxFrameRatio: Float,
+        /** Whole-frame segmentation on every Nth detection round (people get their own crop every frame). */
+        @SerialName("full_every_det") val fullEveryDet: Int,
     )
 
     @Serializable

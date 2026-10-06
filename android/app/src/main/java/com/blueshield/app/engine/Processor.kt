@@ -17,7 +17,10 @@ import com.blueshield.core.pipeline.Composer
 import com.blueshield.core.pipeline.PersonSummary
 import com.blueshield.core.pipeline.ProgressMeter
 import java.io.File
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.concurrent.thread
 
 /** UI-facing job state. */
 data class JobState(
@@ -134,14 +137,43 @@ class Processor(private val context: Context) {
                 chunk.clear()
             }
             val pts = ArrayList<Long>()
-            FrameExtractor(context, meta, aw, ah).run { _, ptsUs, frame ->
-                chunk += frame
-                pts += ptsUs
-                if (chunk.size >= analyzer.detStride * 4) flush()
-                val ok = checkpoint(meter)
-                if (!ok) cancelled = true
-                ok
+            // Decoding (MediaCodec + YUV→RGB) runs on its own thread, a few chunks ahead of the analysis,
+            // so the two overlap instead of taking turns.
+            val queue = ArrayBlockingQueue<Any>(analyzer.detStride * 4 * 3)
+            val stop = AtomicBoolean(false)
+            var decodeError: Throwable? = null
+            val decoder = thread(name = "blueshield-decode") {
+                try {
+                    FrameExtractor(context, meta, aw, ah).run { _, ptsUs, frame ->
+                        val item = DecodedFrame(ptsUs, frame)
+                        while (!stop.get()) if (queue.offer(item, 100, TimeUnit.MILLISECONDS)) return@run true
+                        false
+                    }
+                } catch (t: Throwable) {
+                    decodeError = t
+                } finally {
+                    while (!stop.get() && !queue.offer(END_OF_FRAMES, 100, TimeUnit.MILLISECONDS)) Unit
+                }
             }
+            try {
+                while (true) {
+                    val item = queue.take()
+                    if (item === END_OF_FRAMES) break
+                    item as DecodedFrame
+                    chunk += item.frame
+                    pts += item.ptsUs
+                    if (chunk.size >= analyzer.detStride * 4) flush()
+                    if (!checkpoint(meter)) {
+                        cancelled = true
+                        break
+                    }
+                }
+            } finally {
+                stop.set(true)
+                queue.clear()
+                decoder.join()
+            }
+            decodeError?.let { throw it }
             if (!cancelled && chunk.isNotEmpty()) flush()
             if (cancelled) {
                 analyzer.store.close()
@@ -302,6 +334,10 @@ class Processor(private val context: Context) {
         }
     }
 }
+
+private class DecodedFrame(val ptsUs: Long, val frame: RgbImage)
+
+private val END_OF_FRAMES = Any()
 
 object CensorSettingsColor {
     fun rgb(s: CensorSettings) = CensorSettings.parseColor(s.color)
