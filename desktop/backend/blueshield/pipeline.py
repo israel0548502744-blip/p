@@ -478,6 +478,7 @@ PERSON_GATE = 0.3  # segmenter "person" probability a skin pixel must (nearly) t
 MIN_BODY_AREA = 0.02  # away from every person box, a smaller "person" blob is an object (a mug, a lamp)
 REFINE_RADIUS = 0.004  # guided-filter window, fraction of (width + height)
 REFINE_EPS = 0.004
+FILL_GAP = 2  # censor drop-outs up to this many frames long are filled at render time
 GATE_PAD = 0.3  # person_gate: skin counts within this much (box sizes) around a person's box
 REFINE_COLOR_BAND = 0.008  # band around the skin boundary decided by colour, fraction of the frame diagonal
 # per-person outlines (MobileSAM): see outlines.PersonMasks and shared/pipeline.json "person_masks"
@@ -697,9 +698,9 @@ def render(analysis: Analysis, settings: CensorSettings, overrides: dict[int, st
     timeline_sum = np.zeros(TIMELINE_BUCKETS)
     timeline_cnt = np.zeros(TIMELINE_BUCKETS)
 
-    window: deque = deque()  # composed masks for frames i .. i+max(1, lookahead)
+    window: deque = deque()  # composed masks for frames i .. i+max(FILL_GAP, lookahead)
     next_compose = 0
-    prev = None  # composed mask of frame i-1
+    prev: deque = deque(maxlen=FILL_GAP)  # composed masks of the previous FILL_GAP frames
 
     def compose(i: int) -> np.ndarray:
         return compose_mask(analysis.store.get(i), analysis.records[i], decisions, unassigned_censor)
@@ -723,19 +724,21 @@ def render(analysis: Analysis, settings: CensorSettings, overrides: dict[int, st
             control.checkpoint()
             if i >= total:
                 break
-            while next_compose < min(total, i + max(1, lookahead) + 1):
+            while next_compose < min(total, i + max(FILL_GAP, lookahead) + 1):
                 window.append(compose(next_compose))
                 next_compose += 1
             cur = window[0]
             m = cur
-            # momentary drop-outs: censored in the previous and the next frame -> censored here too (only ever
-            # adds; same as Analysis.maskFor on Android)
-            if prev is not None and len(window) > 1 and prev.any() and window[1].any():
-                m = np.maximum(m, np.minimum(prev, window[1]))
+            # momentary drop-outs: censored in one of the previous FILL_GAP frames and one of the next ones ->
+            # censored here too (only ever adds; same as Analysis.maskFor on Android)
+            before = [x for x in prev if x.any()]
+            after = [x for x in list(window)[1:FILL_GAP + 1] if x.any()]
+            if before and after:
+                m = np.maximum(m, np.minimum(np.maximum.reduce(before), np.maximum.reduce(after)))
             for extra in list(window)[1:lookahead + 1]:
                 if extra.any():
                     m = np.maximum(m, extra)
-            prev = cur
+            prev.append(cur)
             window.popleft()
             out, cov = censor.apply(frame, m, i)
             if cov > 0:
