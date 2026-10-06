@@ -150,7 +150,8 @@ class Processor(private val context: Context) {
         } catch (e: Renderer.CancelledException) {
             return JobState(stage = JobState.Stage.CANCELLED).also(update)
         } catch (e: Throwable) {
-            return JobState(stage = JobState.Stage.ERROR, error = e.message ?: e.javaClass.simpleName).also(update)
+            Breadcrumbs.mark("run failed: ${Errors.describe(e)}")
+            return JobState(stage = JobState.Stage.ERROR, error = Errors.describe(e)).also(update)
         }
     }
 
@@ -163,7 +164,8 @@ class Processor(private val context: Context) {
         } catch (e: Renderer.CancelledException) {
             previous.copy(stage = JobState.Stage.COMPLETE).also(update)
         } catch (e: Throwable) {
-            JobState(stage = JobState.Stage.ERROR, error = e.message ?: e.javaClass.simpleName).also(update)
+            Breadcrumbs.mark("re-render failed: ${Errors.describe(e)}")
+            JobState(stage = JobState.Stage.ERROR, error = Errors.describe(e)).also(update)
         }
     }
 

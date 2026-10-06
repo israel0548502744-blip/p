@@ -53,7 +53,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         _saved.value = false
                         thumbs.clear()
                     }
-                    JobState.Stage.ERROR -> _error.value = "Processing failed: ${s.error}"
+                    JobState.Stage.ERROR -> _error.value = "Processing failed: ${s.error?.lines()?.take(4)?.joinToString("\n")}"
                     JobState.Stage.CANCELLED -> _error.value = "Processing cancelled."
                     else -> Unit
                 }

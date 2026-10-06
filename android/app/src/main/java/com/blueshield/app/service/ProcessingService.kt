@@ -15,6 +15,7 @@ import androidx.core.app.ServiceCompat
 import com.blueshield.app.MainActivity
 import com.blueshield.app.R
 import com.blueshield.app.engine.Breadcrumbs
+import com.blueshield.app.engine.Errors
 import com.blueshield.app.engine.JobState
 import com.blueshield.app.engine.Processor
 import com.blueshield.app.engine.VideoMeta
@@ -77,8 +78,8 @@ class ProcessingService : Service() {
                     is Job.Rerender -> processor.rerender(job.overrides, ProcessingRepository.state.value, update)
                 }
             } catch (t: Throwable) { // setup failures must show as an error message, not kill the app
-                Breadcrumbs.mark("service: failed ${t.javaClass.simpleName}: ${t.message}")
-                JobState(stage = JobState.Stage.ERROR, error = "${t.javaClass.simpleName}: ${t.message}")
+                Breadcrumbs.mark("service: failed ${Errors.describe(t)}")
+                JobState(stage = JobState.Stage.ERROR, error = Errors.describe(t))
             }
             ProcessingRepository.publish(result)
             ServiceCompat.stopForeground(this@ProcessingService, ServiceCompat.STOP_FOREGROUND_REMOVE)
