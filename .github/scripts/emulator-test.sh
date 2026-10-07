@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs the instrumented end-to-end tests; always prints the relevant logcat so crashes are visible in the CI log.
-./gradlew :app:connectedEmulatorDebugAndroidTest --no-daemon --stacktrace
+./gradlew :app:connectedEmulatorDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true --no-daemon --stacktrace
 status=$?
 mkdir -p app/build/e2e-out
 adb exec-out run-as com.blueshield.app cat files/e2e_output.mp4 > app/build/e2e-out/e2e_output.mp4 2>/dev/null || true
