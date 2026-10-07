@@ -91,6 +91,22 @@ fun AboutScreen() {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("אודות BlueShield", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
         Text("גרסה ${BuildInfo.version}", color = Palette.Ink300, fontSize = 13.sp)
+        val context = androidx.compose.ui.platform.LocalContext.current
+        Panel(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SectionTitle("עדכון")
+                Text(
+                    "מוריד בדפדפן את הגרסה האחרונה שעברה את כל הבדיקות. בסיום ההורדה לוחצים על הקובץ ואז \"עדכון\": " +
+                        "ההגדרות נשמרות, ואין צורך למחוק את האפליקציה.",
+                    color = Palette.Ink100, fontSize = 13.sp, lineHeight = 18.sp,
+                )
+                PrimaryButton("עדכון לגרסה האחרונה", Icons.Filled.Download) {
+                    runCatching {
+                        context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(BuildInfo.LATEST_APK)))
+                    }
+                }
+            }
+        }
         Panel(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SectionTitle("איך זה עובד")

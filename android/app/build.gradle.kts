@@ -12,8 +12,10 @@ android {
         applicationId = "com.blueshield.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "1.4.0"
+        // CI passes -PbuildNumber=<run number>: every build gets a higher versionCode, so it installs as an update
+        val build = (findProperty("buildNumber") as String?)?.toIntOrNull()
+        versionCode = if (build != null) 100 + build else 6
+        versionName = "1.5" + if (build != null) ".$build" else ".0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // 64-bit phones + x86_64 emulators; keeps the APK small (ONNX Runtime native libs are per-ABI).
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
@@ -22,7 +24,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug") // replace with your own key for distribution
+            signingConfig = signingConfigs.getByName("debug") // CI keeps one debug key across builds (see android-apk.yml)
         }
     }
     compileOptions {

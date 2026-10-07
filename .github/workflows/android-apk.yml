@@ -2,18 +2,30 @@ name: Build Android APK
 
 # בונה את אפליקציית האנדרואיד בשרתים של GitHub (שם יש גישה מלאה לכלי הבנייה של Google).
 # מריצים ידנית: Actions → "Build Android APK" → Run workflow. הקובץ מופיע בתחתית דף ההרצה תחת Artifacts.
+# כל בנייה שעוברת את כל הבדיקות מתפרסמת כ-Release, והקישור הקבוע
+# https://github.com/israel0548502744-blip/p/releases/latest/download/BlueShield.apk תמיד מוריד את האחרונה.
 on:
   workflow_dispatch:
   push:
     branches: ["ccr-*"]
     paths: ["android/**", "models/onnx/**", "shared/pipeline.json", ".github/workflows/android-apk.yml"]
+  schedule:
+    - cron: "17 3 * * 1"   # weekly: keeps the signing-key cache alive (unused caches expire after 7 days)
 
 jobs:
   apk:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      # One signing key for every build: Android installs a new version over the old one only when both are
+      # signed with the same key. The key lives in the repository's private Actions cache, never in the code.
+      - name: Signing key (kept between builds)
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: blueshield-debug-keystore-v1
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -26,7 +38,7 @@ jobs:
         run: chmod +x gradlew && ./gradlew :core:test --no-daemon --stacktrace
       - name: Build debug APK
         working-directory: android
-        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
+        run: ./gradlew :app:assembleDebug -PbuildNumber=${{ github.run_number }} --no-daemon --stacktrace
       - name: Show what is inside the APK
         run: |
           unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -E "pipeline.json|\.onnx|\.so$|classes[0-9]*\.dex" || true
@@ -38,6 +50,7 @@ jobs:
 
   # End-to-end test on an Android emulator: decode → analyse → render → encode on a real Android runtime.
   emulator:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -68,3 +81,37 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -memory 4096
           working-directory: android
           script: bash ../.github/scripts/emulator-test.sh
+
+  # Every build that passed the unit and emulator tests becomes the latest release: a direct APK download
+  # (no ZIP) that installs over the previous version.
+  release:
+    if: github.event_name != 'schedule'
+    needs: [apk, emulator]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: BlueShield-debug-apk
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mv app-debug.apk BlueShield.apk
+          n=${{ github.run_number }}
+          gh release create "build-$n" BlueShield.apk --target "$GITHUB_SHA" --latest \
+            --title "BlueShield 1.5.$n" --notes "Build $n (${GITHUB_SHA::7}). Unit tests and emulator tests (Android 14, 16) passed."
+          # keep the 5 newest builds
+          gh release list --limit 100 --json tagName,createdAt --jq 'sort_by(.createdAt) | reverse | .[5:] | .[].tagName' |
+            while read -r t; do gh release delete "$t" --yes --cleanup-tag; done
+
+  keep-signing-key:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: blueshield-debug-keystore-v1

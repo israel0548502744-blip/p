@@ -79,11 +79,19 @@ object CrashReporter {
     }
 }
 
-object BuildInfo { const val version = "1.3.0" }
+object BuildInfo {
+    /** The installed version name (set at startup from the package; the build numbers it per CI run). */
+    var version = "?"
+        internal set
+
+    /** Always the newest tested build: the CI publishes every build that passes the emulator tests as a release. */
+    const val LATEST_APK = "https://github.com/israel0548502744-blip/p/releases/latest/download/BlueShield.apk"
+}
 
 class BlueShieldApp : android.app.Application() {
     override fun onCreate() {
         super.onCreate()
+        BuildInfo.version = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() ?: "?"
         CrashReporter.install(this)
     }
 }
