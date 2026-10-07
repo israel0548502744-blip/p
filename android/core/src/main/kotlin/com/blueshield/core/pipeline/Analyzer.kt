@@ -274,6 +274,9 @@ class Analyzer(
                 val own = if (settings.includeFace) emptyList() else timed("faces") {
                     seen.mapNotNull { t -> classifier.face(frame, t.box, faceMap, seen.filter { it !== t }.map { it.box }) }
                         .filter { b -> nudeFaces.none { it.box.iou(b) > 0.3f } }
+                        // a real face is facial skin to the segmenter too (a cartoon face on a balloon, a printed
+                        // T-shirt is not): without that it would uncover the hand holding it
+                        .filter { b -> faceMap?.let { meanIn(it, b) >= OWN_FACE_SKIN } ?: false }
                         .map { Detection("FACE", 0.5f, it) }
                 }
                 faces.update(nudeFaces + own)
@@ -482,6 +485,18 @@ class Analyzer(
 
     companion object {
         val FACE_LABELS = setOf("FACE_FEMALE", "FACE_MALE")
+
+        /** Mean facial-skin probability the segmenter needs inside a face box found only by the face detector. */
+        const val OWN_FACE_SKIN = 0.3f
+
+        /** Mean of [m] over the inner half of [b] (frame pixels). */
+        fun meanIn(m: FloatMask, b: com.blueshield.core.image.Box): Float {
+            val x0 = max(0, (b.cx - b.w / 4).toInt()); val x1 = min(m.width, (b.cx + b.w / 4).toInt() + 1)
+            val y0 = max(0, (b.cy - b.h / 4).toInt()); val y1 = min(m.height, (b.cy + b.h / 4).toInt() + 1)
+            var s = 0f; var n = 0
+            for (y in y0 until y1) for (x in x0 until x1) { s += m.data[y * m.width + x]; n++ }
+            return if (n == 0) 0f else s / n
+        }
         const val GATE_PAD = 0.3f
         /** A low neckline seen in this many frames counts for the rest of the shot (no flicker on head turns). */
         const val CLEAVAGE_STICKY_FRAMES = 3
