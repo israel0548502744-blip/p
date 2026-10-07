@@ -357,8 +357,13 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
                 else:  # between whole-frame passes: carry the last result along with the motion
                     seg = SegResult(flow.warp(state["last_skin"]), flow.warp(state["last_person"]),
                                     flow.warp(state["face_map"]))
-                if boxes:
-                    seg = seg_model.segment_rois(frame, boxes, seg, include_face=settings.include_face,
+                # the close-up per-person pass only for people who are (still) to be censored: a man already
+                # recognised, or a small child, is never covered, so his skin needn't be found in detail
+                th = settings.gender_threshold / 100.0
+                roi_boxes = [tuple(t.box) for t in people.visible()
+                             if censor_decision(t.gender.label(th), settings.target, settings.uncertain_policy, "auto", t.gender.is_child)]
+                if roi_boxes:
+                    seg = seg_model.segment_rois(frame, roi_boxes, seg, include_face=settings.include_face,
                                                  base_is_fresh=full_due)
                 skin = seg.skin
                 if settings.aggressive:
@@ -733,6 +738,11 @@ def render(analysis: Analysis, settings: CensorSettings, overrides: dict[int, st
             # censored here too (only ever adds; same as Analysis.maskFor on Android)
             before = [x for x in prev if x.any()]
             after = [x for x in list(window)[1:FILL_GAP + 1] if x.any()]
+            # the first / last frames have only one side: there the cover just holds
+            if i + FILL_GAP >= total:
+                after = after + before
+            if i < FILL_GAP:
+                before = before + after
             if before and after:
                 m = np.maximum(m, np.minimum(np.maximum.reduce(before), np.maximum.reduce(after)))
             for extra in list(window)[1:lookahead + 1]:

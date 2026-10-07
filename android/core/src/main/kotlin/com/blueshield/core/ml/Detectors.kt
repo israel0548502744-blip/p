@@ -129,6 +129,12 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
         const val SIZE = 256
         /** Extra crops along a tall (standing) or wide (lying / arms out) person. */
         const val MAX_TILES = 3
+        /**
+         * Tiles only for a person whose whole-body crop is shrunk at least 1.5x to the model's 256 px: a smaller
+         * (farther) person is already seen at nearly full detail by the one crop, and tiles would cost 3 more
+         * model runs each for nothing (a hall full of bystanders took minutes per second of video).
+         */
+        const val TILE_MIN_SIDE = 384
 
         /**
          * Square crops (left, top, side) that segment one person: the whole person, plus — for a tall or wide box —
@@ -141,7 +147,7 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
             val out = arrayListOf(Triple(Math.round(box.cx - side / 2f), Math.round(box.cy - side / 2f), side))
             val long = max(box.w, box.h)
             val short = min(box.w, box.h)
-            if (short > 0f && long > 1.3f * short) {
+            if (short > 0f && long > 1.3f * short && side >= TILE_MIN_SIDE) {
                 val n = min(MAX_TILES, max(2, ceil(long / (short * 1.25f)).toInt()))
                 val t = Math.round(max(short * 1.25f, long / n * 1.2f))
                 for (i in 0 until n) {

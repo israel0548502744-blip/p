@@ -24,6 +24,7 @@ FACE_EXCLUSION = 0.35  # facial-skin probability above which a pixel is never tr
 
 
 ROI_MAX_TILES = 3  # extra crops along a tall (standing) or wide (lying / arms out) person
+ROI_TILE_MIN_SIDE = 384  # tiles only when the whole-person crop is shrunk >= 1.5x (small people: one crop is enough)
 
 
 def roi_crops(box, side_scale: float = 1.15) -> list[tuple[int, int, int]]:
@@ -37,7 +38,7 @@ def roi_crops(box, side_scale: float = 1.15) -> list[tuple[int, int, int]]:
     side = int(round(max(bw, bh) * side_scale))
     out = [(int(round(cx - side / 2)), int(round(cy - side / 2)), side)]
     long_, short = max(bw, bh), min(bw, bh)
-    if short > 0 and long_ > 1.3 * short:
+    if short > 0 and long_ > 1.3 * short and side >= ROI_TILE_MIN_SIDE:
         n = min(ROI_MAX_TILES, max(2, int(np.ceil(long_ / (short * 1.25)))))
         t = int(round(max(short * 1.25, long_ / n * 1.2)))
         for i in range(n):

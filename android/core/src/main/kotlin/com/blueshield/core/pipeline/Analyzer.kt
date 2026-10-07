@@ -95,8 +95,12 @@ class Analysis(
     fun maskFor(i: Int, decisions: Map<Int, Boolean>, settings: CensorSettings, lookahead: Int): ByteMask {
         var m = composed(i, decisions, settings).copy()
         // covered before (within FILL_GAP frames) and after (within FILL_GAP frames) -> covered now
-        val before = (1..FILL_GAP).mapNotNull { d -> (i - d).takeIf { it >= 0 }?.let { composed(it, decisions, settings) } }.filter { it.any() }
-        val after = (1..FILL_GAP).mapNotNull { d -> (i + d).takeIf { it < records.size }?.let { composed(it, decisions, settings) } }.filter { it.any() }
+        var before = (1..FILL_GAP).mapNotNull { d -> (i - d).takeIf { it >= 0 }?.let { composed(it, decisions, settings) } }.filter { it.any() }
+        var after = (1..FILL_GAP).mapNotNull { d -> (i + d).takeIf { it < records.size }?.let { composed(it, decisions, settings) } }.filter { it.any() }
+        // the first / last frames of the video have only one side: there the cover just holds (a blurred hand in
+        // the last frame of a clip was left bare)
+        if (i + FILL_GAP >= records.size) after = after + before
+        if (i < FILL_GAP) before = before + after
         if (before.isNotEmpty() && after.isNotEmpty()) {
             for (k in m.data.indices) {
                 var a = 0
@@ -276,7 +280,10 @@ class Analyzer(
                 } else { // between whole-frame passes: carry the last result along with the motion
                     SkinSegmenter.Result(flow.warp(lastSkin!!), flow.warp(lastPerson!!), flow.warp(faceMap!!))
                 }
-                if (boxes.isNotEmpty()) seg = timed("seg_rois") { segmenter.segmentRois(frame, boxes, seg, settings.includeFace, spec.roi, baseIsFresh = fullDue) }
+                // the close-up per-person pass only for people who are (still) to be censored: a man already
+                // recognised, or a small child, is never covered, so his skin needn't be found in detail
+                val roiBoxes = people.visible().filter { currentDecision(it) }.map { it.box }
+                if (roiBoxes.isNotEmpty()) seg = timed("seg_rois") { segmenter.segmentRois(frame, roiBoxes, seg, settings.includeFace, spec.roi, baseIsFresh = fullDue) }
                 var skin = seg.skin
                 if (settings.aggressive) {
                     val color = ColorSkin.probability(frame)
