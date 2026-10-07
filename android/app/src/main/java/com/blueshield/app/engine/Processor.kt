@@ -233,15 +233,15 @@ class Processor(private val context: Context) {
                 val raw = a.maskFor(i, decisions, s, lookahead)
                 if (!raw.any()) return null
                 censored++
-                val f = Composer.feather(raw, m.width, m.height, s.softness, s.aggressive)
-                return Renderer.Mask(f.width, f.height, f.data)
+                val e = Composer.edgeMasks(raw, m.width, m.height, s.aggressive) ?: return null
+                return Renderer.Mask(e.soft.width, e.soft.height, e.soft.data, e.band.data)
             }
         }
         // the models aren't needed to render: free them (their memory, and any GPU / AI-chip buffers) for the
         // video decoder and encoder
         models?.close()
         models = null
-        val options = Renderer.Options(CensorSettingsColor.rgb(s), s.animated, s.keepAudio, s.quality)
+        val options = Renderer.Options(CensorSettingsColor.rgb(s), s.animated, s.keepAudio, s.quality, softness = s.softness)
         fun render(o: Renderer.Options) = Renderer(context, m).render(
             out, source, o, total,
             shouldContinue = { checkpoint(meter) },
@@ -262,7 +262,7 @@ class Processor(private val context: Context) {
             out.delete()
             censored = 0
             try {
-                render(Renderer.Options(options.rgb, options.animated, options.keepAudio, options.quality, softwareEncoder = true))
+                render(Renderer.Options(options.rgb, options.animated, options.keepAudio, options.quality, softwareEncoder = true, softness = options.softness))
             } catch (e2: Renderer.IncompleteException) {
                 out.delete()
                 error("קידוד הסרטון נכשל: המקודד איבד פריימים (${e2.written} מתוך ${e2.sent}). נסו שוב, או בחרו איכות ייצוא אחרת.")

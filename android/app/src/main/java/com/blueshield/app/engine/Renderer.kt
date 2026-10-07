@@ -31,9 +31,14 @@ class Renderer(private val context: Context, private val meta: VideoMeta) {
         fun mask(index: Int, ptsUs: Long): Mask?
     }
 
-    class Mask(val width: Int, val height: Int, val data: ByteArray)
+    /** [data]: the cover; [band]: its blurred edge band (Composer.edgeMasks), where the shader decides by colour. */
+    class Mask(val width: Int, val height: Int, val data: ByteArray, val band: ByteArray = data)
 
-    class Options(val rgb: Int, val animated: Boolean, val keepAudio: Boolean, val quality: String, val softwareEncoder: Boolean = false)
+    class Options(
+        val rgb: Int, val animated: Boolean, val keepAudio: Boolean, val quality: String, val softwareEncoder: Boolean = false,
+        /** Edge softness 0..100 (the settings slider): width of the alpha ramp across the fitted edge. */
+        val softness: Int = 20,
+    )
 
     /** The encoded video lost frames (a hardware encoder or the muxer dropped them): the file would be corrupt. */
     class IncompleteException(val sent: Int, val written: Int) : RuntimeException("encoder wrote $written of $sent frames")
@@ -178,8 +183,9 @@ class Renderer(private val context: Context, private val meta: VideoMeta) {
                         break@loop
                     }
                     val m = source.mask(index, decInfo.presentationTimeUs)
-                    if (m != null) shader.uploadMask(m.width, m.height, m.data) else shader.uploadMask(1, 1, ZERO)
-                    shader.draw(w, h, st4, opts.rgb, (decInfo.presentationTimeUs / 1e6).toFloat(), opts.animated)
+                    if (m != null) shader.uploadMask(m.width, m.height, m.data, m.band) else shader.uploadMask(1, 1, ZERO)
+                    shader.draw(w, h, st4, opts.rgb, (decInfo.presentationTimeUs / 1e6).toFloat(), opts.animated,
+                        ringTexels = com.blueshield.core.pipeline.Composer.EDGE_RING, soft = 0.1f + opts.softness.coerceIn(0, 100) / 100f * 0.5f)
                     val now = System.nanoTime()
                     if (now - lastPreview > 700_000_000L) {
                         lastPreview = now

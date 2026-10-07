@@ -88,6 +88,13 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -memory 4096
           working-directory: android
           script: bash ../.github/scripts/emulator-test.sh
+      - name: Rendered test video (to look at the censor edges)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-output-api${{ matrix.api-level }}
+          path: android/app/build/e2e-out/
+          if-no-files-found: ignore
 
   # Every build that passed the unit and emulator tests becomes the latest release: a direct APK download
   # (no ZIP) that installs over the previous version.

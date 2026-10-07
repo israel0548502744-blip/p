@@ -79,11 +79,14 @@ class QualityCheck {
         val p = ProcessBuilder("ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "${aw * 3}x$ah", "-r", "$fps", "-i", "pipe:0",
             "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", "$prefix.mp4").redirectErrorStream(true).start()
         val out = p.outputStream.buffered(1 shl 20)
+        val dump = System.getProperty("blueshield.dumpMasks")?.let { File(it).outputStream().buffered() }
         var featherNs = 0L
         var composeNs = 0L
         for (i in 0 until a.frameCount) {
             val tc = System.nanoTime()
             val raw = a.maskFor(i, d, settings, a.lookahead())
+            // -Dblueshield.dumpMasks=file: the raw masks (aw × ah bytes per frame), for edge experiments
+            dump?.write(raw.resize(aw, ah).data)
             composeNs += System.nanoTime() - tc
             val f = frames[i]
             val o = oracle[i]
@@ -144,6 +147,7 @@ class QualityCheck {
             out.write(row)
         }
         out.close()
+        dump?.close()
         p.waitFor()
         println("RENDER compose=${"%.1f".format(composeNs / 1e9)}s feather=${"%.1f".format(featherNs / 1e9)}s")
         println("QUALITY ${inFile.name} frames $from..$to: recall ${"%.1f".format(100.0 * hit / max(1, hit + miss))} %, " +

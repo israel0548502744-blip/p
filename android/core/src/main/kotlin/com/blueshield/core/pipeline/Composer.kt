@@ -38,8 +38,6 @@ object Composer {
     const val OWNER_REACH = 0.12f
     /** With people detected, an unattributed skin blob must cover at least this fraction of the frame. */
     const val UNASSIGNED_MIN_AREA_WITH_PEOPLE = 0.004f
-    /** Render-time closing radius, as a fraction of the mask diagonal (see [feather]). */
-    const val CLOSE = 0.004f
 
     fun compose(
         skin: ByteMask, rec: FrameRecord, decisions: Map<Int, Boolean>, censorUnassigned: Boolean, boxPad: Float,
@@ -193,10 +191,27 @@ object Composer {
         val featherPx = softness / 100f * 0.008f * diag
         val grow = featherPx * 0.5f + (if (aggressive) 0.004f else 0.001f) * diag
         val bin = ByteMask(mask.width, mask.height, ByteArray(mask.data.size) { if ((mask.data[it].toInt() and 0xFF) > 96) -1 else 0 })
-        // a closing first: the pinholes (a cue or a strap crossing a hand) and the notches between fingers would
-        // otherwise show as a ragged, dirty-looking patch; only gaps narrower than 2 × close are filled
-        val close = (CLOSE * hypot(mask.width.toFloat(), mask.height.toFloat())).roundToInt()
-        val grown = MaskOps.erode(MaskOps.dilate(bin, (grow * toMask).roundToInt() + close), close)
+        val grown = MaskOps.dilate(bin, (grow * toMask).roundToInt())
         return MaskOps.gaussianApprox(grown, featherPx * toMask)
     }
+
+    /**
+     * The two masks the video shader fits to the full-size frame ([EdgeMasks]): [EdgeMasks.soft] is the mask
+     * with a one-texel soft edge (where the cover is), [EdgeMasks.band] a wider blur of it whose grey zone marks
+     * the pixels the shader decides by colour — this frame's own skin next to them vs. what surrounds it. Nothing
+     * is grown: the colour decision puts the edge on the arm's outline, not a margin around it.
+     */
+    fun edgeMasks(mask: ByteMask, frameW: Int, frameH: Int, aggressive: Boolean): EdgeMasks? {
+        if (!mask.any()) return null
+        var bin = ByteMask(mask.width, mask.height, ByteArray(mask.data.size) { if ((mask.data[it].toInt() and 0xFF) > 96) -1 else 0 })
+        if (aggressive) bin = MaskOps.dilate(bin, (0.004f * hypot(frameW.toFloat(), frameH.toFloat()) * mask.width / frameW).roundToInt())
+        return EdgeMasks(MaskOps.gaussianApprox(bin, EDGE_SOFT), MaskOps.gaussianApprox(bin, EDGE_RING))
+    }
+
+    class EdgeMasks(val soft: ByteMask, val band: ByteMask)
+
+    /** Soft edge of the mask, in mask texels (just enough to interpolate smoothly). */
+    const val EDGE_SOFT = 1f
+    /** Ring radius (mask texels) the shader samples this frame's skin and surroundings on; also the band's blur. */
+    const val EDGE_RING = 3f
 }

@@ -36,9 +36,12 @@ class BlueCensor:
         # the frame by colour during analysis, so the margin is small)
         grow = self.feather * 0.5 + (0.004 * diag if aggressive else 0.001 * diag)
         self.grow = int(round(grow))
-        # closing first: pinholes (a cue crossing a hand) and notches between fingers read as a ragged patch
-        self.close = int(round(RENDER_CLOSE * diag))
-        self.margin = int(self.grow + self.close + 3 * self.feather + 4)
+        # video edges are fitted to the frame by colour (fitted_alpha): no margin is grown, except in aggressive mode
+        self.aggressive_grow = 0
+        self._aggressive = aggressive
+        self.edge_soft = 0.1 + max(0.0, min(100.0, softness)) / 100.0 * 0.5
+        self.margin = int(self.grow + 3 * self.feather + 4)
+        self._diag = diag
         self.animated = animated
         self.fps = max(fps, 1.0)
         if animated:
@@ -46,8 +49,6 @@ class BlueCensor:
             self._phase = (xx * 0.9 + yy * 0.6) * (2 * math.pi / max(240.0, diag * 0.25))
         self._kernel = (cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * self.grow + 1, 2 * self.grow + 1))
                         if self.grow > 0 else None)
-        self._close_kernel = (cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * self.close + 1, 2 * self.close + 1))
-                              if self.close > 0 else None)
 
     def apply(self, frame: np.ndarray, mask_small: np.ndarray, frame_index: int) -> tuple[np.ndarray, float]:
         """Return (censored frame, censored area fraction)."""
@@ -55,25 +56,27 @@ class BlueCensor:
             return frame, 0.0
         mh, mw = mask_small.shape
         sx, sy = self.w / mw, self.h / mh
+        self.aggressive_grow = int(round(0.004 * self._diag / sx)) if self._aggressive else 0
+        self.margin = max(self.margin, int(2 * EDGE_RING * max(sx, sy) + 4))
         x, y, bw, bh = cv2.boundingRect((mask_small > 0).astype(np.uint8))
         x1 = max(0, int(x * sx) - self.margin)
         y1 = max(0, int(y * sy) - self.margin)
         x2 = min(self.w, int((x + bw) * sx) + self.margin)
         y2 = min(self.h, int((y + bh) * sy) + self.margin)
 
-        # Upscale only the ROI of the low-res mask (with sub-pixel accurate mapping).
+        # Upscale only the ROI of the low-res mask (with sub-pixel accurate mapping), then fit its edge to this frame
+        # (same algorithm as the Android shader, see fitted_alpha).
         mx1, my1 = x1 / sx, y1 / sy
         M = np.float32([[1 / sx, 0, mx1], [0, 1 / sy, my1]])
-        alpha = cv2.warpAffine(mask_small, M, (x2 - x1, y2 - y1),
-                               flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP, borderMode=cv2.BORDER_CONSTANT)
-        alpha = (alpha > 96).astype(np.uint8) * 255
-        if self._close_kernel is not None:
-            alpha = cv2.morphologyEx(alpha, cv2.MORPH_CLOSE, self._close_kernel, borderType=cv2.BORDER_REPLICATE)
-        if self._kernel is not None:
-            alpha = cv2.dilate(alpha, self._kernel)
-        alpha = alpha.astype(np.float32) * (1.0 / 255.0)
-        if self.feather >= 0.5:
-            alpha = cv2.GaussianBlur(alpha, (0, 0), self.feather)
+        binm = (mask_small > 96).astype(np.uint8) * 255
+        if self.aggressive_grow > 0:
+            binm = cv2.dilate(binm, np.ones((2 * self.aggressive_grow + 1,) * 2, np.uint8))
+        binf = binm.astype(np.float32) / 255.0
+        soft = cv2.GaussianBlur(binf, (0, 0), EDGE_SOFT)
+        band = cv2.GaussianBlur(binf, (0, 0), EDGE_RING)
+        warp = lambda m: cv2.warpAffine(m, M, (x2 - x1, y2 - y1), flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP,  # noqa: E731
+                                        borderMode=cv2.BORDER_CONSTANT)
+        alpha = fitted_alpha(frame[y1:y2, x1:x2], warp(soft), warp(band), EDGE_RING * (sx + sy) / 2, self.edge_soft)
         coverage = float(alpha.sum()) / (self.w * self.h)
 
         out = frame.copy() if not frame.flags.writeable else frame
@@ -92,7 +95,46 @@ class BlueCensor:
         return out, coverage
 
 
-RENDER_CLOSE = 0.004  # closing radius at render, fraction of the frame diagonal (Composer.CLOSE on Android)
+EDGE_SOFT = 1.0  # soft edge of the mask, mask texels (Composer.EDGE_SOFT)
+EDGE_RING = 3.0  # ring radius / band blur, mask texels (Composer.EDGE_RING)
+
+
+def _ycc(rgb: np.ndarray) -> np.ndarray:
+    """Brightness plus doubled colour (skin next to a grey shirt or dark hair differs mostly in colour)."""
+    y = rgb @ np.float32([0.299, 0.587, 0.114])
+    return np.stack([y, 1.128 * (rgb[..., 2] - y), 1.426 * (rgb[..., 0] - y)], -1)
+
+
+def fitted_alpha(bgr: np.ndarray, soft: np.ndarray, band: np.ndarray, ring_px: float, ramp: float) -> np.ndarray:
+    """The cover's edge fitted to this frame (the Android CensorShader's algorithm): in the band's grey zone, the
+    mean colour of the sure cover (this frame's skin) and of the sure surroundings on two rings around each pixel;
+    the pixel (with four neighbours, against speckle) goes to the closer one, the coarse mask as a prior."""
+    h, w = soft.shape
+    v = soft.copy()
+    ys, xs = np.nonzero((band > 0.03) & (band < 0.97))
+    if len(ys):
+        f = _ycc(bgr[..., ::-1].astype(np.float32) / 255.0)
+        s = np.zeros((len(ys), 3), np.float32); sn = np.zeros(len(ys), np.float32)
+        b = np.zeros_like(s); bn = np.zeros_like(sn)
+        for r in (1, 2):
+            for k in range(16):
+                t = 2 * math.pi * (k + 0.5 * (r - 1)) / 16
+                yy = np.clip(np.rint(ys + math.sin(t) * ring_px * r).astype(int), 0, h - 1)
+                xx = np.clip(np.rint(xs + math.cos(t) * ring_px * r).astype(int), 0, w - 1)
+                m = soft[yy, xx]; c = f[yy, xx]
+                hi = m > 0.9; lo = m < 0.1
+                s[hi] += c[hi]; sn += hi; b[lo] += c[lo]; bn += lo
+        ok = (sn >= 3) & (bn >= 3)
+        s /= np.maximum(sn, 1)[:, None]; b /= np.maximum(bn, 1)[:, None]
+        acc = np.zeros(len(ys), np.float32)
+        for dx, dy in ((0, 0), (2, 0), (-2, 0), (0, 2), (0, -2)):
+            c = f[np.clip(ys + dy, 0, h - 1), np.clip(xs + dx, 0, w - 1)]
+            ds = np.linalg.norm(c - s, axis=1); db = np.linalg.norm(c - b, axis=1)
+            acc += db / (ds + db + 0.004)
+        v[ys, xs] = np.where(ok, 0.6 * acc / 5 + 0.4 * soft[ys, xs], soft[ys, xs])
+    return np.clip((v - 0.5) / ramp + 0.5, 0.0, 1.0)
+
+
 TEXT_R = 2
 TEXT_BRIGHT = 0.80
 TEXT_DARK = 0.25

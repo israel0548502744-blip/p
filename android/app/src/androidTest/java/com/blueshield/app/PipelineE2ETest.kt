@@ -63,6 +63,8 @@ class PipelineE2ETest {
         assertEquals("error: ${result.error}", JobState.Stage.COMPLETE, result.stage)
         checkOutput(result.output, 768, 432, meta.durationSec)
         assertEquals("every frame encoded", videoSamples(ctx.cacheDir.resolve("woman_and_man.mp4").path), videoSamples(result.output!!.path))
+        // kept for the CI log: the emulator script pulls it (run-as) and uploads it, to look at the rendered edges
+        result.output!!.copyTo(File(ctx.filesDir, "e2e_output.mp4"), overwrite = true)
         val people = p.analysis!!.summaries(CensorSettings(), emptyMap()).filter { it.frames > p.analysis!!.frameCount / 2 }
         assertEquals("people: $people", setOf("female", "male"), people.map { it.gender }.toSet())
         p.close()

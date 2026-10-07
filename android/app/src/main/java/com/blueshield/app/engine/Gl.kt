@@ -72,6 +72,9 @@ class CensorShader(rotation: Int) {
     private val uTime: Int
     private val uAnimated: Int
     private val uTexel: Int
+    private val uStF: Int
+    private val uRing: Int
+    private val uSoft: Int
     private val rot = rotation
     val videoTex: Int
     private val maskTex: Int
@@ -89,6 +92,9 @@ class CensorShader(rotation: Int) {
         uTime = GLES20.glGetUniformLocation(program, "uTime")
         uAnimated = GLES20.glGetUniformLocation(program, "uAnimated")
         uTexel = GLES20.glGetUniformLocation(program, "uTexel")
+        uStF = GLES20.glGetUniformLocation(program, "uStF")
+        uRing = GLES20.glGetUniformLocation(program, "uRing")
+        uSoft = GLES20.glGetUniformLocation(program, "uSoft")
         val tex = IntArray(2)
         GLES20.glGenTextures(2, tex, 0)
         videoTex = tex[0]
@@ -106,13 +112,31 @@ class CensorShader(rotation: Int) {
         GLES20.glPixelStorei(GLES20.GL_UNPACK_ALIGNMENT, 1)
     }
 
-    /** Upload the feathered mask (8-bit, display orientation, rows top-first). */
-    fun uploadMask(width: Int, height: Int, data: ByteArray) {
+    private var maskW = 1
+    private var maskH = 1
+    private var interleaved = ByteArray(0)
+
+    /**
+     * Upload the mask (8-bit, display orientation, rows top-first) and its edge band ([band], same size, see
+     * Composer.edgeMasks): luminance = mask, alpha = band.
+     */
+    fun uploadMask(width: Int, height: Int, data: ByteArray, band: ByteArray = data) {
+        if (interleaved.size != width * height * 2) interleaved = ByteArray(width * height * 2)
+        for (i in 0 until width * height) {
+            interleaved[2 * i] = data[i]
+            interleaved[2 * i + 1] = band[i]
+        }
+        maskW = width
+        maskH = height
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, maskTex)
-        GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_LUMINANCE, width, height, 0, GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, ByteBuffer.wrap(data))
+        GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_LUMINANCE_ALPHA, width, height, 0, GLES20.GL_LUMINANCE_ALPHA, GLES20.GL_UNSIGNED_BYTE, ByteBuffer.wrap(interleaved))
     }
 
-    fun draw(viewW: Int, viewH: Int, stMatrix: FloatArray, rgb: Int, timeSec: Float, animated: Boolean) {
+    /**
+     * @param ringTexels radius (mask texels) of the ring the edge decision samples skin / surroundings on
+     * @param soft width of the final 0→1 alpha ramp around the decision (0.1 crisp … 0.6 soft)
+     */
+    fun draw(viewW: Int, viewH: Int, stMatrix: FloatArray, rgb: Int, timeSec: Float, animated: Boolean, ringTexels: Float = 3f, soft: Float = 0.3f) {
         GLES20.glViewport(0, 0, viewW, viewH)
         GLES20.glUseProgram(program)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
@@ -128,6 +152,11 @@ class CensorShader(rotation: Int) {
         GLES20.glUniform1i(uAnimated, if (animated) 1 else 0)
         // one video pixel in texture coordinates (text protection samples neighbours TextGuard.R px away)
         GLES20.glUniform2f(uTexel, 1f / viewW, 1f / viewH)
+        GLES20.glUniformMatrix4fv(uStF, 1, false, stMatrix, 0)
+        // the ring radius in coded-frame units: the mask is in display orientation (rotated by 90/270 or not)
+        val (mx, my) = if (rot % 180 != 0) maskH to maskW else maskW to maskH
+        GLES20.glUniform2f(uRing, ringTexels / mx, ringTexels / my)
+        GLES20.glUniform1f(uSoft, soft)
         GLES20.glEnableVertexAttribArray(aPos)
         GLES20.glVertexAttribPointer(aPos, 2, GLES20.GL_FLOAT, false, 0, quad)
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
@@ -173,7 +202,11 @@ class CensorShader(rotation: Int) {
         """
         private const val FRAGMENT = """
             #extension GL_OES_EGL_image_external : require
+            #ifdef GL_FRAGMENT_PRECISION_HIGH
+            precision highp float;
+            #else
             precision mediump float;
+            #endif
             uniform samplerExternalOES uVideo;
             uniform sampler2D uMask;
             uniform vec3 uColor;
@@ -181,6 +214,9 @@ class CensorShader(rotation: Int) {
             uniform float uTime;
             uniform int uAnimated;
             uniform vec2 uTexel;
+            uniform mat4 uStF;
+            uniform vec2 uRing;
+            uniform float uSoft;
             varying vec2 vVideo;
             varying vec2 vPos;
             float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
@@ -202,15 +238,57 @@ class CensorShader(rotation: Int) {
                 }
                 return hit;
             }
+            // coded image coords (origin bottom-left, as vPos) -> display (upright) coords of the mask
+            vec2 toDisplay(vec2 pos) {
+                vec2 c = vec2(pos.x, 1.0 - pos.y);
+                if (uRot == 90) return vec2(1.0 - c.y, c.x);
+                if (uRot == 180) return vec2(1.0 - c.x, 1.0 - c.y);
+                if (uRot == 270) return vec2(c.y, 1.0 - c.x);
+                return c;
+            }
+            vec3 video(vec2 pos) { return texture2D(uVideo, (uStF * vec4(pos, 0.0, 1.0)).xy).rgb; }
+            // brightness plus doubled colour: skin next to a grey shirt or dark hair differs mostly in colour
+            vec3 ycc(vec3 c) {
+                float y = luma(c);
+                return vec3(y, 1.128 * (c.b - y), 1.426 * (c.r - y));
+            }
+            // Edge of the cover fitted to this frame (same algorithm as the desktop renderer): on two rings around
+            // the pixel, the mean colour of the sure cover (this frame's skin) and of the sure surroundings; the
+            // pixel (and four neighbours, against speckle) is decided by which it is closer to, with the coarse
+            // mask as a prior.
+            float fitted(vec2 pos, float a0) {
+                vec3 s = vec3(0.0); float sn = 0.0;
+                vec3 b = vec3(0.0); float bn = 0.0;
+                for (int r = 1; r <= 2; r++) {
+                    for (int k = 0; k < 16; k++) {
+                        float t = 6.2831853 * (float(k) + 0.5 * float(r - 1)) / 16.0;
+                        vec2 p = pos + vec2(cos(t), sin(t)) * uRing * float(r);
+                        float m = texture2D(uMask, toDisplay(p)).r;
+                        if (m > 0.9) { s += ycc(video(p)); sn += 1.0; }
+                        else if (m < 0.1) { b += ycc(video(p)); bn += 1.0; }
+                    }
+                }
+                if (sn < 3.0 || bn < 3.0) return a0;
+                s /= sn;
+                b /= bn;
+                float acc = 0.0;
+                for (int i = 0; i < 5; i++) {
+                    vec2 o = i == 0 ? vec2(0.0) : i == 1 ? vec2(2.0, 0.0) : i == 2 ? vec2(-2.0, 0.0) : i == 3 ? vec2(0.0, 2.0) : vec2(0.0, -2.0);
+                    vec3 c = ycc(video(pos + o * uTexel));
+                    float ds = distance(c, s);
+                    float db = distance(c, b);
+                    acc += db / (ds + db + 0.004);
+                }
+                return 0.6 * acc / 5.0 + 0.4 * a0;
+            }
             void main() {
                 vec4 video = texture2D(uVideo, vVideo);
-                // coded image coords (origin top-left) -> display (upright) coords of the mask
-                vec2 c = vec2(vPos.x, 1.0 - vPos.y);
-                vec2 d = c;
-                if (uRot == 90) d = vec2(1.0 - c.y, c.x);
-                else if (uRot == 180) d = vec2(1.0 - c.x, 1.0 - c.y);
-                else if (uRot == 270) d = vec2(c.y, 1.0 - c.x);
-                float a = texture2D(uMask, d).r;
+                vec2 d = toDisplay(vPos);
+                vec4 m = texture2D(uMask, d);
+                float v = m.r;
+                // only near the edge (the band's grey zone) is the colour consulted
+                if (m.a > 0.03 && m.a < 0.97) v = fitted(vPos, m.r);
+                float a = clamp((v - 0.5) / uSoft + 0.5, 0.0, 1.0);
                 if (a > 0.0) a *= 1.0 - isText(video);
                 vec3 fill = uColor;
                 if (uAnimated == 1) {
