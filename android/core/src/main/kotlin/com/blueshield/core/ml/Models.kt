@@ -93,6 +93,8 @@ class ModelStore(
         val times = LinkedHashMap<String, Double>()
         val baseOut = base.runFloat(env, probe.first, probe.second)
         var bestTime = time(base, probe).also { times[CPU] = it }
+        // only one session of this model in memory at a time while trying (the photo outline model is large)
+        base.close()
         var best: Pair<String, OrtSession>? = null
         for (e in engines) {
             if (memory?.broken(file, e.id) == true) continue
@@ -121,12 +123,12 @@ class ModelStore(
                 bestTime = t
                 if (!pickFastest) break
             } else s.close()
+            System.gc() // the closed session's buffers
         }
         measured[file] = times
-        val (id, s) = best ?: (CPU to base)
-        if (s !== base) base.close()
+        memory?.put(file, best?.first ?: CPU)
+        val (id, s) = best ?: return plain(file, bytes)
         used[file] = id
-        memory?.put(file, id)
         return s
     }
 
