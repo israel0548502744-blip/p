@@ -70,7 +70,10 @@ data class VideoMeta(
                 if (rotation == 0 && v.containsKey(MediaFormat.KEY_ROTATION)) rotation = v.getInteger(MediaFormat.KEY_ROTATION)
                 var fps = if (v.containsKey(MediaFormat.KEY_FRAME_RATE)) runCatching { v.getInteger(MediaFormat.KEY_FRAME_RATE).toDouble() }
                     .getOrElse { v.getFloat(MediaFormat.KEY_FRAME_RATE).toDouble() } else 0.0
-                if (fps <= 0 && frames > 0 && durationUs > 0) fps = frames / (durationUs / 1e6)
+                // Variable-frame-rate phone videos often declare their maximum rate (e.g. 120) while holding ~30
+                // frames a second: every "per second" setting would then be 4x off. The real average wins.
+                val measured = if (frames > 0 && durationUs > 0) frames / (durationUs / 1e6) else 0.0
+                if (measured > 0 && (fps <= 0 || fps > measured * 1.25 || fps < measured * 0.8)) fps = measured
                 if (fps <= 0 || fps > 240) fps = 30.0
                 if (frames <= 0) frames = maxOf(1, Math.round(durationUs / 1e6 * fps).toInt())
                 return VideoMeta(

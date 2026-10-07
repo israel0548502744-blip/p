@@ -30,7 +30,9 @@ class PipelineIntegrationTest {
         private fun ffmpegOk() = runCatching { ProcessBuilder("ffmpeg", "-version").start().waitFor() == 0 }.getOrDefault(false)
 
         fun decode(file: File, w: Int, h: Int): List<RgbImage> {
-            val p = ProcessBuilder("ffmpeg", "-v", "error", "-i", file.path, "-vf", "scale=$w:$h:flags=area", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1")
+            // the frames the file really holds (no duplicates for variable-frame-rate phone videos), upright
+            val p = ProcessBuilder("ffmpeg", "-v", "error", "-i", file.path, "-fps_mode", "passthrough", "-vf", "scale=$w:$h:flags=area",
+                "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1")
                 .redirectError(ProcessBuilder.Redirect.INHERIT).start()
             val bytes = p.inputStream.readBytes()
             p.waitFor()
@@ -38,11 +40,28 @@ class PipelineIntegrationTest {
             return (0 until n).map { RgbImage(w, h, bytes.copyOfRange(it * w * h * 3, (it + 1) * w * h * 3)) }
         }
 
+        /** Display size (rotation applied, as ffmpeg decodes) and the real average frame rate. */
         fun probe(file: File): Triple<Int, Int, Double> {
-            val p = ProcessBuilder("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,r_frame_rate", "-of", "csv=p=0", file.path).start()
-            val (w, h, r) = p.inputStream.bufferedReader().readText().trim().split(",")
-            val (a, b) = r.split("/").map { it.toDouble() }
-            return Triple(w.toInt(), h.toInt(), a / b)
+            val p = ProcessBuilder("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                "stream=width,height,r_frame_rate,nb_frames,duration:stream_side_data=rotation", "-of", "json", file.path).start()
+            val js = kotlinx.serialization.json.Json.parseToJsonElement(p.inputStream.bufferedReader().readText())
+            val st = (js as kotlinx.serialization.json.JsonObject)["streams"]!!.let { it as kotlinx.serialization.json.JsonArray }[0] as kotlinx.serialization.json.JsonObject
+            fun str(k: String) = (st[k] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            var w = str("width")!!.toInt()
+            var h = str("height")!!.toInt()
+            val rot = (st["side_data_list"] as? kotlinx.serialization.json.JsonArray)?.firstNotNullOfOrNull {
+                ((it as kotlinx.serialization.json.JsonObject)["rotation"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toDoubleOrNull()
+            } ?: 0.0
+            if (Math.abs(rot.toInt()) % 180 == 90) { val t = w; w = h; h = t }
+            val (a, b) = str("r_frame_rate")!!.split("/").map { it.toDouble() }
+            var fps = a / b
+            val frames = str("nb_frames")?.toDoubleOrNull() ?: 0.0
+            val dur = str("duration")?.toDoubleOrNull() ?: 0.0
+            if (frames > 0 && dur > 0) {
+                val measured = frames / dur
+                if (fps > measured * 1.25 || fps < measured * 0.8) fps = measured
+            }
+            return Triple(w, h, fps)
         }
 
         fun analyze(file: File, settings: CensorSettings = CensorSettings()): Pair<Analysis, List<RgbImage>> {
