@@ -21,7 +21,20 @@ android {
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
 
+    // CI passes -PsigningStore=<keystore> (kept in the repository's private Actions cache, never in the code):
+    // every build is signed with the same key, so a new version installs over the old one
+    signingConfigs {
+        (findProperty("signingStore") as String?)?.let { path ->
+            create("ci") {
+                storeFile = file(path)
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
     buildTypes {
+        debug { signingConfigs.findByName("ci")?.let { signingConfig = it } }
         release {
             isMinifyEnabled = false
             signingConfig = signingConfigs.getByName("debug") // CI keeps one debug key across builds (see android-apk.yml)
