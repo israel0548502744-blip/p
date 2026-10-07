@@ -358,6 +358,11 @@ class Analyzer(
                     val known = f.cleavageFrames >= CLEAVAGE_STICKY_FRAMES
                     if (Neckline.apply(skinBin, width, height, f.box, spec.neckline, faceMap?.data, known)) f.cleavageFrames++
                 }
+                // upright people without a face in their head area (seen from behind, turned away, dark)
+                val faceless = people.visible().filter { t ->
+                    t.box.h >= 1.6f * t.box.w && faces.tracks.none { f -> f.box.cx in t.box.x1..t.box.x2 && f.box.cy in t.box.y1..(t.box.y1 + 0.3f * t.box.h) }
+                }.map { it.box }
+                Neckline.clearHeads(skinBin, width, height, faceless)
             }
             timed("specks") { Neckline.removeSpecks(skinBin, width, height, people.visible().map { it.box }, spec.neckline.speckPersonFrac, spec.neckline.speckFrameFrac) }
             timed("track") { people.markFrame(frame, idx) }

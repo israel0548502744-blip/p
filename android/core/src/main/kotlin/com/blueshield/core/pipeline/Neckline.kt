@@ -67,6 +67,46 @@ object Neckline {
         return seen
     }
 
+    /**
+     * The head of an upright person whose face no detector found (seen from behind, turned away, in the dark): the
+     * hair or the back of the head lit warm reads as skin. A skin region lying mostly ([HEAD_SHARE]) inside the
+     * head ellipse at the top of the box is that head and is cleared; an arm raised over the head continues
+     * well outside it and stays.
+     */
+    fun clearHeads(skin: BooleanArray, w: Int, h: Int, boxes: List<Box>) {
+        if (boxes.isEmpty()) return
+        val (labels, count) = MaskOps.connectedComponents(skin, w, h)
+        if (count <= 1) return
+        val total = IntArray(count)
+        for (l in labels) if (l != 0) total[l]++
+        for (b in boxes) {
+            val cx = b.cx
+            val cy = b.y1 + HEAD_CY * b.h
+            val ax = min(0.5f * b.w, HEAD_RX * b.h)
+            val ay = HEAD_RY * b.h
+            if (ax < 2f || ay < 2f) continue
+            val x0 = max(0, (cx - ax).toInt()); val x1 = min(w, (cx + ax).toInt() + 1)
+            val y0 = max(0, (cy - ay).toInt()); val y1 = min(h, (cy + ay).toInt() + 1)
+            val inside = HashMap<Int, Int>()
+            for (y in y0 until y1) for (x in x0 until x1) {
+                val l = labels[y * w + x]
+                if (l == 0) continue
+                val dx = (x + 0.5f - cx) / ax
+                val dy = (y + 0.5f - cy) / ay
+                if (dx * dx + dy * dy <= 1f) inside[l] = (inside[l] ?: 0) + 1
+            }
+            val heads = inside.filter { (l, n) -> n >= HEAD_SHARE * total[l] }.keys
+            if (heads.isEmpty()) continue
+            for (i in skin.indices) if (labels[i] in heads) skin[i] = false
+        }
+    }
+
+    /** Head ellipse of an upright person box: centre and radii as fractions of the box height. */
+    private const val HEAD_CY = 0.075f
+    private const val HEAD_RX = 0.06f
+    private const val HEAD_RY = 0.08f
+    private const val HEAD_SHARE = 0.7f
+
     private inline fun fill(skin: BooleanArray, w: Int, h: Int, x0: Int, y0: Int, x1: Int, y1: Int, inside: (Int, Int) -> Boolean) {
         for (y in max(0, y0) until min(h, y1)) for (x in max(0, x0) until min(w, x1)) if (inside(x, y)) skin[y * w + x] = false
     }
