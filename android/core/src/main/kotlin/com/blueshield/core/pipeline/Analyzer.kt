@@ -225,10 +225,22 @@ class Analyzer(
     fun currentDecision(t: PersonTrack) = censorDecision(t.gender.label(settings.threshold01), settings.target, settings.uncertainPolicy, child = t.gender.isChild)
 
     /** Analyse a chunk of consecutive frames (all at width × height). */
+    /** Time spent per analysis stage (nanoseconds), for profiling. */
+    val timings = LinkedHashMap<String, Long>()
+
+    private inline fun <T> timed(name: String, block: () -> T): T {
+        val t0 = System.nanoTime()
+        try {
+            return block()
+        } finally {
+            timings[name] = (timings[name] ?: 0L) + (System.nanoTime() - t0)
+        }
+    }
+
     fun process(frames: List<RgbImage>, onFrame: (Int) -> Unit = {}) {
         val start = processed
         val detIdx = frames.indices.filter { (start + it) % detStride == 0 }
-        val nude = detIdx.zip(nudeNet.detect(detIdx.map { frames[it] }, nudeMin)).toMap()
+        val nude = timed("nudenet") { detIdx.zip(nudeNet.detect(detIdx.map { frames[it] }, nudeMin)).toMap() }
         for ((k, frame) in frames.withIndex()) {
             val idx = start + k
             val cut = sceneCut.isCut(frame)
@@ -239,14 +251,14 @@ class Analyzer(
                 faces.reset()
                 people.reset(idx)
             }
-            flow.update(frame)
+            timed("flow") { flow.update(frame) }
 
             // stages 1+3: person detection & tracking first — the boxes drive the per-person ROI segmentation
             people.predict(flow, width, height)
             regions.predict(flow, width, height)
             faces.predict(flow, width, height)
             nude[k]?.let { dets ->
-                people.update(frame, personDetector.detect(frame, personMin), idx, dets.filter { it.label in FACE_LABELS }.map { it.box })
+                people.update(frame, timed("persons") { personDetector.detect(frame, personMin) }, idx, dets.filter { it.label in FACE_LABELS }.map { it.box })
                 regions.update(dets.filter { it.label in labels })
                 faces.update(dets.filter { it.label in FACE_LABELS })
             }
@@ -260,11 +272,11 @@ class Analyzer(
                 val fullDue = lastSkin == null || cut ||
                     (nude.containsKey(k) && (boxes.isEmpty() || idx / detStride % spec.roi.fullEveryDet == 0))
                 var seg = if (fullDue) {
-                    segmenter.segment(frame, settings.includeFace, tiled = settings.aggressive)
+                    timed("seg_full") { segmenter.segment(frame, settings.includeFace, tiled = settings.aggressive) }
                 } else { // between whole-frame passes: carry the last result along with the motion
                     SkinSegmenter.Result(flow.warp(lastSkin!!), flow.warp(lastPerson!!), flow.warp(faceMap!!))
                 }
-                if (boxes.isNotEmpty()) seg = segmenter.segmentRois(frame, boxes, seg, settings.includeFace, spec.roi, baseIsFresh = fullDue)
+                if (boxes.isNotEmpty()) seg = timed("seg_rois") { segmenter.segmentRois(frame, boxes, seg, settings.includeFace, spec.roi, baseIsFresh = fullDue) }
                 var skin = seg.skin
                 if (settings.aggressive) {
                     val color = ColorSkin.probability(frame)
@@ -286,14 +298,14 @@ class Analyzer(
                         (0xFF shl 24) or ((frame.data[o].toInt() and 0xFF) shl 16) or ((frame.data[o + 1].toInt() and 0xFF) shl 8) or (frame.data[o + 2].toInt() and 0xFF)
                     }
                     val p = skin.data.copyOf()
-                    EdgeSnap.recolour(p, px, width, height, max(2, (spec.refine.colorBand * hypot(width.toFloat(), height.toFloat())).roundToInt()))
-                    Guided.filter(EdgeSnap.guide(px), p, width, height, gr, spec.refine.eps)
+                    timed("colour") { EdgeSnap.recolour(p, px, width, height, max(2, (spec.refine.colorBand * hypot(width.toFloat(), height.toFloat())).roundToInt())) }
+                    timed("guided") { Guided.filter(EdgeSnap.guide(px), p, width, height, gr, spec.refine.eps) }
                 } else {
                     val luma = frame.gray().data.also { for (i in it.indices) it[i] /= 255f }
                     Guided.filter(luma, skin.data, width, height, gr, spec.refine.eps)
                 }
                 // skin only counts on a person: skin-coloured objects (wood, a mug, a lamp) are not people
-                val gate = personGate(seg.person, boxes)
+                val gate = timed("gate") { personGate(seg.person, boxes) }
                 skin = FloatMask(width, height, FloatArray(width * height) {
                     if (!gate[it]) 0f else refined[it] * plausible.data[it]
                 })
@@ -305,7 +317,7 @@ class Analyzer(
                 lastSkin = flow.warp(lastSkin!!)
                 sinceSeg++
             }
-            val skinBin = fuser.update(lastSkin!!, flow, fresh)
+            val skinBin = timed("fuser") { fuser.update(lastSkin!!, flow, fresh) }
 
             nude[k]?.let {
                 val seen = people.visible().filter { it.misses == 0 }
@@ -314,7 +326,7 @@ class Analyzer(
                     if (!need) continue
                     t.lastClassified = idx
                     // other people's boxes: a face that is their head is never this person's
-                    classifier.classify(frame, t.box, faceMap, seen.filter { it !== t }.map { it.box })?.let { o ->
+                    timed("gender") { classifier.classify(frame, t.box, faceMap, seen.filter { it !== t }.map { it.box }) }?.let { o ->
                         t.gender.add(o.pMale, o.weight)
                         t.gender.addAge(o.age)
                     }
@@ -328,11 +340,11 @@ class Analyzer(
                     if (Neckline.apply(skinBin, width, height, f.box, spec.neckline, faceMap?.data, known)) f.cleavageFrames++
                 }
             }
-            Neckline.removeSpecks(skinBin, width, height, people.visible().map { it.box }, spec.neckline.speckPersonFrac, spec.neckline.speckFrameFrac)
-            people.markFrame(frame, idx)
+            timed("specks") { Neckline.removeSpecks(skinBin, width, height, people.visible().map { it.box }, spec.neckline.speckPersonFrac, spec.neckline.speckFrameFrac) }
+            timed("track") { people.markFrame(frame, idx) }
 
             val vis = people.visible()
-            val owners = ownership(frame, cut, nude.containsKey(k), vis, skinBin)
+            val owners = timed("outlines") { ownership(frame, cut, nude.containsKey(k), vis, skinBin) }
             val p = FloatArray(vis.size * 5)
             for ((i, t) in vis.withIndex()) {
                 p[i * 5] = t.id.toFloat()
@@ -357,7 +369,7 @@ class Analyzer(
                 r[i * 6 + 5] = if (rt.misses == 0) 1f else max(0.6f, 1f - 0.1f * rt.misses)
             }
             records += FrameRecord(p, r)
-            store.append(ByteMask(width, height, owners).resizeNearest(store.width, store.height))
+            timed("store") { store.append(ByteMask(width, height, owners).resizeNearest(store.width, store.height)) }
             lastSkinBinary = skinBin
             processed = idx + 1
             onFrame(idx)

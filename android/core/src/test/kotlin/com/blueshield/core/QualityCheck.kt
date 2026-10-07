@@ -70,6 +70,7 @@ class QualityCheck {
         }
         val secs = (System.nanoTime() - t0) / 1e9
         val a = analyzer.finish()
+        println("TIMINGS " + analyzer.timings.entries.sortedByDescending { it.value }.joinToString { "${it.key}=${"%.1f".format(it.value / 1e9)}s" })
         val d = a.decisions(settings, emptyMap())
         var hit = 0L; var miss = 0L; var leak = 0L; var on = 0L; var flick = 0L; var union = 0L
         var prev: ByteMask? = null
@@ -77,8 +78,12 @@ class QualityCheck {
         val p = ProcessBuilder("ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "${aw * 3}x$ah", "-r", "$fps", "-i", "pipe:0",
             "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", "$prefix.mp4").redirectErrorStream(true).start()
         val out = p.outputStream.buffered(1 shl 20)
+        var featherNs = 0L
+        var composeNs = 0L
         for (i in 0 until a.frameCount) {
+            val tc = System.nanoTime()
             val raw = a.maskFor(i, d, settings, a.lookahead())
+            composeNs += System.nanoTime() - tc
             val f = frames[i]
             val o = oracle[i]
             val near = MaskOps.dilate(o, 4)
@@ -101,7 +106,9 @@ class QualityCheck {
                 }
                 prev = raw
             }
+            val tf = System.nanoTime()
             val feathered = Composer.feather(raw, vw, vh, settings.softness, settings.aggressive).resize(aw, ah)
+            featherNs += System.nanoTime() - tf
             val text = com.blueshield.core.image.TextGuard.mask(f) // what the GPU shader keeps visible
             val row = ByteArray(aw * 3 * ah * 3)
             for (y in 0 until ah) for (x in 0 until aw) {
@@ -137,6 +144,7 @@ class QualityCheck {
         }
         out.close()
         p.waitFor()
+        println("RENDER compose=${"%.1f".format(composeNs / 1e9)}s feather=${"%.1f".format(featherNs / 1e9)}s")
         println("QUALITY ${inFile.name} frames $from..$to: recall ${"%.1f".format(100.0 * hit / max(1, hit + miss))} %, " +
             "leak ${"%.1f".format(100.0 * leak / max(1, on))} %, flicker ${"%.1f".format(100.0 * flick / max(1, union))} %, " +
             "analysis ${"%.1f".format(frames.size / secs)} fps; people " + a.summaries(settings, emptyMap()).joinToString {

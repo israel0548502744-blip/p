@@ -377,6 +377,19 @@ class CoreTest {
         }
     }
 
+    @Test fun fastDilationMatchesTheNaiveOne() {
+        val rnd = java.util.Random(7)
+        for ((w, h, r) in listOf(Triple(37, 23, 1), Triple(64, 48, 5), Triple(50, 90, 16), Triple(9, 7, 20))) {
+            val m = ByteMask(w, h, ByteArray(w * h) { if (rnd.nextInt(10) == 0) rnd.nextInt(256).toByte() else 0 })
+            val fast = MaskOps.dilate(m, r)
+            for (y in 0 until h) for (x in 0 until w) {
+                var v = 0
+                for (yy in maxOf(0, y - r)..minOf(h - 1, y + r)) for (xx in maxOf(0, x - r)..minOf(w - 1, x + r)) v = maxOf(v, m.data[yy * w + xx].toInt() and 0xFF)
+                assertEquals(v, fast.data[y * w + x].toInt() and 0xFF, "w=$w h=$h r=$r at $x,$y")
+            }
+        }
+    }
+
     @Test fun personGridMatchesModelOutputs() {
         // YOLOX-tiny at 416: 52² + 26² + 13² output rows
         assertEquals(3549 * 3, PersonDetector.buildGrid().size)

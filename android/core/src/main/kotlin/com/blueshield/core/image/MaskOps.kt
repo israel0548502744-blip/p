@@ -24,23 +24,34 @@ object MaskOps {
         return out
     }
 
-    /** Morphological dilation with a square of the given radius (separable running max). */
+    /**
+     * Morphological dilation with a square of the given radius: separable running max, van Herk / Gil-Werman
+     * (three comparisons per pixel whatever the radius — the colour step and the feathering dilate by 10-20 px).
+     */
     fun dilate(m: ByteMask, radius: Int): ByteMask {
         if (radius <= 0) return m.copy()
         val w = m.width
         val h = m.height
-        val tmp = ByteArray(w * h)
-        val out = ByteArray(w * h)
-        for (y in 0 until h) for (x in 0 until w) {
-            var v = 0
-            for (k in max(0, x - radius)..min(w - 1, x + radius)) v = max(v, m.data[y * w + k].toInt() and 0xFF)
-            tmp[y * w + x] = v.toByte()
+        val src = IntArray(w * h) { m.data[it].toInt() and 0xFF }
+        val tmp = IntArray(w * h)
+        val k = 2 * radius + 1
+        val n = max(w, h) + 2 * radius
+        val pad = IntArray(n)
+        val g = IntArray(n)
+        val hh = IntArray(n)
+        // one line of `len` values read from `a` at offset + i * stride, max-filtered into `b` (same layout)
+        fun line(a: IntArray, b: IntArray, offset: Int, stride: Int, len: Int) {
+            val total = len + 2 * radius
+            java.util.Arrays.fill(pad, 0, total, 0)
+            for (i in 0 until len) pad[i + radius] = a[offset + i * stride]
+            for (i in 0 until total) g[i] = if (i % k == 0) pad[i] else max(g[i - 1], pad[i])
+            for (i in total - 1 downTo 0) hh[i] = if (i == total - 1 || (i + 1) % k == 0) pad[i] else max(hh[i + 1], pad[i])
+            for (x in 0 until len) b[offset + x * stride] = max(hh[x], g[x + 2 * radius])
         }
-        for (x in 0 until w) for (y in 0 until h) {
-            var v = 0
-            for (k in max(0, y - radius)..min(h - 1, y + radius)) v = max(v, tmp[k * w + x].toInt() and 0xFF)
-            out[y * w + x] = v.toByte()
-        }
+        for (y in 0 until h) line(src, tmp, y * w, 1, w)
+        val res = IntArray(w * h)
+        for (x in 0 until w) line(tmp, res, x, w, h)
+        val out = ByteArray(w * h) { res[it].toByte() }
         return ByteMask(w, h, out)
     }
 
