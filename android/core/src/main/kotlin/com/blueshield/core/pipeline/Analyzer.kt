@@ -21,6 +21,7 @@ import com.blueshield.core.ml.NudeNet
 import com.blueshield.core.ml.PersonDetector
 import com.blueshield.core.ml.PersonMasks
 import com.blueshield.core.ml.SkinSegmenter
+import com.blueshield.core.track.Detection
 import com.blueshield.core.track.OpticalFlow
 import com.blueshield.core.track.PersonTrack
 import com.blueshield.core.track.PersonTracker
@@ -266,7 +267,16 @@ class Analyzer(
             nude[k]?.let { dets ->
                 people.update(frame, timed("persons") { personDetector.detect(frame, personMin) }, idx, dets.filter { it.label in FACE_LABELS }.map { it.box })
                 regions.update(dets.filter { it.label in labels })
-                faces.update(dets.filter { it.label in FACE_LABELS })
+                // faces to keep uncovered: the sensitive-region detector's, plus each person's own face found by the
+                // face detector in their head area (it finds the small, turned and dim faces the other one misses)
+                val nudeFaces = dets.filter { it.label in FACE_LABELS }
+                val seen = people.visible().filter { it.misses == 0 }
+                val own = if (settings.includeFace) emptyList() else timed("faces") {
+                    seen.mapNotNull { t -> classifier.face(frame, t.box, faceMap, seen.filter { it !== t }.map { it.box }) }
+                        .filter { b -> nudeFaces.none { it.box.iou(b) > 0.3f } }
+                        .map { Detection("FACE", 0.5f, it) }
+                }
+                faces.update(nudeFaces + own)
             }
 
             // skin: whole frame on detection keyframes, per-person crops on every analysed frame

@@ -32,6 +32,27 @@ class GenderClassifier(
      * FaceRes alone often calls male), so the ensemble is much steadier than either.
      */
     fun classify(frame: RgbImage, box: Box, faceMap: FloatMask?, others: List<Box> = emptyList()): Observation? {
+        val (crop, face) = locate(frame, box, faceMap, others) ?: return null
+        val facePx = face.box.w * crop.scale
+        val weight = face.score * min(1f, facePx / 48f)
+        val inFrame = Box(crop.x + face.box.x1 * crop.scale, crop.y + face.box.y1 * crop.scale, crop.x + face.box.x2 * crop.scale, crop.y + face.box.y2 * crop.scale)
+        val aligned = model.align(crop.image, face)
+        val p1 = model.pMale(aligned)
+        val second = ageGender?.predict(aligned) ?: return Observation(p1, weight, Float.NaN, inFrame)
+        return Observation(ensemble(p1, second.pMale), weight, second.age, inFrame)
+    }
+
+    /**
+     * This person's face (frame pixels) without classifying it: faces the sensitive-region detector misses (small,
+     * turned, in the dark, in a crowd) must still stay uncovered, and need not be big enough to classify.
+     */
+    fun face(frame: RgbImage, box: Box, faceMap: FloatMask?, others: List<Box> = emptyList(), minPx: Float = 6f): Box? {
+        val (crop, face) = locate(frame, box, faceMap, others, minPx) ?: return null
+        return Box(crop.x + face.box.x1 * crop.scale, crop.y + face.box.y1 * crop.scale, crop.x + face.box.x2 * crop.scale, crop.y + face.box.y2 * crop.scale)
+    }
+
+    /** The crop and the face in it (crop pixels) for the person in [box], or null. */
+    private fun locate(frame: RgbImage, box: Box, faceMap: FloatMask?, others: List<Box>, minPx: Float = minFacePx): Pair<Crop, FaceDetector.Face>? {
         val crops = ArrayList<Crop>()
         val head = if (faceMap != null) headCrop(frame, box, faceMap, others) else null
         head?.let { crops += it }
@@ -45,14 +66,8 @@ class GenderClassifier(
             val found = faces.detect(crop, minFaceScore)
                 .filter { it.box.cy < 0.75f * crop.height && ownsFace(inFrame(it.box), box, others) }
             val face = pickFace(found, crop.width.toFloat(), centred = n == 0 && head != null) ?: continue
-            val facePx = face.box.w * scale
-            if (facePx < minFacePx) continue
-            val weight = face.score * min(1f, facePx / 48f)
-            val inFrame = inFrame(face.box)
-            val aligned = model.align(crop, face)
-            val p1 = model.pMale(aligned)
-            val second = ageGender?.predict(aligned) ?: return Observation(p1, weight, Float.NaN, inFrame)
-            return Observation(ensemble(p1, second.pMale), weight, second.age, inFrame)
+            if (face.box.w * scale < minPx) continue
+            return pair to face
         }
         return null
     }
