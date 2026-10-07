@@ -59,6 +59,7 @@ fun SettingsScreen(settings: CensorSettings, enabled: Boolean, onChange: (Censor
         Text("ההגדרות נשמרות אוטומטית וחלות על כל סרטון ותמונה.", color = Palette.Ink300, fontSize = 13.sp)
         if (!enabled) Text("עיבוד פועל כרגע — השינויים יחולו בעיבוד הבא.", color = Palette.Amber, fontSize = 12.5.sp)
         SettingsSection(settings, hasAudio = true, enabled = true, onChange = onChange)
+        EngineSection()
     }
 }
 

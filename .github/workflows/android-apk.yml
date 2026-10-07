@@ -45,14 +45,14 @@ jobs:
         run: chmod +x gradlew && ./gradlew :core:test --no-daemon --stacktrace
       - name: Build debug APK
         working-directory: android
-        run: ./gradlew :app:assembleDebug -PbuildNumber=${{ github.run_number }} -PsigningStore=$HOME/blueshield-signing/debug.keystore --no-daemon --stacktrace
+        run: ./gradlew :app:assemblePhoneDebug -PbuildNumber=${{ github.run_number }} -PsigningStore=$HOME/blueshield-signing/debug.keystore --no-daemon --stacktrace
       - name: Show what is inside the APK
         run: |
-          unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -E "pipeline.json|\.onnx|\.so$|classes[0-9]*\.dex" || true
+          unzip -l android/app/build/outputs/apk/phone/debug/app-phone-debug.apk | grep -E "pipeline.json|\.onnx|\.so$|classes[0-9]*\.dex" || true
       - uses: actions/upload-artifact@v4
         with:
           name: BlueShield-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: android/app/build/outputs/apk/phone/debug/app-phone-debug.apk
           if-no-files-found: error
 
   # End-to-end test on an Android emulator: decode → analyse → render → encode on a real Android runtime.
@@ -106,7 +106,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          mv app-debug.apk BlueShield.apk
+          mv app-phone-debug.apk BlueShield.apk
           n=${{ github.run_number }}
           gh release create "build-$n" BlueShield.apk --target "$GITHUB_SHA" --latest \
             --title "BlueShield 1.5.$n" --notes "Build $n (${GITHUB_SHA::7}). Unit tests and emulator tests (Android 14, 16) passed."

@@ -55,15 +55,15 @@ cd backend && python run.py --open          # --port 9000
 ```bash
 cd android
 echo "sdk.dir=$HOME/Android/Sdk" > local.properties   # או export ANDROID_HOME=...
-./gradlew assembleDebug
+./gradlew assemblePhoneDebug
 ```
 
 ### 3. מיקום ה-APK
 ```
-android/app/build/outputs/apk/debug/app-debug.apk
+android/app/build/outputs/apk/phone/debug/app-phone-debug.apk
 ```
-התקנה: `adb install -r android/app/build/outputs/apk/debug/app-debug.apk`, או העתקה לטלפון ופתיחה.
-גרסת release: ‏`./gradlew assembleRelease` (כרגע חתומה במפתח debug. לפני הפצה חותמים במפתח משלכם).
+התקנה: `adb install -r android/app/build/outputs/apk/phone/debug/app-phone-debug.apk`, או העתקה לטלפון ופתיחה.
+גרסת release: ‏`./gradlew assemblePhoneRelease` (כרגע חתומה במפתח debug. לפני הפצה חותמים במפתח משלכם).
 
 אפשר גם לפתוח את התיקייה `android/` ב-Android Studio וללחוץ Run.
 

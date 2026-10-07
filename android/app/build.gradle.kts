@@ -17,8 +17,22 @@ android {
         versionCode = if (build != null) 100 + build else 6
         versionName = "1.5" + if (build != null) ".$build" else ".0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        // 64-bit phones + x86_64 emulators; keeps the APK small (ONNX Runtime native libs are per-ABI).
-        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+    }
+
+    // "phone": the APK people install — 64-bit ARM, ONNX Runtime built with every accelerator (Qualcomm QNN for
+    // Snapdragon NPUs/GPUs, WebGPU for any Vulkan GPU, NNAPI, XNNPACK). "emulator": x86_64 for the emulator
+    // tests, plain ONNX Runtime (accelerators are absent there, so the fallback to the CPU is what gets tested).
+    // Same code in both; only the native runtime differs.
+    flavorDimensions += "runtime"
+    productFlavors {
+        create("phone") {
+            dimension = "runtime"
+            ndk { abiFilters += "arm64-v8a" }
+        }
+        create("emulator") {
+            dimension = "runtime"
+            ndk { abiFilters += "x86_64" }
+        }
     }
 
     // CI passes -PsigningStore=<keystore> (kept in the repository's private Actions cache, never in the code):
@@ -46,7 +60,15 @@ android {
     }
     buildFeatures { compose = true }
     androidResources { noCompress += listOf("onnx") }
-    packaging { resources { excludes += listOf("META-INF/{AL2.0,LGPL2.1}", "META-INF/versions/9/OSGI-INF/MANIFEST.MF") } }
+    packaging {
+        resources { excludes += listOf("META-INF/{AL2.0,LGPL2.1}", "META-INF/versions/9/OSGI-INF/MANIFEST.MF") }
+        jniLibs {
+            // the Qualcomm libraries must be extracted to disk for the AI chip to load them (and compress well)
+            useLegacyPackaging = true
+            // DSP libraries for chips older than any phone that runs this app's models in reasonable time
+            excludes += listOf("**/libQnnDsp*.so")
+        }
+    }
 
     sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/modelAssets"))
     // short fixture clips (woman + man, four men) used by the emulator end-to-end test
@@ -66,7 +88,8 @@ tasks.named("preBuild") { dependsOn(copyModels) }
 
 dependencies {
     implementation(project(":core"))
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
+    "phoneImplementation"("com.microsoft.onnxruntime:onnxruntime-android-qnn:1.29.0")
+    "emulatorImplementation"("com.microsoft.onnxruntime:onnxruntime-android:1.29.0")
 
     implementation(platform("androidx.compose:compose-bom:2025.09.00"))
     implementation("androidx.compose.ui:ui")

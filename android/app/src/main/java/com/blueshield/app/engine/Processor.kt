@@ -5,7 +5,6 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import ai.onnxruntime.OrtSession
 import com.blueshield.core.CensorSettings
 import com.blueshield.core.PipelineSpec
 import com.blueshield.core.gender.Override
@@ -76,34 +75,21 @@ class Processor(private val context: Context) {
         return !cancelFlag.get()
     }
 
-    private fun models(): ModelStore = models ?: ModelStore(
-        load = { name -> context.assets.open("models/$name").use { it.readBytes() } },
-        options = { sessionOptions() },
-        onEvent = Breadcrumbs::mark,
-        alternative = { xnnpackOptions() },
-        memory = EngineChoices(context),
-    ).also { models = it }
+    private var modelsMode: String? = null
 
-    private val threads get() = Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
-
-    /** The plain CPU execution provider: always works, and the fallback for every model. */
-    private fun sessionOptions(): OrtSession.SessionOptions = OrtSession.SessionOptions().apply {
-        setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
-        setIntraOpNumThreads(threads)
-        setInterOpNumThreads(1)
-    }
-
-    /**
-     * XNNPACK (ONNX Runtime's mobile CPU kernels; NNAPI stays off — deprecated, and it crashed natively on some
-     * drivers). XNNPACK brings its own thread pool, so ONNX Runtime's is kept to one thread and doesn't spin.
-     * Used per model only where it measured faster on this phone with the same outputs ([ModelStore]).
-     */
-    private fun xnnpackOptions(): OrtSession.SessionOptions = OrtSession.SessionOptions().apply {
-        setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
-        addConfigEntry("session.intra_op.allow_spinning", "0")
-        addXnnpack(mapOf("intra_op_num_threads" to threads.toString()))
-        setIntraOpNumThreads(1)
-        setInterOpNumThreads(1)
+    /** The models, on the processor chosen in the settings ([Accelerators]); rebuilt when that setting changes. */
+    private fun models(): ModelStore {
+        val mode = Accelerators.mode(context)
+        models?.let { if (modelsMode == mode) return it; it.close(); models = null }
+        val (engines, fastest) = Accelerators.engines(mode)
+        return ModelStore(
+            load = { name -> context.assets.open("models/$name").use { it.readBytes() } },
+            options = { Accelerators.base() },
+            onEvent = Breadcrumbs::mark,
+            engines = engines,
+            pickFastest = fastest,
+            memory = EngineChoices(context, mode, Accelerators.signature(context)),
+        ).also { models = it; modelsMode = mode }
     }
 
     fun releaseAnalysis() {
@@ -126,7 +112,8 @@ class Processor(private val context: Context) {
             val (mw, mh) = Analyzer.scaledSize(meta.width, meta.height, spec.maskMaxSide)
             val store = File(context.cacheDir, "masks_${System.currentTimeMillis()}.bin")
             Breadcrumbs.mark("analysis: creating analyzer (${aw}x$ah, masks ${mw}x$mh)")
-            val analyzer = Analyzer(models(), this.settings, spec, aw, ah, meta.fps, mw, mh, store)
+            val store0 = models()
+            val analyzer = Analyzer(store0, this.settings, spec, aw, ah, meta.fps, mw, mh, store)
             Breadcrumbs.mark("analysis: analyzer ready, decoding frames")
             val meter = ProgressMeter(meta.frameCount, 0f, ANALYSIS_SHARE)
             state = state.copy(stage = JobState.Stage.DETECTING, passIndex = 1)
@@ -199,7 +186,8 @@ class Processor(private val context: Context) {
             analysedPts = pts.toLongArray().takeIf { arr -> (1 until arr.size).all { arr[it] > arr[it - 1] } } ?: LongArray(0)
             Breadcrumbs.mark("analysis: done, ${analysis?.people?.size ?: 0} people")
             Breadcrumbs.mark("timings: " + analyzer.timings.entries.sortedByDescending { it.value }.joinToString { "${it.key}=${"%.1f".format(it.value / 1e9)}s" } +
-                "; engines: " + models().engines.entries.joinToString { "${it.key.substringBefore('.')}=${it.value}" })
+                "; engines: " + store0.used.entries.joinToString { "${it.key.substringBefore('.')}=${it.value}" })
+            Accelerators.saveReport(context, store0)
             return renderInternal(emptyMap(), state, ANALYSIS_SHARE, update)
         } catch (e: Renderer.CancelledException) {
             return JobState(stage = JobState.Stage.CANCELLED).also(update)
@@ -303,9 +291,11 @@ class Processor(private val context: Context) {
         val (mw, mh) = Analyzer.scaledSize(bmp.width, bmp.height, spec.maskMaxSide)
         photo?.close()
         val store = File(context.cacheDir, "photo_masks_${System.currentTimeMillis()}.bin")
-        photo = com.blueshield.core.pipeline.StillImage.analyze(models(), s, spec, PhotoLoader.toRgb(bmp, aw, ah), mw, mh, store)
+        val m = models()
+        photo = com.blueshield.core.pipeline.StillImage.analyze(m, s, spec, PhotoLoader.toRgb(bmp, aw, ah), mw, mh, store)
+        Accelerators.saveReport(context, m)
         // the 1024 px outline encoder holds a few hundred MB while loaded; the photo still has to be painted
-        models().release(ModelStore.SAM_ENCODER_1024)
+        m.release(ModelStore.SAM_ENCODER_1024)
         photoOriginal = bmp
         photoSettings = s
         Breadcrumbs.mark("photo: analysed, ${photo?.people?.size ?: 0} people")

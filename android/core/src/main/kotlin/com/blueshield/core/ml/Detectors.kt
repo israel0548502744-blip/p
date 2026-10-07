@@ -86,7 +86,8 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
                 crops += Crop(a, b, side, rx1, ry1, rx2, ry2)
             }
         }
-        val raws = if (crops.size < 2) crops.map { run(img.crop(it.a, it.b, it.side, it.side), includeFace) }
+        // (side by side only on the plain CPU engine: an accelerator runs one input at a time anyway)
+        val raws = if (crops.size < 2 || models.engineOf(ModelStore.SEGMENTER) != ModelStore.CPU) crops.map { run(img.crop(it.a, it.b, it.side, it.side), includeFace) }
         else {
             val single = models.singleThreaded(ModelStore.SEGMENTER)
             crops.map { c -> pool.submit<Raw> { run(img.crop(c.a, c.b, c.side, c.side), includeFace, single) } }.map { it.get() }

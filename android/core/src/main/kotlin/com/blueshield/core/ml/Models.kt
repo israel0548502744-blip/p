@@ -9,36 +9,52 @@ import java.nio.FloatBuffer
  * Loads the ONNX models. All inference goes through ONNX Runtime so the exact same
  * code runs on Android (onnxruntime-android) and on the JVM (tests).
  *
- * With an [alternative] engine (the app passes XNNPACK), every single-input model is timed once with both
- * engines on this device and the faster one is kept — the alternative only when it is clearly faster and gives
- * the same outputs; [memory] remembers the choice so the timing happens once per install.
+ * [engines] are the other processors this device may run a model on (fast CPU kernels, the GPU, an AI chip),
+ * besides the plain CPU engine ([options]). Per single-input model they are tried once on this device: an
+ * engine counts only when its session can be created and its outputs match the plain engine's; then either
+ * the fastest one is kept ([pickFastest], the "automatic" setting) or the first one that works (the user chose
+ * a kind of processor). Anything else stays on the plain engine. [memory] remembers the choice, and an engine
+ * that crashed the app while being tried is never tried again for that model.
  */
 class ModelStore(
     private val load: (String) -> ByteArray,
     private val options: () -> OrtSession.SessionOptions = { OrtSession.SessionOptions() },
     /** Progress breadcrumbs ("loading x", "loaded x"): lets the app tell where a native crash happened. */
     private val onEvent: (String) -> Unit = {},
-    private val alternative: (() -> OrtSession.SessionOptions)? = null,
+    private val engines: List<Engine> = emptyList(),
+    private val pickFastest: Boolean = true,
     private val memory: EngineMemory? = null,
 ) : AutoCloseable {
-    /** Remembered engine choice per model file: true = the alternative engine, null = not measured yet. */
+    /** An execution engine: [id] for memory and display, [options] builds its session options (may throw). */
+    class Engine(val id: String, val options: () -> OrtSession.SessionOptions)
+
+    /** Remembered engine per model file ("cpu" = the plain engine), and the crash guard for trying engines. */
     interface EngineMemory {
-        fun get(file: String): Boolean?
-        fun put(file: String, alternative: Boolean)
+        fun get(file: String): String?
+        fun put(file: String, engine: String)
+        /** Called before trying [engine] on [file], and with null once the try is over (crashed if never cleared). */
+        fun trying(file: String, engine: String?)
+        fun broken(file: String, engine: String): Boolean
     }
 
     val env: OrtEnvironment = OrtEnvironment.getEnvironment()
     private val sessions = HashMap<String, OrtSession>()
-    /** Engine in use per model (for the diagnostics trail). */
-    val engines = LinkedHashMap<String, String>()
+    /** Engine in use per model, and the measured milliseconds per engine (for the settings screen). */
+    val used = LinkedHashMap<String, String>()
+    val measured = LinkedHashMap<String, Map<String, Double>>()
 
     @Synchronized
     fun session(file: String): OrtSession = sessions.getOrPut(file) {
         onEvent("model: loading $file")
         val bytes = load(file)
-        val alt = alternative
-        val s = if (alt == null) env.createSession(bytes, options()).also { engines[file] = "cpu" } else pick(file, bytes, alt)
-        s.also { onEvent("model: loaded $file (${engines[file]})") }
+        val s = if (engines.isEmpty()) env.createSession(bytes, options()).also { used[file] = CPU } else pick(file, bytes)
+        s.also { onEvent("model: loaded $file (${used[file]})") }
+    }
+
+    /** The engine [file] runs on (loads it if needed). */
+    fun engineOf(file: String): String {
+        session(file)
+        return used[file] ?: CPU
     }
 
     /**
@@ -51,51 +67,93 @@ class ModelStore(
         env.createSession(load(file), options().apply { setIntraOpNumThreads(1) }).also { onEvent("model: loaded $file (1 thread)") }
     }
 
-    private fun pick(file: String, bytes: ByteArray, alt: () -> OrtSession.SessionOptions): OrtSession {
-        val remembered = memory?.get(file)
-        if (remembered == false) return env.createSession(bytes, options()).also { engines[file] = "cpu" }
-        val other = runCatching { env.createSession(bytes, alt()) }.getOrNull()
-        if (other == null) {
-            memory?.put(file, false)
-            return env.createSession(bytes, options()).also { engines[file] = "cpu" }
-        }
-        if (remembered == true) return other.also { engines[file] = "alt" }
-        val base = env.createSession(bytes, options())
-        val altWins = runCatching { faster(base, other) }.getOrDefault(false)
-        memory?.put(file, altWins)
-        return if (altWins) {
-            base.close(); engines[file] = "alt"; other
-        } else {
-            other.close(); engines[file] = "cpu"; base
-        }
+    private fun plain(file: String, bytes: ByteArray) = env.createSession(bytes, options()).also { used[file] = CPU }
+
+    private fun create(file: String, bytes: ByteArray, e: Engine): OrtSession? {
+        memory?.trying(file, e.id)
+        val s = runCatching { env.createSession(bytes, e.options()) }
+            .onFailure { onEvent("model: ${e.id} unavailable for $file: ${it.message?.take(120)}") }.getOrNull()
+        memory?.trying(file, null)
+        return s
     }
 
-    /** True when [b] runs the model clearly faster than [a] with (nearly) the same outputs. */
-    private fun faster(a: OrtSession, b: OrtSession): Boolean {
-        if (a.inputInfo.size != 1) return false
-        val info = a.inputInfo.values.first().info as? ai.onnxruntime.TensorInfo ?: return false
-        if (info.type != ai.onnxruntime.OnnxJavaType.FLOAT) return false
+    private fun pick(file: String, bytes: ByteArray): OrtSession {
+        val remembered = memory?.get(file)
+        if (remembered != null) {
+            val e = engines.find { it.id == remembered }
+            if (e == null || memory?.broken(file, e.id) == true) return plain(file, bytes)
+            return create(file, bytes, e)?.also { used[file] = e.id } ?: plain(file, bytes)
+        }
+        val base = plain(file, bytes)
+        val probe = probe(base)
+        if (probe == null) { // several inputs (the outline decoder): not verifiable this way, and cheap anyway
+            memory?.put(file, CPU)
+            return base
+        }
+        val times = LinkedHashMap<String, Double>()
+        val baseOut = base.runFloat(env, probe.first, probe.second)
+        var bestTime = time(base, probe).also { times[CPU] = it }
+        var best: Pair<String, OrtSession>? = null
+        for (e in engines) {
+            if (memory?.broken(file, e.id) == true) continue
+            val s = create(file, bytes, e)
+            memory?.trying(file, e.id) // still trying: its first runs
+            val t = s?.let { runCatching { if (same(baseOut, it.runFloat(env, probe.first, probe.second))) time(it, probe) else null }.getOrNull() }
+            memory?.trying(file, null)
+            if (s == null || t == null) {
+                s?.close()
+                if (s != null) onEvent("model: ${e.id} gives different results for $file")
+                continue
+            }
+            times[e.id] = t
+            if (!pickFastest || t < bestTime * 0.85) {
+                best?.second?.close()
+                best = e.id to s
+                bestTime = t
+                if (!pickFastest) break
+            } else s.close()
+        }
+        measured[file] = times
+        val (id, s) = best ?: (CPU to base)
+        if (s !== base) base.close()
+        used[file] = id
+        memory?.put(file, id)
+        return s
+    }
+
+    /** A test input for a single-float-input model: pixel-like values in 0..1 (in range for every model here). */
+    private fun probe(s: OrtSession): Pair<FloatArray, LongArray>? {
+        if (s.inputInfo.size != 1) return null
+        val info = s.inputInfo.values.first().info as? ai.onnxruntime.TensorInfo ?: return null
+        if (info.type != ai.onnxruntime.OnnxJavaType.FLOAT) return null
         val shape = LongArray(info.shape.size) { k -> info.shape[k].takeIf { it > 0 } ?: if (k == 0) 1L else 320L }
         val rnd = java.util.Random(1)
-        val input = FloatArray(shape.fold(1L) { x, y -> x * y }.toInt()) { rnd.nextFloat() * 255f }
-        val outA = a.runFloat(env, input, shape)
-        val outB = b.runFloat(env, input, shape)
-        for ((x, y) in outA.zip(outB)) {
+        return FloatArray(shape.fold(1L) { x, y -> x * y }.toInt()) { rnd.nextFloat() } to shape
+    }
+
+    /** Same outputs within 3 % of each output's range (an AI chip or a GPU computes in 16-bit floats). */
+    private fun same(a: List<Pair<LongArray, FloatArray>>, b: List<Pair<LongArray, FloatArray>>): Boolean {
+        if (a.size != b.size) return false
+        for ((x, y) in a.zip(b)) {
+            if (x.second.size != y.second.size) return false
             var scale = 1e-6f
             var diff = 0f
             for (i in x.second.indices) {
                 scale = maxOf(scale, kotlin.math.abs(x.second[i]))
-                diff = maxOf(diff, kotlin.math.abs(x.second[i] - y.second[i]))
+                val d = kotlin.math.abs(x.second[i] - y.second[i])
+                if (d.isNaN()) return false
+                diff = maxOf(diff, d)
             }
-            if (diff > 0.02f * scale) return false
+            if (diff > 0.03f * scale) return false
         }
-        fun time(s: OrtSession): Long {
-            val t = LongArray(3) { val t0 = System.nanoTime(); s.runFloat(env, input, shape); System.nanoTime() - t0 }
-            return t.sorted()[1]
-        }
-        val ta = time(a)
-        val tb = time(b)
-        return tb < ta * 0.85
+        return true
+    }
+
+    /** Median of three runs, milliseconds (after one warm-up run). */
+    private fun time(s: OrtSession, probe: Pair<FloatArray, LongArray>): Double {
+        s.runFloat(env, probe.first, probe.second)
+        val t = DoubleArray(3) { val t0 = System.nanoTime(); s.runFloat(env, probe.first, probe.second); (System.nanoTime() - t0) / 1e6 }
+        return t.sorted()[1]
     }
 
     /** Frees one model's sessions (memory); it is loaded again on next use. */
@@ -111,6 +169,7 @@ class ModelStore(
     }
 
     companion object {
+        const val CPU = "cpu"
         const val SEGMENTER = "selfie_multiclass_256x256.onnx"
         const val PERSONS = "yolox_tiny.onnx"
         const val FACES = "blaze_face_short_range.onnx"

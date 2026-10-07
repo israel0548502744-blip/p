@@ -24,8 +24,9 @@ val fetchFrameworkJars by tasks.registering {
         fun get(url: String, dest: File) { if (!dest.exists()) URI(url).toURL().openStream().use { i -> dest.outputStream().use { o -> i.copyTo(o) } } }
         val v = "15-robolectric-13954326"
         get("https://repo.maven.apache.org/maven2/org/robolectric/android-all/$v/android-all-$v.jar", dir.resolve("android-all.jar"))
-        val aar = dir.resolve("ort.aar")
-        get("https://repo.maven.apache.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/1.20.0/onnxruntime-android-1.20.0.aar", aar)
+        val ort = "1.29.0"
+        val aar = dir.resolve("ort-$ort.aar")
+        get("https://repo.maven.apache.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/$ort/onnxruntime-android-$ort.aar", aar)
         ZipFile(aar).use { z -> z.getInputStream(z.getEntry("classes.jar")).use { i -> dir.resolve("ort-classes.jar").outputStream().use { o -> i.copyTo(o) } } }
     }
 }

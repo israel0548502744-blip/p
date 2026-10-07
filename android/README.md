@@ -4,7 +4,7 @@ Standalone, on-device version of BlueShield (Kotlin · Jetpack Compose · MediaC
 See the top-level README (sections 2–6) for build instructions, architecture and limitations.
 
 ```bash
-./gradlew assembleDebug            # → app/build/outputs/apk/debug/app-debug.apk  (needs the Android SDK)
+./gradlew assemblePhoneDebug       # → app/build/outputs/apk/phone/debug/app-phone-debug.apk  (needs the Android SDK)
 gradle -p core test                # pipeline unit + integration tests on the JVM (no SDK needed; uses ffmpeg for test frames)
 gradle -p tools/sdkless-check compileKotlin   # type-check the whole app without the SDK
 ```

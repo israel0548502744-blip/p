@@ -92,6 +92,8 @@ class BlueShieldApp : android.app.Application() {
     override fun onCreate() {
         super.onCreate()
         BuildInfo.version = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() ?: "?"
+        // Qualcomm's AI-chip runtime looks for its libraries here (they are extracted with the app's native libs)
+        runCatching { android.system.Os.setenv("ADSP_LIBRARY_PATH", applicationInfo.nativeLibraryDir, true) }
         CrashReporter.install(this)
     }
 }

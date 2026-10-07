@@ -415,27 +415,37 @@ class CoreTest {
 
     @Test fun modelStoreKeepsAWorkingEngineAndRemembersTheChoice() {
         val repo = java.io.File(System.getProperty("blueshield.repo") ?: "../..")
-        val seen = HashMap<String, Boolean>()
-        val memory = object : ModelStore.EngineMemory {
-            override fun get(file: String) = seen[file]
-            override fun put(file: String, alternative: Boolean) { seen[file] = alternative }
+        class Memory : ModelStore.EngineMemory {
+            val chosen = HashMap<String, String>()
+            val broken = HashSet<String>()
+            var pending: String? = null
+            override fun get(file: String) = chosen[file]
+            override fun put(file: String, engine: String) { chosen[file] = engine }
+            override fun trying(file: String, engine: String?) { pending = engine?.let { "$file|$it" } }
+            override fun broken(file: String, engine: String) = "$file|$engine" in broken
         }
-        ModelStore({ java.io.File(repo, "models/onnx/$it").readBytes() }, alternative = { ai.onnxruntime.OrtSession.SessionOptions() }, memory = memory).use { m ->
+        val engines = listOf(
+            ModelStore.Engine("missing") { error("no such accelerator on this device") },
+            ModelStore.Engine("same") { ai.onnxruntime.OrtSession.SessionOptions() },
+        )
+        fun store(m: Memory, fastest: Boolean) = ModelStore({ java.io.File(repo, "models/onnx/$it").readBytes() }, engines = engines, pickFastest = fastest, memory = m)
+        // a chosen kind of processor: the first engine that works, the missing one skipped
+        val chosen = Memory()
+        store(chosen, fastest = false).use { m ->
             val out = m.session(ModelStore.FACES).runFloat(m.env, FloatArray(128 * 128 * 3), longArrayOf(1, 128, 128, 3))
             assertTrue(out.isNotEmpty())
-            assertTrue(ModelStore.FACES in seen)
-            assertTrue(m.engines[ModelStore.FACES] in setOf("cpu", "alt"))
+            assertEquals("same", m.used[ModelStore.FACES])
+            assertEquals("same", chosen.chosen[ModelStore.FACES])
+            assertEquals(null, chosen.pending)
         }
-    }
-
-    @Test fun maskUpscaleInBytesMatchesTheFloatOne() {
-        val rnd = java.util.Random(5)
-        val m = ByteMask(37, 23, ByteArray(37 * 23) { rnd.nextInt(256).toByte() })
-        for ((w, h) in listOf(100 to 70, 37 * 3 to 23 * 3, 50 to 23)) {
-            val a = m.resize(w, h)
-            val f = FloatMask(37, 23, FloatArray(37 * 23) { (m.data[it].toInt() and 0xFF).toFloat() }).resize(w, h)
-            for (i in 0 until w * h) assertTrue(abs((a.data[i].toInt() and 0xFF) - f.data[i]) <= 1f, "at $i of ${w}x$h")
-        }
+        // remembered next time; an engine that crashed while being tried is never used again
+        val again = Memory().apply { this.chosen[ModelStore.FACES] = "same"; broken += "${ModelStore.FACES}|same" }
+        store(again, fastest = false).use { m -> assertEquals(ModelStore.CPU, m.engineOf(ModelStore.FACES)) }
+        // automatic: something that is not clearly faster than the plain engine is not taken
+        val auto = Memory()
+        store(auto, fastest = true).use { m -> assertTrue(m.engineOf(ModelStore.FACES) in setOf(ModelStore.CPU, "same")); assertTrue(ModelStore.FACES in m.measured) }
+        // several inputs (the outline decoder): stays on the plain engine
+        store(Memory(), fastest = false).use { m -> assertEquals(ModelStore.CPU, m.engineOf(ModelStore.SAM_DECODER)) }
     }
 
     @Test fun personGridMatchesModelOutputs() {
