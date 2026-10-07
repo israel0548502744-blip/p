@@ -95,7 +95,21 @@ object Neckline {
                 val dy = (y + 0.5f - cy) / ay
                 if (dx * dx + dy * dy <= 1f) inside[l] = (inside[l] ?: 0) + 1
             }
-            val heads = inside.filter { (l, n) -> n >= HEAD_SHARE * total[l] }.keys
+            // head-shaped only: centred in the ellipse and not elongated (a hand raised beside the head, or holding
+            // something up, is off-centre or long, and stays covered)
+            val heads = inside.filter { (l, n) -> n >= HEAD_SHARE * total[l] }.keys.filter { l ->
+                var sx = 0f; var sy = 0f; var x0b = w; var x1b = 0; var y0b = h; var y1b = 0; var c = 0
+                for (y in y0 until y1) for (x in x0 until x1) if (labels[y * w + x] == l) {
+                    sx += x; sy += y; c++
+                    if (x < x0b) x0b = x; if (x > x1b) x1b = x; if (y < y0b) y0b = y; if (y > y1b) y1b = y
+                }
+                if (c == 0) return@filter false
+                val mx = (sx / c + 0.5f - cx) / ax
+                val my = (sy / c + 0.5f - cy) / ay
+                val bw = (x1b - x0b + 1).toFloat()
+                val bh = (y1b - y0b + 1).toFloat()
+                mx * mx + my * my <= 0.25f && bh <= 1.6f * bw && bw <= 1.6f * bh && c >= 0.25f * (Math.PI * ax * ay).toFloat()
+            }.toSet()
             if (heads.isEmpty()) continue
             for (i in skin.indices) if (labels[i] in heads) skin[i] = false
         }
