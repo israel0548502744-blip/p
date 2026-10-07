@@ -55,6 +55,37 @@ object EdgeSnap {
      * what moves the boundary from the model's blob onto the actual arm.
      */
     internal fun recolour(p: FloatArray, px: IntArray, w: Int, h: Int, band: Int) {
+        // everything happens within 2 × band of the mask: work on that rectangle only (people rarely fill the frame)
+        var x0 = w
+        var y0 = h
+        var x1 = -1
+        var y1 = -1
+        for (y in 0 until h) {
+            val o = y * w
+            for (x in 0 until w) if (p[o + x] > 0.5f) {
+                if (x < x0) x0 = x
+                if (x > x1) x1 = x
+                if (y < y0) y0 = y
+                y1 = y
+            }
+        }
+        if (x1 < 0) return
+        val m = 2 * band + 1
+        x0 = max(0, x0 - m); y0 = max(0, y0 - m); x1 = min(w - 1, x1 + m); y1 = min(h - 1, y1 + m)
+        if (x0 == 0 && y0 == 0 && x1 == w - 1 && y1 == h - 1) return recolourAll(p, px, w, h, band)
+        val cw = x1 - x0 + 1
+        val ch = y1 - y0 + 1
+        val cp = FloatArray(cw * ch)
+        val cpx = IntArray(cw * ch)
+        for (y in 0 until ch) {
+            System.arraycopy(p, (y0 + y) * w + x0, cp, y * cw, cw)
+            System.arraycopy(px, (y0 + y) * w + x0, cpx, y * cw, cw)
+        }
+        recolourAll(cp, cpx, cw, ch, band)
+        for (y in 0 until ch) System.arraycopy(cp, y * cw, p, (y0 + y) * w + x0, cw)
+    }
+
+    internal fun recolourAll(p: FloatArray, px: IntArray, w: Int, h: Int, band: Int) {
         val n = w * h
         val inside = ByteMask(w, h, ByteArray(n) { if (p[it] > 0.5f) -1 else 0 })
         if (!inside.any()) return

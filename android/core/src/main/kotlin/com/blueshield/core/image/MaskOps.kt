@@ -30,6 +30,7 @@ object MaskOps {
      */
     fun dilate(m: ByteMask, radius: Int): ByteMask {
         if (radius <= 0) return m.copy()
+        if (m.data.all { it.toInt() == 0 || it.toInt() == -1 }) return dilateBinary(m, radius)
         val w = m.width
         val h = m.height
         val src = IntArray(w * h) { m.data[it].toInt() and 0xFF }
@@ -52,6 +53,49 @@ object MaskOps {
         val res = IntArray(w * h)
         for (x in 0 until w) line(tmp, res, x, w, h)
         val out = ByteArray(w * h) { res[it].toByte() }
+        return ByteMask(w, h, out)
+    }
+
+    /**
+     * [dilate] for a 0/255 mask, in two row-major sweeps: horizontally the nearest set pixel to the left and to
+     * the right of every pixel; vertically, per column, the nearest set row above and below. Same result as the
+     * running max, several times faster (no modulo, no column-strided passes) — the masks are almost all binary.
+     */
+    private fun dilateBinary(m: ByteMask, radius: Int): ByteMask {
+        val w = m.width
+        val h = m.height
+        val src = m.data
+        val tmp = BooleanArray(w * h)
+        Par.rows(h, w) { y ->
+            val o = y * w
+            var last = Int.MIN_VALUE / 2
+            for (x in 0 until w) {
+                if (src[o + x].toInt() != 0) last = x
+                if (x - last <= radius) tmp[o + x] = true
+            }
+            last = Int.MAX_VALUE / 2
+            for (x in w - 1 downTo 0) {
+                if (src[o + x].toInt() != 0) last = x
+                if (last - x <= radius) tmp[o + x] = true
+            }
+        }
+        val out = ByteArray(w * h)
+        val near = IntArray(w) { Int.MIN_VALUE / 2 }
+        for (y in 0 until h) {
+            val o = y * w
+            for (x in 0 until w) {
+                if (tmp[o + x]) near[x] = y
+                if (y - near[x] <= radius) out[o + x] = -1
+            }
+        }
+        java.util.Arrays.fill(near, Int.MAX_VALUE / 2)
+        for (y in h - 1 downTo 0) {
+            val o = y * w
+            for (x in 0 until w) {
+                if (tmp[o + x]) near[x] = y
+                if (near[x] - y <= radius) out[o + x] = -1
+            }
+        }
         return ByteMask(w, h, out)
     }
 

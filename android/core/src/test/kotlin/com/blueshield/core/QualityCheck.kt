@@ -70,6 +70,7 @@ class QualityCheck {
         }
         val secs = (System.nanoTime() - t0) / 1e9
         val a = analyzer.finish()
+        println("SEG_RUNS ${analyzer.segmenterRuns} in ${frames.size} frames, ${"%.2f".format(secs)} s analysis")
         println("TIMINGS " + analyzer.timings.entries.sortedByDescending { it.value }.joinToString { "${it.key}=${"%.1f".format(it.value / 1e9)}s" })
         val d = a.decisions(settings, emptyMap())
         var hit = 0L; var miss = 0L; var leak = 0L; var on = 0L; var flick = 0L; var union = 0L

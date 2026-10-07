@@ -138,6 +138,16 @@ class PersonMasks(private val models: ModelStore, val size: Int) {
             }
         }
 
+        /**
+         * Logits at or below this value all decide the same way in [owners] and [followArms] (under the owner
+         * threshold by more than [KEEP_MARGIN], and above the clip threshold unless clipping is off), so a map
+         * can be cut off there — what makes carrying the outlines with the motion cheap.
+         */
+        fun floor(minLogit: Float, clipLogit: Float): Float {
+            val f = minLogit - KEEP_MARGIN - 1f
+            return if (clipLogit <= -1000f) f else min(f, clipLogit - 1f)
+        }
+
         const val MAJORITY = 0.75f
         const val KEEP_MARGIN = 3f
 

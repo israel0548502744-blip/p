@@ -38,6 +38,8 @@ object Composer {
     const val OWNER_REACH = 0.12f
     /** With people detected, an unattributed skin blob must cover at least this fraction of the frame. */
     const val UNASSIGNED_MIN_AREA_WITH_PEOPLE = 0.004f
+    /** Render-time closing radius, as a fraction of the mask diagonal (see [feather]). */
+    const val CLOSE = 0.004f
 
     fun compose(
         skin: ByteMask, rec: FrameRecord, decisions: Map<Int, Boolean>, censorUnassigned: Boolean, boxPad: Float,
@@ -191,7 +193,10 @@ object Composer {
         val featherPx = softness / 100f * 0.008f * diag
         val grow = featherPx * 0.5f + (if (aggressive) 0.004f else 0.001f) * diag
         val bin = ByteMask(mask.width, mask.height, ByteArray(mask.data.size) { if ((mask.data[it].toInt() and 0xFF) > 96) -1 else 0 })
-        val grown = MaskOps.dilate(bin, (grow * toMask).roundToInt())
+        // a closing first: the pinholes (a cue or a strap crossing a hand) and the notches between fingers would
+        // otherwise show as a ragged, dirty-looking patch; only gaps narrower than 2 × close are filled
+        val close = (CLOSE * hypot(mask.width.toFloat(), mask.height.toFloat())).roundToInt()
+        val grown = MaskOps.erode(MaskOps.dilate(bin, (grow * toMask).roundToInt() + close), close)
         return MaskOps.gaussianApprox(grown, featherPx * toMask)
     }
 }

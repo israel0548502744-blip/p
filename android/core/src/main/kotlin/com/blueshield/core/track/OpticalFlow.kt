@@ -136,6 +136,19 @@ class OpticalFlow(val width: Int, val height: Int, flowSide: Int = 128) {
         return out
     }
 
+    /**
+     * [warp] for a map whose "nothing" is [background] rather than 0 (mask logits): values at or below it are
+     * empty, so only the neighbourhood of the rest is resampled, and what comes in from outside the frame is
+     * [background].
+     */
+    fun warp(mask: FloatMask, background: Float): FloatMask {
+        if (u == null || v == null) return mask
+        val shifted = FloatMask(mask.width, mask.height, FloatArray(mask.data.size) { max(0f, mask.data[it] - background) })
+        val out = warp(shifted)
+        for (i in out.data.indices) out.data[i] += background
+        return out
+    }
+
     /** Median forward motion (analysis pixels) inside a box given in analysis pixels. */
     fun boxShift(box: Box, analysisW: Int, analysisH: Int): Pair<Float, Float> {
         val uu = u ?: return 0f to 0f

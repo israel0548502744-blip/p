@@ -36,7 +36,9 @@ class BlueCensor:
         # the frame by colour during analysis, so the margin is small)
         grow = self.feather * 0.5 + (0.004 * diag if aggressive else 0.001 * diag)
         self.grow = int(round(grow))
-        self.margin = int(self.grow + 3 * self.feather + 4)
+        # closing first: pinholes (a cue crossing a hand) and notches between fingers read as a ragged patch
+        self.close = int(round(RENDER_CLOSE * diag))
+        self.margin = int(self.grow + self.close + 3 * self.feather + 4)
         self.animated = animated
         self.fps = max(fps, 1.0)
         if animated:
@@ -44,6 +46,8 @@ class BlueCensor:
             self._phase = (xx * 0.9 + yy * 0.6) * (2 * math.pi / max(240.0, diag * 0.25))
         self._kernel = (cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * self.grow + 1, 2 * self.grow + 1))
                         if self.grow > 0 else None)
+        self._close_kernel = (cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * self.close + 1, 2 * self.close + 1))
+                              if self.close > 0 else None)
 
     def apply(self, frame: np.ndarray, mask_small: np.ndarray, frame_index: int) -> tuple[np.ndarray, float]:
         """Return (censored frame, censored area fraction)."""
@@ -63,6 +67,8 @@ class BlueCensor:
         alpha = cv2.warpAffine(mask_small, M, (x2 - x1, y2 - y1),
                                flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP, borderMode=cv2.BORDER_CONSTANT)
         alpha = (alpha > 96).astype(np.uint8) * 255
+        if self._close_kernel is not None:
+            alpha = cv2.morphologyEx(alpha, cv2.MORPH_CLOSE, self._close_kernel, borderType=cv2.BORDER_REPLICATE)
         if self._kernel is not None:
             alpha = cv2.dilate(alpha, self._kernel)
         alpha = alpha.astype(np.float32) * (1.0 / 255.0)
@@ -86,6 +92,7 @@ class BlueCensor:
         return out, coverage
 
 
+RENDER_CLOSE = 0.004  # closing radius at render, fraction of the frame diagonal (Composer.CLOSE on Android)
 TEXT_R = 2
 TEXT_BRIGHT = 0.80
 TEXT_DARK = 0.25

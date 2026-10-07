@@ -80,15 +80,29 @@ class Processor(private val context: Context) {
         load = { name -> context.assets.open("models/$name").use { it.readBytes() } },
         options = { sessionOptions() },
         onEvent = Breadcrumbs::mark,
+        alternative = { xnnpackOptions() },
+        memory = EngineChoices(context),
     ).also { models = it }
 
-    /**
-     * CPU execution provider only. Hardware delegates (NNAPI/XNNPACK) are faster on paper, but NNAPI is
-     * deprecated and can crash natively on some drivers; a flagship CPU is fast enough, and stability first.
-     */
+    private val threads get() = Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
+
+    /** The plain CPU execution provider: always works, and the fallback for every model. */
     private fun sessionOptions(): OrtSession.SessionOptions = OrtSession.SessionOptions().apply {
         setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
-        setIntraOpNumThreads(Runtime.getRuntime().availableProcessors().coerceIn(2, 6))
+        setIntraOpNumThreads(threads)
+        setInterOpNumThreads(1)
+    }
+
+    /**
+     * XNNPACK (ONNX Runtime's mobile CPU kernels; NNAPI stays off — deprecated, and it crashed natively on some
+     * drivers). XNNPACK brings its own thread pool, so ONNX Runtime's is kept to one thread and doesn't spin.
+     * Used per model only where it measured faster on this phone with the same outputs ([ModelStore]).
+     */
+    private fun xnnpackOptions(): OrtSession.SessionOptions = OrtSession.SessionOptions().apply {
+        setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+        addConfigEntry("session.intra_op.allow_spinning", "0")
+        addXnnpack(mapOf("intra_op_num_threads" to threads.toString()))
+        setIntraOpNumThreads(1)
         setInterOpNumThreads(1)
     }
 
@@ -184,6 +198,8 @@ class Processor(private val context: Context) {
             // decoders deliver frames in presentation order; if this one didn't, fall back to counting
             analysedPts = pts.toLongArray().takeIf { arr -> (1 until arr.size).all { arr[it] > arr[it - 1] } } ?: LongArray(0)
             Breadcrumbs.mark("analysis: done, ${analysis?.people?.size ?: 0} people")
+            Breadcrumbs.mark("timings: " + analyzer.timings.entries.sortedByDescending { it.value }.joinToString { "${it.key}=${"%.1f".format(it.value / 1e9)}s" } +
+                "; engines: " + models().engines.entries.joinToString { "${it.key.substringBefore('.')}=${it.value}" })
             return renderInternal(emptyMap(), state, ANALYSIS_SHARE, update)
         } catch (e: Renderer.CancelledException) {
             return JobState(stage = JobState.Stage.CANCELLED).also(update)

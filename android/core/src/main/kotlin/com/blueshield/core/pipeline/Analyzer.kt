@@ -183,6 +183,8 @@ class Analyzer(
     private val reclassifyEvery = max(detStride, (spec.gender.reclassifySeconds * fps).roundToInt())
 
     private val segmenter = SkinSegmenter(models, spec.thresholds.faceExclusion)
+    /** Skin-model runs so far (profiling). */
+    val segmenterRuns get() = segmenter.runs
     private val personDetector = PersonDetector(models)
     private val nudeNet = NudeNet(models)
     private val pm = spec.personMasks
@@ -395,13 +397,15 @@ class Analyzer(
         val out = ByteArray(n) { if (skinBin[it]) -1 else 0 }
         val model = outlineModel ?: return out
         if (cut) outlines.clear()
-        for (key in outlines.keys.toList()) outlines[key] = flow.warp(outlines.getValue(key))
+        // logits far below the owner threshold all mean "not this person": warping only the rest is much cheaper
+        val floor = PersonMasks.floor(pm.ownerMinLogit, pm.clipLogit)
+        timed("outline_warp") { for (key in outlines.keys.toList()) outlines[key] = flow.warp(outlines.getValue(key), floor) }
         outlines.keys.retainAll(vis.map { it.id }.toSet())
         sinceOutline++
         val missing = vis.any { it.misses == 0 && it.id !in outlines }
         if (detFrame && vis.isNotEmpty() && (sinceOutline >= outlineEvery || missing || cut)) {
-            val e = model.encode(frame)
-            val masks = model.masks(e, vis.map { PersonMasks.clampBox(it.box, width, height) })
+            val e = timed("sam_encoder") { model.encode(frame) }
+            val masks = timed("sam_decoder") { model.masks(e, vis.map { PersonMasks.clampBox(it.box, width, height) }) }
             outlines.clear()
             for ((t, m) in vis.zip(masks)) outlines[t.id] = m
             sinceOutline = 0

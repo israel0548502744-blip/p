@@ -18,6 +18,10 @@ import kotlin.math.sqrt
 class SkinSegmenter(private val models: ModelStore, private val faceExclusion: Float = 0.35f) {
     class Result(val skin: FloatMask, val person: FloatMask, val face: FloatMask)
 
+    /** Model runs so far (profiling). */
+    var runs = 0
+        private set
+
     /** Model output for one (letterboxed) input: SIZE × SIZE probability maps + where the input sits in them. */
     private class Raw(val skin: FloatArray, val person: FloatArray, val face: FloatArray, val side: Int, val left: Int, val top: Int) {
         val k get() = SIZE.toFloat() / side
@@ -63,7 +67,9 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
         val h = img.height
         val roiOut = Result(FloatMask(w, h), FloatMask(w, h), FloatMask(w, h))
         val cover = BooleanArray(w * h)
-        var any = false
+        // crops first, then the model on all of them (side by side when there are several), then the pasting
+        class Crop(val a: Int, val b: Int, val side: Int, val rx1: Int, val ry1: Int, val rx2: Int, val ry2: Int)
+        val crops = ArrayList<Crop>()
         for (box in boxes) {
             val px = roi.pastePad * box.w
             val py = roi.pastePad * box.h
@@ -77,11 +83,19 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
                 val rx2 = min(min(w, (box.x2 + px).toInt() + 1), a + side)
                 val ry2 = min(min(h, (box.y2 + py).toInt() + 1), b + side)
                 if (rx2 <= rx1 || ry2 <= ry1) continue
-                run(img.crop(a, b, side, side), includeFace).into(roiOut, a, b, rx1, ry1, rx2, ry2, max = true)
-                for (y in ry1 until ry2) java.util.Arrays.fill(cover, y * w + rx1, y * w + rx2, true)
-                any = true
+                crops += Crop(a, b, side, rx1, ry1, rx2, ry2)
             }
         }
+        val raws = if (crops.size < 2) crops.map { run(img.crop(it.a, it.b, it.side, it.side), includeFace) }
+        else {
+            val single = models.singleThreaded(ModelStore.SEGMENTER)
+            crops.map { c -> pool.submit<Raw> { run(img.crop(c.a, c.b, c.side, c.side), includeFace, single) } }.map { it.get() }
+        }
+        for ((c, raw) in crops.zip(raws)) {
+            raw.into(roiOut, c.a, c.b, c.rx1, c.ry1, c.rx2, c.ry2, max = true)
+            for (y in c.ry1 until c.ry2) java.util.Arrays.fill(cover, y * w + c.rx1, y * w + c.rx2, true)
+        }
+        val any = crops.isNotEmpty()
         if (!any) return base
         val skin = base.skin.copy()
         val person = base.person.copy()
@@ -95,14 +109,15 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
     }
 
     /** Runs the model on [img] letterboxed (edge-replicated) to a square, so portrait video keeps its proportions. */
-    private fun run(img: RgbImage, includeFace: Boolean): Raw {
+    private fun run(img: RgbImage, includeFace: Boolean, session: ai.onnxruntime.OrtSession = models.session(ModelStore.SEGMENTER)): Raw {
         val side = max(img.width, img.height)
         val left = (side - img.width) / 2
         val top = (side - img.height) / 2
         val sq = if (side == img.width && side == img.height) img else img.crop(-left, -top, side, side)
         val x = sq.resize(SIZE, SIZE)
+        synchronized(this) { runs++ }
         val input = FloatArray(SIZE * SIZE * 3) { (x.data[it].toInt() and 0xFF) / 127.5f - 1f }
-        val out = models.session(ModelStore.SEGMENTER).runFloat(models.env, input, longArrayOf(1, SIZE.toLong(), SIZE.toLong(), 3)).first().second
+        val out = session.runFloat(models.env, input, longArrayOf(1, SIZE.toLong(), SIZE.toLong(), 3)).first().second
         val skin = FloatArray(SIZE * SIZE)
         val person = FloatArray(SIZE * SIZE)
         val face = FloatArray(SIZE * SIZE)
@@ -127,6 +142,12 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
 
     companion object {
         const val SIZE = 256
+
+        /** Close-up crops run side by side on this many threads (one model thread each). */
+        private val pool: java.util.concurrent.ExecutorService by lazy {
+            val n = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
+            java.util.concurrent.Executors.newFixedThreadPool(n) { r -> Thread(r, "blueshield-seg").apply { isDaemon = true } }
+        }
         /** Extra crops along a tall (standing) or wide (lying / arms out) person. */
         const val MAX_TILES = 3
         /**
@@ -162,7 +183,6 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
     }
 }
 
-/** Stage 1 — person detection (EfficientDet-Lite0, COCO "person"), with SSD anchor decoding. */
 /**
  * Person boxes: YOLOX-tiny (Megvii, Apache-2.0), COCO class 0. Tighter boxes and many more people in crowds
  * than the previous EfficientDet-Lite0 (a woman and the man behind her get one box each, not one loose box

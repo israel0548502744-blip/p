@@ -8,7 +8,9 @@ import com.blueshield.core.image.ByteMask
 import com.blueshield.core.image.FloatMask
 import com.blueshield.core.image.MaskOps
 import com.blueshield.core.image.RgbImage
+import com.blueshield.core.ml.ModelStore
 import com.blueshield.core.ml.PersonDetector
+import com.blueshield.core.ml.runFloat
 import com.blueshield.core.pipeline.Composer
 import com.blueshield.core.pipeline.FrameRecord
 import com.blueshield.core.pipeline.MaskStore
@@ -379,14 +381,50 @@ class CoreTest {
 
     @Test fun fastDilationMatchesTheNaiveOne() {
         val rnd = java.util.Random(7)
-        for ((w, h, r) in listOf(Triple(37, 23, 1), Triple(64, 48, 5), Triple(50, 90, 16), Triple(9, 7, 20))) {
-            val m = ByteMask(w, h, ByteArray(w * h) { if (rnd.nextInt(10) == 0) rnd.nextInt(256).toByte() else 0 })
+        val cases = listOf(Triple(37, 23, 1), Triple(64, 48, 5), Triple(50, 90, 16), Triple(9, 7, 20), Triple(240, 180, 6))
+        for ((case, binary) in cases.flatMap { listOf(it to false, it to true) }) {
+            val (w, h, r) = case
+            // grey levels take the running-max path, 0/255 masks the two-sweep one
+            val m = ByteMask(w, h, ByteArray(w * h) { if (rnd.nextInt(40) == 0) (if (binary) 255 else rnd.nextInt(256)).toByte() else 0 })
             val fast = MaskOps.dilate(m, r)
             for (y in 0 until h) for (x in 0 until w) {
                 var v = 0
                 for (yy in maxOf(0, y - r)..minOf(h - 1, y + r)) for (xx in maxOf(0, x - r)..minOf(w - 1, x + r)) v = maxOf(v, m.data[yy * w + xx].toInt() and 0xFF)
                 assertEquals(v, fast.data[y * w + x].toInt() and 0xFF, "w=$w h=$h r=$r at $x,$y")
             }
+        }
+    }
+
+    @Test fun colourStepOnTheMaskRectangleMatchesTheWholeFrame() {
+        val rnd = java.util.Random(3)
+        val w = 160
+        val h = 120
+        val px = IntArray(w * h) { (0xFF shl 24) or (rnd.nextInt(256) shl 16) or (rnd.nextInt(256) shl 8) or rnd.nextInt(256) }
+        val p = FloatArray(w * h)
+        for (y in 40 until 80) for (x in 60 until 100) {
+            p[y * w + x] = 0.9f
+            px[y * w + x] = (0xFF shl 24) or (200 shl 16) or (150 shl 8) or 120
+        }
+        val a = p.copyOf()
+        val b = p.copyOf()
+        com.blueshield.core.image.EdgeSnap.recolour(a, px, w, h, 4)
+        com.blueshield.core.image.EdgeSnap.recolourAll(b, px, w, h, 4)
+        assertTrue(a.contentEquals(b))
+        assertTrue(!a.contentEquals(p), "the colour step changed nothing: the test checks nothing")
+    }
+
+    @Test fun modelStoreKeepsAWorkingEngineAndRemembersTheChoice() {
+        val repo = java.io.File(System.getProperty("blueshield.repo") ?: "../..")
+        val seen = HashMap<String, Boolean>()
+        val memory = object : ModelStore.EngineMemory {
+            override fun get(file: String) = seen[file]
+            override fun put(file: String, alternative: Boolean) { seen[file] = alternative }
+        }
+        ModelStore({ java.io.File(repo, "models/onnx/$it").readBytes() }, alternative = { ai.onnxruntime.OrtSession.SessionOptions() }, memory = memory).use { m ->
+            val out = m.session(ModelStore.FACES).runFloat(m.env, FloatArray(128 * 128 * 3), longArrayOf(1, 128, 128, 3))
+            assertTrue(out.isNotEmpty())
+            assertTrue(ModelStore.FACES in seen)
+            assertTrue(m.engines[ModelStore.FACES] in setOf("cpu", "alt"))
         }
     }
 
