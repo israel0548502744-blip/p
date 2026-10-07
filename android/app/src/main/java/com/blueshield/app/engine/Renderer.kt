@@ -33,7 +33,10 @@ class Renderer(private val context: Context, private val meta: VideoMeta) {
 
     class Mask(val width: Int, val height: Int, val data: ByteArray)
 
-    class Options(val rgb: Int, val animated: Boolean, val keepAudio: Boolean, val quality: String)
+    class Options(val rgb: Int, val animated: Boolean, val keepAudio: Boolean, val quality: String, val softwareEncoder: Boolean = false)
+
+    /** The encoded video lost frames (a hardware encoder or the muxer dropped them): the file would be corrupt. */
+    class IncompleteException(val sent: Int, val written: Int) : RuntimeException("encoder wrote $written of $sent frames")
 
     /**
      * @param shouldContinue polled between frames; return false to cancel (blocks while paused).
@@ -49,7 +52,8 @@ class Renderer(private val context: Context, private val meta: VideoMeta) {
         muxer.setOrientationHint(meta.rotation)
         // The encoder may need a slightly different size than the video (alignment, minimum size): the frame is
         // drawn to fill it, so a 200×112 clip comes out e.g. 208×112 (or scaled up) instead of failing to start.
-        val enc = EncoderPicker.open(meta.codedWidth, meta.codedHeight, meta.fps) { ew, eh -> bitrate(ew, eh, meta.fps, opts.quality) }
+        val enc = EncoderPicker.open(meta.codedWidth, meta.codedHeight, meta.fps, softwareOnly = opts.softwareEncoder) { ew, eh -> bitrate(ew, eh, meta.fps, opts.quality) }
+        Breadcrumbs.mark("render: encoder ${enc.name} ${enc.width}x${enc.height}")
         val encoder = enc.codec
         val inputSurface = enc.surface
         val w = enc.width
@@ -84,6 +88,10 @@ class Renderer(private val context: Context, private val meta: VideoMeta) {
         var muxerStarted = false
         val audioEx = audioTmp?.let { f -> MediaExtractor().apply { setDataSource(f.path); selectTrack(0) } }
         val encInfo = MediaCodec.BufferInfo()
+        var written = 0
+        var lastWrittenPts = Long.MIN_VALUE
+        var lastPts = Long.MIN_VALUE
+        var fed = 0
 
         fun startMuxerIfReady() {
             if (!muxerStarted && videoTrackOut >= 0) {
@@ -105,11 +113,18 @@ class Renderer(private val context: Context, private val meta: VideoMeta) {
                     }
                     idx >= 0 -> {
                         val buf = encoder.getOutputBuffer(idx)!!
-                        if (encInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) encInfo.size = 0
+                        // codec-config only (SPS/PPS, already in the track format) is skipped; a key frame that some
+                        // encoders flag as config too still carries the picture and must be written
+                        val key = encInfo.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
+                        if (encInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0 && !key) encInfo.size = 0
+                        if (encInfo.size > 0 && !muxerStarted) Breadcrumbs.mark("render: encoder output before its format (${encInfo.presentationTimeUs})")
                         if (encInfo.size > 0 && muxerStarted) {
+                            if (encInfo.presentationTimeUs <= lastWrittenPts) Breadcrumbs.mark("render: encoder pts ${encInfo.presentationTimeUs} after $lastWrittenPts")
                             buf.position(encInfo.offset)
                             buf.limit(encInfo.offset + encInfo.size)
                             muxer.writeSampleData(videoTrackOut, buf, encInfo)
+                            lastWrittenPts = encInfo.presentationTimeUs
+                            written++
                         }
                         encoder.releaseOutputBuffer(idx, false)
                         if (encInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) return
@@ -137,6 +152,7 @@ class Renderer(private val context: Context, private val meta: VideoMeta) {
                         } else {
                             decoder.queueInputBuffer(inIdx, 0, n, ex.sampleTime, 0)
                             ex.advance()
+                            fed++
                         }
                     }
                 }
@@ -169,7 +185,12 @@ class Renderer(private val context: Context, private val meta: VideoMeta) {
                         lastPreview = now
                         onPreview(readPreview(w, h))
                     }
-                    egl.setPresentationTime(decInfo.presentationTimeUs * 1000)
+                    // strictly increasing times: encoders and the muxer drop a frame that doesn't move forward,
+                    // and a dropped reference frame corrupts every frame after it
+                    val pts = if (decInfo.presentationTimeUs > lastPts) decInfo.presentationTimeUs else lastPts + 1000
+                    if (pts != decInfo.presentationTimeUs) Breadcrumbs.mark("render: decoder pts ${decInfo.presentationTimeUs} after $lastPts")
+                    lastPts = pts
+                    egl.setPresentationTime(pts * 1000)
                     egl.swap()
                     drainEncoder(false)
                     index++
@@ -180,6 +201,8 @@ class Renderer(private val context: Context, private val meta: VideoMeta) {
             if (!cancelled) {
                 drainEncoder(true)
                 startMuxerIfReady()
+                if (fed != index) Breadcrumbs.mark("render: decoder gave $index frames for $fed samples")
+                if (written < index) throw IncompleteException(index, written)
                 if (audioEx != null && audioTrackOut >= 0) copySamples(audioEx, muxer, audioTrackOut)
             }
         } finally {

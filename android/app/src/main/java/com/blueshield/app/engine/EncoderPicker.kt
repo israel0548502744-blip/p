@@ -23,9 +23,12 @@ object EncoderPicker {
     private const val TAG = "EncoderPicker"
     private const val MIME = MediaFormat.MIMETYPE_VIDEO_AVC
 
-    fun open(width: Int, height: Int, fps: Double, bitrate: (Int, Int) -> Int): Opened {
+    fun open(width: Int, height: Int, fps: Double, softwareOnly: Boolean = false, bitrate: (Int, Int) -> Int): Opened {
         val errors = ArrayList<String>()
-        for ((name, w, h, range) in candidates(width, height)) {
+        val all = candidates(width, height)
+        // the retry after a hardware encoder lost frames: software encoders first (slower, but predictable)
+        val list = if (softwareOnly) all.filter { it.software } + all.filterNot { it.software } else all
+        for ((name, w, h, range) in list) {
             val codec = runCatching { MediaCodec.createByCodecName(name) }.getOrNull() ?: continue
             try {
                 val format = MediaFormat.createVideoFormat(MIME, w, h).apply {
@@ -53,7 +56,7 @@ object EncoderPicker {
         throw IllegalStateException("אין במכשיר מקודד H.264 שתומך בסרטון בגודל ${width}x$height (${errors.joinToString("; ")})")
     }
 
-    private data class Candidate(val name: String, val width: Int, val height: Int, val bitrates: IntRange)
+    private data class Candidate(val name: String, val width: Int, val height: Int, val bitrates: IntRange, val software: Boolean = false)
 
     /** Encoder × size attempts, best first: hardware before software, exact size before 16-aligned. */
     private fun candidates(width: Int, height: Int): List<Candidate> {
@@ -68,7 +71,7 @@ object EncoderPicker {
             fit(width, height, max(2, caps.widthAlignment), max(2, caps.heightAlignment), caps)?.let { sizes += it }
             // Some hardware encoders advertise alignment 2 but only really work on 16-pixel blocks.
             fit(width, height, 16, 16, caps)?.let { sizes += it }
-            for ((w, h) in sizes) out += Candidate(info.name, w, h, bitrates)
+            for ((w, h) in sizes) out += Candidate(info.name, w, h, bitrates, isSoftware(info))
         }
         if (out.isEmpty()) {
             // No capability info: let the platform pick, at an even and a 16-aligned size.

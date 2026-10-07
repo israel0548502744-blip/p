@@ -43,6 +43,18 @@ class PipelineE2ETest {
         r.release()
     }
 
+    /** Video samples in a file (an encoder or muxer that drops one leaves every later frame undecodable). */
+    private fun videoSamples(path: String): Int {
+        val ex = android.media.MediaExtractor()
+        ex.setDataSource(path)
+        val t = (0 until ex.trackCount).first { ex.getTrackFormat(it).getString(android.media.MediaFormat.KEY_MIME)!!.startsWith("video/") }
+        ex.selectTrack(t)
+        var n = 0
+        while (ex.sampleTime >= 0) { n++; ex.advance() }
+        ex.release()
+        return n
+    }
+
     @Test fun processorEndToEnd() {
         val meta = VideoMeta.probe(ctx, fixture("woman_and_man.mp4"))
         assertEquals(768, meta.width); assertEquals(432, meta.height)
@@ -50,6 +62,7 @@ class PipelineE2ETest {
         val result = p.run(meta, CensorSettings(speed = "fast")) { }
         assertEquals("error: ${result.error}", JobState.Stage.COMPLETE, result.stage)
         checkOutput(result.output, 768, 432, meta.durationSec)
+        assertEquals("every frame encoded", videoSamples(ctx.cacheDir.resolve("woman_and_man.mp4").path), videoSamples(result.output!!.path))
         val people = p.analysis!!.summaries(CensorSettings(), emptyMap()).filter { it.frames > p.analysis!!.frameCount / 2 }
         assertEquals("people: $people", setOf("female", "male"), people.map { it.gender }.toSet())
         p.close()

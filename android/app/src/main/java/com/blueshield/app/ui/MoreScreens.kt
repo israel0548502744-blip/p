@@ -110,6 +110,27 @@ fun AboutScreen() {
         }
         Panel(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SectionTitle("דוח אבחון")
+                Text(
+                    "מה האפליקציה עשתה בעיבוד האחרון: מעבדים, זמנים, מקודד ושגיאות. בלי תמונות ובלי סרטונים. " +
+                        "אם משהו יצא לא תקין, שלחו את הדוח למפתח.",
+                    color = Palette.Ink100, fontSize = 13.sp, lineHeight = 18.sp,
+                )
+                OutlinedButton(
+                    onClick = {
+                        val text = "BlueShield ${BuildInfo.version} · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · Android ${android.os.Build.VERSION.RELEASE}\n" +
+                            (com.blueshield.app.engine.Accelerators.report(context)?.let { "\n$it\n" } ?: "") + "\n" +
+                            com.blueshield.app.engine.Breadcrumbs.tail(200)
+                        val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+                            .putExtra(android.content.Intent.EXTRA_TEXT, text)
+                        runCatching { context.startActivity(android.content.Intent.createChooser(send, "שליחת דוח אבחון")) }
+                    },
+                    modifier = Modifier.fillMaxWidth().height(44.dp), shape = RoundedCornerShape(12.dp),
+                ) { Text("שליחת דוח אבחון") }
+            }
+        }
+        Panel(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SectionTitle("איך זה עובד")
                 for (line in listOf(
                     "האפליקציה מזהה אנשים ועוקבת אחריהם לאורך הסרטון; כל אדם מסווג לפי הפנים שלו (שני מודלים, וההחלטה מתקבלת על פני פריימים רבים).",

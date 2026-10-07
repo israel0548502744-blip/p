@@ -237,8 +237,13 @@ class Processor(private val context: Context) {
                 return Renderer.Mask(f.width, f.height, f.data)
             }
         }
-        Renderer(context, m).render(
-            out, source, Renderer.Options(CensorSettingsColor.rgb(s), s.animated, s.keepAudio, s.quality), total,
+        // the models aren't needed to render: free them (their memory, and any GPU / AI-chip buffers) for the
+        // video decoder and encoder
+        models?.close()
+        models = null
+        val options = Renderer.Options(CensorSettingsColor.rgb(s), s.animated, s.keepAudio, s.quality)
+        fun render(o: Renderer.Options) = Renderer(context, m).render(
+            out, source, o, total,
             shouldContinue = { checkpoint(meter) },
             onProgress = { i ->
                 if (i % 60 == 0) Breadcrumbs.mark("render: frame $i")
@@ -249,6 +254,20 @@ class Processor(private val context: Context) {
             },
             onPreview = { bmp -> state = state.copy(preview = bmp); update(state) },
         )
+        try {
+            render(options)
+        } catch (e: Renderer.IncompleteException) {
+            // a hardware encoder that loses a frame leaves every later frame undecodable: never hand that out
+            Breadcrumbs.mark("render: ${e.message}; again with a software encoder")
+            out.delete()
+            censored = 0
+            try {
+                render(Renderer.Options(options.rgb, options.animated, options.keepAudio, options.quality, softwareEncoder = true))
+            } catch (e2: Renderer.IncompleteException) {
+                out.delete()
+                error("קידוד הסרטון נכשל: המקודד איבד פריימים (${e2.written} מתוך ${e2.sent}). נסו שוב, או בחרו איכות ייצוא אחרת.")
+            }
+        }
         Breadcrumbs.mark("render: done")
         start.output?.takeIf { it != out }?.delete()
         state = state.copy(stage = JobState.Stage.COMPLETE, percent = 100f, etaSeconds = 0.0, output = out, censoredFrames = censored, version = version)
