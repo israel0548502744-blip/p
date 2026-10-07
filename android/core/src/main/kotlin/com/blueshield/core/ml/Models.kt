@@ -98,11 +98,20 @@ class ModelStore(
             if (memory?.broken(file, e.id) == true) continue
             val s = create(file, bytes, e)
             memory?.trying(file, e.id) // still trying: its first runs
-            val t = s?.let { runCatching { if (same(baseOut, it.runFloat(env, probe.first, probe.second))) time(it, probe) else null }.getOrNull() }
+            val t = s?.let {
+                runCatching {
+                    val t0 = System.nanoTime()
+                    val out = it.runFloat(env, probe.first, probe.second)
+                    val first = (System.nanoTime() - t0) / 1e6
+                    // the first run includes the accelerator's one-off setup; ten times slower than the plain engine
+                    // even so (a software GPU, an emulator) is not worth measuring further
+                    if (!same(baseOut, out) || (pickFastest && first > 10 * times.getValue(CPU))) null else time(it, probe, warm = false)
+                }.getOrNull()
+            }
             memory?.trying(file, null)
             if (s == null || t == null) {
                 s?.close()
-                if (s != null) onEvent("model: ${e.id} gives different results for $file")
+                if (s != null) onEvent("model: ${e.id} not used for $file (different results, or far too slow)")
                 continue
             }
             times[e.id] = t
@@ -149,9 +158,9 @@ class ModelStore(
         return true
     }
 
-    /** Median of three runs, milliseconds (after one warm-up run). */
-    private fun time(s: OrtSession, probe: Pair<FloatArray, LongArray>): Double {
-        s.runFloat(env, probe.first, probe.second)
+    /** Median of three runs, milliseconds (after one warm-up run unless the session has just run). */
+    private fun time(s: OrtSession, probe: Pair<FloatArray, LongArray>, warm: Boolean = true): Double {
+        if (warm) s.runFloat(env, probe.first, probe.second)
         val t = DoubleArray(3) { val t0 = System.nanoTime(); s.runFloat(env, probe.first, probe.second); (System.nanoTime() - t0) / 1e6 }
         return t.sorted()[1]
     }
