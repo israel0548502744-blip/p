@@ -98,6 +98,13 @@ class ModelStore(
         return tb < ta * 0.85
     }
 
+    /** Frees one model's sessions (memory); it is loaded again on next use. */
+    @Synchronized
+    fun release(file: String) {
+        sessions.remove(file)?.close()
+        sessions.remove("$file#1")?.close()
+    }
+
     override fun close() {
         sessions.values.forEach { it.close() }
         sessions.clear()

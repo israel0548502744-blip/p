@@ -247,9 +247,40 @@ class ByteMask(val width: Int, val height: Int, val data: ByteArray = ByteArray(
 
     fun resize(w: Int, h: Int): ByteMask {
         if (w == width && h == height) return this
-        val f = FloatMask(width, height, FloatArray(width * height) { (data[it].toInt() and 0xFF).toFloat() })
-        val r = if (w < width && h < height) MaskOps.areaDownscale(f, w, h) else f.resize(w, h)
-        return ByteMask(w, h, ByteArray(w * h) { (r.data[it] + 0.5f).toInt().coerceIn(0, 255).toByte() })
+        if (w < width && h < height) {
+            val f = FloatMask(width, height, FloatArray(width * height) { (data[it].toInt() and 0xFF).toFloat() })
+            val r = MaskOps.areaDownscale(f, w, h)
+            return ByteMask(w, h, ByteArray(w * h) { (r.data[it] + 0.5f).toInt().coerceIn(0, 255).toByte() })
+        }
+        // bilinear straight into bytes (same sampling as FloatMask.resize): a full-size photo mask is tens of
+        // megapixels, and a float copy of it was what ran the phone out of memory
+        val out = ByteArray(w * h)
+        val sx = width.toFloat() / w
+        val sy = height.toFloat() / h
+        val x0 = IntArray(w)
+        val fx = FloatArray(w)
+        for (x in 0 until w) {
+            val p = ((x + 0.5f) * sx - 0.5f).coerceIn(0f, width - 1f)
+            x0[x] = minOf(p.toInt(), width - 2).coerceAtLeast(0)
+            fx[x] = if (width == 1) 0f else p - x0[x]
+        }
+        Par.rows(h, w) { y ->
+            val p = ((y + 0.5f) * sy - 0.5f).coerceIn(0f, height - 1f)
+            val y0 = minOf(p.toInt(), height - 2).coerceAtLeast(0)
+            val y1 = minOf(y0 + 1, height - 1)
+            val fy = if (height == 1) 0f else p - y0
+            val r0 = y0 * width
+            val r1 = y1 * width
+            val o = y * w
+            for (x in 0 until w) {
+                val a = x0[x]
+                val b = minOf(a + 1, width - 1)
+                val t = (data[r0 + a].toInt() and 0xFF) + ((data[r0 + b].toInt() and 0xFF) - (data[r0 + a].toInt() and 0xFF)) * fx[x]
+                val u = (data[r1 + a].toInt() and 0xFF) + ((data[r1 + b].toInt() and 0xFF) - (data[r1 + a].toInt() and 0xFF)) * fx[x]
+                out[o + x] = (t + (u - t) * fy + 0.5f).toInt().coerceIn(0, 255).toByte()
+            }
+        }
+        return ByteMask(w, h, out)
     }
 
     fun maxWith(other: ByteMask) {

@@ -428,6 +428,16 @@ class CoreTest {
         }
     }
 
+    @Test fun maskUpscaleInBytesMatchesTheFloatOne() {
+        val rnd = java.util.Random(5)
+        val m = ByteMask(37, 23, ByteArray(37 * 23) { rnd.nextInt(256).toByte() })
+        for ((w, h) in listOf(100 to 70, 37 * 3 to 23 * 3, 50 to 23)) {
+            val a = m.resize(w, h)
+            val f = FloatMask(37, 23, FloatArray(37 * 23) { (m.data[it].toInt() and 0xFF).toFloat() }).resize(w, h)
+            for (i in 0 until w * h) assertTrue(abs((a.data[i].toInt() and 0xFF) - f.data[i]) <= 1f, "at $i of ${w}x$h")
+        }
+    }
+
     @Test fun personGridMatchesModelOutputs() {
         // YOLOX-tiny at 416: 52² + 26² + 13² output rows
         assertEquals(3549 * 3, PersonDetector.buildGrid().size)

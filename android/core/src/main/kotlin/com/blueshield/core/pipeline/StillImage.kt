@@ -34,13 +34,17 @@ object StillImage {
         val raw = a.maskFor(0, decisions, settings, 0)
         if (!raw.any()) return null
         if (pixels == null) return Composer.feather(raw, outW, outH, settings.softness, settings.aggressive).resize(outW, outH)
-        val snapped = EdgeSnap.snap(raw, pixels, outW, outH)
-        val diag = hypot(outW.toFloat(), outH.toFloat())
+        // fitted, grown and feathered at the edge-fitting size (at most 1600 px), then scaled up once: a 12 MP
+        // photo processed at full size needed ~30 bytes per pixel and the phone killed the app for memory
+        val snapped = EdgeSnap.snap(raw, pixels, outW, outH, fullSize = false)
+        val w = snapped.width
+        val h = snapped.height
+        val diag = hypot(w.toFloat(), h.toFloat())
         val featherPx = settings.softness / 100f * 0.006f * diag
         val grow = featherPx * 0.6f + (if (settings.aggressive) 0.004f else 0.001f) * diag
-        val bin = ByteMask(outW, outH, ByteArray(outW * outH) { if ((snapped.data[it].toInt() and 0xFF) > 127) -1 else 0 })
+        val bin = ByteMask(w, h, ByteArray(w * h) { if ((snapped.data[it].toInt() and 0xFF) > 127) -1 else 0 })
         val grown = MaskOps.dilate(bin, grow.roundToInt())
-        return if (featherPx < 0.5f) grown else MaskOps.gaussianApprox(grown, featherPx)
+        return (if (featherPx < 0.5f) grown else MaskOps.gaussianApprox(grown, featherPx)).resize(outW, outH)
     }
 
     /**
@@ -48,13 +52,7 @@ object StillImage {
      * text, which stays visible (same rule as the video shader).
      */
     fun paint(pixels: IntArray, w: Int, h: Int, alpha: ByteMask, rgb: Int) {
-        val img = RgbImage(w, h, ByteArray(w * h * 3).also { b ->
-            for (i in 0 until w * h) {
-                val p = pixels[i]
-                b[i * 3] = (p shr 16).toByte(); b[i * 3 + 1] = (p shr 8).toByte(); b[i * 3 + 2] = p.toByte()
-            }
-        })
-        val text = TextGuard.mask(img)
+        val text = TextGuard.mask(pixels, w, h)
         val cr = rgb shr 16 and 0xFF
         val cg = rgb shr 8 and 0xFF
         val cb = rgb and 0xFF

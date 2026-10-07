@@ -304,6 +304,8 @@ class Processor(private val context: Context) {
         photo?.close()
         val store = File(context.cacheDir, "photo_masks_${System.currentTimeMillis()}.bin")
         photo = com.blueshield.core.pipeline.StillImage.analyze(models(), s, spec, PhotoLoader.toRgb(bmp, aw, ah), mw, mh, store)
+        // the 1024 px outline encoder holds a few hundred MB while loaded; the photo still has to be painted
+        models().release(ModelStore.SAM_ENCODER_1024)
         photoOriginal = bmp
         photoSettings = s
         Breadcrumbs.mark("photo: analysed, ${photo?.people?.size ?: 0} people")

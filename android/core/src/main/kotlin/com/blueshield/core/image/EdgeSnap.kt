@@ -23,9 +23,10 @@ object EdgeSnap {
 
     /**
      * Alpha 0..255 at [w] × [h] for [mask] (any size, 0/255) snapped to the edges of [pixels] (ARGB, w × h).
-     * Works at most at [maxSide] (larger pictures are processed downscaled and the alpha scaled back up).
+     * Works at most at [maxSide] (larger pictures are processed downscaled and the alpha scaled back up — or,
+     * with [fullSize] false, returned at that working size).
      */
-    fun snap(mask: ByteMask, pixels: IntArray, w: Int, h: Int, maxSide: Int = 1600): ByteMask {
+    fun snap(mask: ByteMask, pixels: IntArray, w: Int, h: Int, maxSide: Int = 1600, fullSize: Boolean = true): ByteMask {
         val s = min(1f, maxSide.toFloat() / max(w, h))
         val sw = max(1, (w * s).roundToInt())
         val sh = max(1, (h * s).roundToInt())
@@ -45,7 +46,7 @@ object EdgeSnap {
             val t = ((q[i] - 0.3f) / 0.4f).coerceIn(0f, 1f)
             (t * t * (3 - 2 * t) * 255f).roundToInt().toByte()
         })
-        return if (s < 1f) out.resize(w, h) else out
+        return if (s < 1f && fullSize) out.resize(w, h) else out
     }
 
     /**
