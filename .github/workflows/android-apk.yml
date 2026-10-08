@@ -122,6 +122,8 @@ jobs:
           n=${{ github.run_number }}
           # the emulator's rendered test video rides along (to check the censor edges from outside CI)
           extra=""; [ -f e2e/e2e_output.mp4 ] && cp e2e/e2e_output.mp4 e2e-render.mp4 && extra="e2e-render.mp4"
+          # and a screenshot of the home screen (how the UI looks on a real Android)
+          [ -s e2e/screen_home.png ] && cp e2e/screen_home.png screen-home.png && extra="$extra screen-home.png"
           gh release create "build-$n" BlueShield.apk $extra --target "$GITHUB_SHA" --latest \
             --title "BlueShield 1.5.$n" --notes "Build $n (${GITHUB_SHA::7}). Unit tests and emulator tests (Android 14, 16) passed."
           # keep the 5 newest builds

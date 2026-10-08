@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -44,9 +43,9 @@ fun EngineSection() {
                 Text("בעיבוד האחרון:", color = Color.White, fontSize = 12.5.sp)
                 Text(it, color = Palette.Ink300, fontSize = 11.5.sp, lineHeight = 16.sp)
             }
-            OutlinedButton(
+            GlassOutlined(
                 onClick = { Accelerators.remeasure(context); report = null },
-                modifier = Modifier.fillMaxWidth().height(44.dp), shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().height(46.dp),
             ) { Text("בדיקה מחדש של כל המעבדים") }
         }
     }

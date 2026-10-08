@@ -41,33 +41,26 @@ import androidx.compose.ui.unit.sp
 
 @Composable
 fun Panel(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
-    Column(
-        modifier
-            .clip(RoundedCornerShape(18.dp))
-            .background(Brush.verticalGradient(listOf(Color(0x08FFFFFF), Color(0x03FFFFFF))))
-            .background(Palette.Ink900.copy(alpha = 0.92f))
-            .border(1.dp, Palette.Border, RoundedCornerShape(18.dp)),
-        content = content,
-    )
+    Column(modifier.glass(RoundedCornerShape(24.dp)), content = content)
 }
 
 @Composable
 fun SectionTitle(text: String, modifier: Modifier = Modifier) {
-    Text(text.uppercase(), modifier, color = Palette.Ink400, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.4.sp)
+    Text(text.uppercase(), modifier, color = Palette.Ink300, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp)
 }
 
 @Composable
 fun Logo() {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(
-            Modifier.size(34.dp).clip(RoundedCornerShape(10.dp))
-                .background(Brush.linearGradient(listOf(Palette.Shield400, Palette.Shield700))),
+            Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(Glass.Accent)
+                .border(1.dp, Brush.verticalGradient(listOf(Color(0x66FFFFFF), Color(0x00FFFFFF))), RoundedCornerShape(12.dp)),
             contentAlignment = Alignment.Center,
-        ) { Icon(Icons.Filled.Shield, null, tint = Color.White, modifier = Modifier.size(19.dp)) }
-        Spacer(Modifier.width(10.dp))
+        ) { Icon(Icons.Filled.Shield, null, tint = Color.White, modifier = Modifier.size(21.dp)) }
+        Spacer(Modifier.width(11.dp))
         Column {
-            Text("BlueShield", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-            Text("צנזור אוטומטי לסרטונים ולתמונות", color = Palette.Ink300, fontSize = 11.sp)
+            Text("BlueShield", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp, letterSpacing = (-0.2).sp)
+            Text("צנזור אוטומטי לסרטונים ולתמונות", color = Palette.Ink300, fontSize = 11.5.sp)
         }
     }
 }
@@ -75,8 +68,7 @@ fun Logo() {
 @Composable
 fun PrivacyPill(modifier: Modifier = Modifier) {
     Row(
-        modifier.clip(RoundedCornerShape(50)).background(Palette.Emerald.copy(alpha = 0.08f))
-            .border(1.dp, Palette.Emerald.copy(alpha = 0.22f), RoundedCornerShape(50)).padding(horizontal = 12.dp, vertical = 6.dp),
+        modifier.glass(RoundedCornerShape(50)).background(Palette.Emerald.copy(alpha = 0.07f)).padding(horizontal = 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(Icons.Filled.Lock, null, tint = Palette.Emerald, modifier = Modifier.size(13.dp))
@@ -95,13 +87,13 @@ fun LabeledSlider(
             Text(label, color = Palette.Ink100, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
             Text(
                 "$value$suffix", color = Palette.Ink200, fontSize = 12.sp, fontFamily = FontFamily.Monospace,
-                modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0x0DFFFFFF)).padding(horizontal = 6.dp, vertical = 2.dp),
+                modifier = Modifier.clip(RoundedCornerShape(50)).background(Glass.FillStrong).padding(horizontal = 9.dp, vertical = 3.dp),
             )
         }
         Slider(
             value = value.toFloat(), onValueChange = { onChange(it.toInt()) }, enabled = enabled,
             valueRange = range.first.toFloat()..range.last.toFloat(),
-            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Palette.Shield500, inactiveTrackColor = Palette.Ink600),
+            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Palette.Shield400, inactiveTrackColor = Color(0x26FFFFFF)),
         )
         Row {
             Text(left, color = Palette.Ink400, fontSize = 11.sp, modifier = Modifier.weight(1f))
@@ -113,15 +105,15 @@ fun LabeledSlider(
 
 @Composable
 fun ToggleRow(icon: ImageVector, label: String, description: String, checked: Boolean, onChange: (Boolean) -> Unit, accent: Color = Palette.Shield500, enabled: Boolean = true) {
-    val bg by animateColorAsState(if (checked) accent.copy(alpha = 0.09f) else Color(0x05FFFFFF), label = "toggleBg")
+    val bg by animateColorAsState(if (checked) accent.copy(alpha = 0.12f) else Color(0x0AFFFFFF), label = "toggleBg")
     Row(
-        Modifier.fillMaxWidth().padding(vertical = 4.dp).clip(RoundedCornerShape(12.dp)).background(bg)
-            .border(1.dp, if (checked) accent.copy(alpha = 0.3f) else Palette.Border, RoundedCornerShape(12.dp))
-            .clickable(enabled = enabled) { onChange(!checked) }.padding(horizontal = 12.dp, vertical = 10.dp),
+        Modifier.fillMaxWidth().padding(vertical = 4.dp).clip(RoundedCornerShape(18.dp)).background(bg)
+            .border(1.dp, if (checked) accent.copy(alpha = 0.35f) else Palette.Border, RoundedCornerShape(18.dp))
+            .clickable(enabled = enabled) { onChange(!checked) }.padding(horizontal = 14.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
-            Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)).background(if (checked) accent.copy(alpha = 0.18f) else Color(0x0DFFFFFF)),
+            Modifier.size(34.dp).clip(RoundedCornerShape(11.dp)).background(if (checked) accent.copy(alpha = 0.22f) else Glass.Fill),
             contentAlignment = Alignment.Center,
         ) { Icon(icon, null, tint = if (checked) accent else Palette.Ink300, modifier = Modifier.size(17.dp)) }
         Spacer(Modifier.width(12.dp))
@@ -131,7 +123,7 @@ fun ToggleRow(icon: ImageVector, label: String, description: String, checked: Bo
         }
         Switch(
             checked = checked, onCheckedChange = onChange, enabled = enabled,
-            colors = SwitchDefaults.colors(checkedTrackColor = accent, checkedThumbColor = Color.White, uncheckedTrackColor = Palette.Ink600, uncheckedBorderColor = Color.Transparent),
+            colors = SwitchDefaults.colors(checkedTrackColor = accent, checkedThumbColor = Color.White, uncheckedTrackColor = Color(0x33FFFFFF), uncheckedThumbColor = Color.White, uncheckedBorderColor = Color.Transparent),
         )
     }
 }
@@ -139,16 +131,19 @@ fun ToggleRow(icon: ImageVector, label: String, description: String, checked: Bo
 @Composable
 fun <T> Segmented(options: List<Pair<T, String>>, selected: T, onSelect: (T) -> Unit, enabled: Boolean = true) {
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0x0AFFFFFF)).padding(4.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color(0x1A000000))
+            .border(1.dp, Color(0x14FFFFFF), RoundedCornerShape(16.dp)).padding(4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         for ((value, label) in options) {
             val active = value == selected
+            val fill by animateColorAsState(if (active) Color(0x33FFFFFF) else Color.Transparent, label = "segment")
             Box(
-                Modifier.weight(1f).clip(RoundedCornerShape(9.dp)).background(if (active) Palette.Ink600 else Color.Transparent)
-                    .clickable(enabled = enabled) { onSelect(value) }.padding(vertical = 8.dp),
+                Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(fill)
+                    .then(if (active) Modifier.border(1.dp, Brush.verticalGradient(listOf(Glass.RimTop, Glass.RimBottom)), RoundedCornerShape(12.dp)) else Modifier)
+                    .clickable(enabled = enabled) { onSelect(value) }.padding(vertical = 9.dp),
                 contentAlignment = Alignment.Center,
-            ) { Text(label, color = if (active) Color.White else Palette.Ink300, fontSize = 13.sp, fontWeight = FontWeight.Medium) }
+            ) { Text(label, color = if (active) Color.White else Palette.Ink300, fontSize = 13.sp, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium) }
         }
     }
 }
@@ -158,8 +153,8 @@ fun StatusDot(color: Color) = Box(Modifier.size(8.dp).clip(CircleShape).backgrou
 
 @Composable
 fun Chip(label: String, value: String, modifier: Modifier = Modifier) {
-    Column(modifier.clip(RoundedCornerShape(12.dp)).background(Color(0x08FFFFFF)).padding(horizontal = 12.dp, vertical = 8.dp)) {
-        Text(label.uppercase(), color = Palette.Ink400, fontSize = 10.sp, fontWeight = FontWeight.Medium, letterSpacing = 1.sp)
+    Column(modifier.glass(RoundedCornerShape(16.dp)).padding(horizontal = 12.dp, vertical = 9.dp)) {
+        Text(label.uppercase(), color = Palette.Ink400, fontSize = 10.5.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.4.sp)
         Spacer(Modifier.height(2.dp))
         Text(value, color = Palette.Ink100, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1)
     }
@@ -195,3 +190,16 @@ fun formatBytes(n: Long): String {
     while (v >= 1024 && i < units.lastIndex) { v /= 1024; i++ }
     return if (v >= 100 || i == 0) "%.0f %s".format(v, units[i]) else "%.1f %s".format(v, units[i])
 }
+
+/** An outlined button made of clear glass, used for the secondary actions on every screen. */
+@Composable
+fun GlassOutlined(
+    onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true,
+    shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(16.dp),
+    content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit,
+) = androidx.compose.material3.OutlinedButton(
+    onClick = onClick, modifier = modifier, enabled = enabled, shape = shape,
+    colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(containerColor = Glass.Fill, contentColor = Palette.Ink100),
+    border = androidx.compose.foundation.BorderStroke(1.dp, Brush.verticalGradient(listOf(Glass.RimTop, Glass.RimBottom))),
+    content = content,
+)

@@ -51,6 +51,9 @@ import com.blueshield.app.ui.ErrorBanner
 import com.blueshield.app.ui.HomeScreen
 import com.blueshield.app.ui.Logo
 import com.blueshield.app.ui.Palette
+import com.blueshield.app.ui.GlassBackground
+import com.blueshield.app.ui.glass
+import androidx.compose.foundation.shape.RoundedCornerShape
 import com.blueshield.app.ui.ProcessingScreen
 import com.blueshield.app.ui.ResultScreen
 import com.blueshield.app.ui.AboutScreen
@@ -139,13 +142,12 @@ private fun App(vm: AppViewModel) {
     BackHandler(enabled = page == null && screen == Screen.PHOTO_RESULT) { vm.adjustPhoto() }
     BackHandler(enabled = page == null && screen == Screen.BATCH) { vm.closeBatch() }
 
-    Column(
-        Modifier.fillMaxSize()
-            .background(Brush.radialGradient(listOf(Palette.Shield600.copy(alpha = 0.10f), Color.Transparent), radius = 1400f))
-            .background(Palette.Ink950)
-            .safeDrawingPadding(),
-    ) {
-        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+    GlassBackground { Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp).glass(RoundedCornerShape(22.dp))
+                .padding(start = 12.dp, end = 2.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             if (page != null) {
                 IconButton(onClick = { page = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "חזרה", tint = Color.White) }
             }
@@ -153,7 +155,11 @@ private fun App(vm: AppViewModel) {
             Spacer(Modifier.weight(1f))
             Box {
                 IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.MoreVert, "תפריט", tint = Color.White) }
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenu(
+                    expanded = menuOpen, onDismissRequest = { menuOpen = false }, shape = RoundedCornerShape(18.dp),
+                    containerColor = Palette.Ink800.copy(alpha = 0.96f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Palette.Border),
+                ) {
                     DropdownMenuItem(text = { Text("הגדרות") }, leadingIcon = { Icon(Icons.Filled.Settings, null) },
                         onClick = { menuOpen = false; page = Screen.SETTINGS })
                     DropdownMenuItem(text = { Text("סרטון או תמונה חדשים") }, leadingIcon = { Icon(Icons.Filled.Add, null) },
@@ -199,7 +205,7 @@ private fun App(vm: AppViewModel) {
                 )
             }
         }
-    }
+    } }
 }
 
 
@@ -208,7 +214,7 @@ private fun App(vm: AppViewModel) {
 private fun CrashDialog(report: String, onShare: () -> Unit, onCopy: () -> Unit, onClose: () -> Unit) {
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onClose,
-        containerColor = Palette.Ink900,
+        containerColor = Palette.Ink850, shape = RoundedCornerShape(26.dp),
         title = { androidx.compose.material3.Text("האפליקציה קרסה בפעם הקודמת", color = Color.White) },
         text = {
             Column {

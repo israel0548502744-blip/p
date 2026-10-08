@@ -4,6 +4,7 @@
 status=$?
 mkdir -p app/build/e2e-out
 adb exec-out run-as com.blueshield.app cat files/e2e_output.mp4 > app/build/e2e-out/e2e_output.mp4 2>/dev/null || true
+adb exec-out run-as com.blueshield.app cat files/screen_home.png > app/build/e2e-out/screen_home.png 2>/dev/null || true
 echo "================ engines tried ================"
 adb logcat -d | grep -E "BlueShield: (model: .*(unavailable|not used|loaded)|engines|timings)" | head -120
 echo "================ logcat (filtered) ================"

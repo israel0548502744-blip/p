@@ -30,7 +30,6 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -116,7 +115,7 @@ fun AboutScreen() {
                         "אם משהו יצא לא תקין, שלחו את הדוח למפתח.",
                     color = Palette.Ink100, fontSize = 13.sp, lineHeight = 18.sp,
                 )
-                OutlinedButton(
+                GlassOutlined(
                     onClick = {
                         val text = "BlueShield ${BuildInfo.version} · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · Android ${android.os.Build.VERSION.RELEASE}\n" +
                             (com.blueshield.app.engine.Accelerators.report(context)?.let { "\n$it\n" } ?: "") + "\n" +
@@ -185,7 +184,7 @@ fun PhotoHome(preview: Bitmap, name: String, settings: CensorSettings, busy: Boo
             }
             SettingsSummary(settings, onEditSettings)
         }
-        Box(Modifier.background(Palette.Ink950).padding(16.dp), contentAlignment = Alignment.Center) {
+        BottomBar {
             if (busy) CircularProgressIndicator(color = Palette.Shield400)
             else PrimaryButton("צנזור התמונה", Icons.Filled.PlayArrow, onClick = onStart)
         }
@@ -219,15 +218,15 @@ fun PhotoResultScreen(
         )
         if (busy) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Palette.Shield400) }
         PrimaryButton(if (saved) "נשמרה בגלריה" else "שמירה בגלריה", Icons.Filled.Download, enabled = !saved, onClick = onSave)
-        OutlinedButton(onClick = onShare, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(14.dp)) {
+        GlassOutlined(onClick = onShare, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(16.dp)) {
             Icon(Icons.Filled.Share, null)
             Spacer(Modifier.width(8.dp))
             Text("שיתוף")
         }
         PeoplePanel(result.people, draft, thumbnail, onOverride, onApply, settings)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = onAdjust, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) { Icon(Icons.Filled.Refresh, null); Spacer(Modifier.width(6.dp)); Text("כוונון") }
-            OutlinedButton(onClick = onNew, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) { Icon(Icons.Filled.Image, null); Spacer(Modifier.width(6.dp)); Text("תמונה חדשה") }
+            GlassOutlined(onClick = onAdjust, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) { Icon(Icons.Filled.Refresh, null); Spacer(Modifier.width(6.dp)); Text("כוונון") }
+            GlassOutlined(onClick = onNew, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) { Icon(Icons.Filled.Image, null); Spacer(Modifier.width(6.dp)); Text("תמונה חדשה") }
         }
         PrivacyPill()
     }
@@ -283,13 +282,13 @@ fun BatchScreen(b: com.blueshield.app.AppViewModel.BatchState, onClose: () -> Un
         }
         if (b.finished) {
             PrimaryButton("סיום", Icons.Filled.CheckCircle, onClick = onClose)
-            OutlinedButton(onClick = onMore, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(14.dp)) {
+            GlassOutlined(onClick = onMore, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(16.dp)) {
                 Icon(Icons.Filled.Image, null)
                 Spacer(Modifier.width(8.dp))
                 Text("עוד תמונות")
             }
         } else {
-            OutlinedButton(onClick = onClose, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(14.dp)) {
+            GlassOutlined(onClick = onClose, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(16.dp)) {
                 Text("עצירה (מה שכבר נשמר נשאר בגלריה)")
             }
         }

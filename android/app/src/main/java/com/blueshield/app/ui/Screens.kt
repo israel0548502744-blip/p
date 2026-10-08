@@ -50,7 +50,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -81,15 +80,46 @@ import com.blueshield.core.pipeline.PersonSummary
 
 @Composable
 fun PrimaryButton(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector, enabled: Boolean = true, onClick: () -> Unit) {
-    Button(
-        onClick = onClick, enabled = enabled, shape = RoundedCornerShape(14.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = Palette.Shield600, disabledContainerColor = Palette.Shield700.copy(alpha = 0.4f)),
-        modifier = Modifier.fillMaxWidth().height(54.dp),
+    val shape = RoundedCornerShape(18.dp)
+    Box(
+        Modifier.fillMaxWidth().height(56.dp).clip(shape)
+            .background(if (enabled) Glass.Accent else Brush.linearGradient(listOf(Color(0x33FFFFFF), Color(0x26FFFFFF))))
+            .background(Brush.verticalGradient(listOf(Color(0x2EFFFFFF), Color.Transparent)))
+            .border(1.dp, Brush.verticalGradient(listOf(Color(0x66FFFFFF), Color(0x0FFFFFFF))), shape)
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, null)
-        Spacer(Modifier.width(8.dp))
-        Text(text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            val tint = if (enabled) Color.White else Palette.Ink300
+            Icon(icon, null, tint = tint)
+            Spacer(Modifier.width(8.dp))
+            Text(text, color = tint, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        }
     }
+}
+
+/** A secondary action: the same size as [PrimaryButton], made of clear glass. */
+@Composable
+fun GlassButton(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector, enabled: Boolean = true, onClick: () -> Unit) {
+    Box(
+        Modifier.fillMaxWidth().height(50.dp).glass(RoundedCornerShape(18.dp)).clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, null, tint = Palette.Ink100)
+            Spacer(Modifier.width(8.dp))
+            Text(text, color = Palette.Ink100, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+        }
+    }
+}
+
+/** The bar at the bottom of a screen that holds its main button, frosted over the content. */
+@Composable
+fun BottomBar(content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit) {
+    Box(
+        Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Transparent, Glass.Bar, Glass.Bar))).padding(16.dp),
+        contentAlignment = Alignment.Center, content = content,
+    )
 }
 
 // ───────────────────────────────── Home ─────────────────────────────────
@@ -110,7 +140,7 @@ fun HomeScreen(
                 SettingsSummary(settings, onEditSettings)
             }
         }
-        if (video != null) Box(Modifier.background(Palette.Ink950).padding(16.dp)) { PrimaryButton("התחלת צנזור", Icons.Filled.PlayArrow, onClick = onStart) }
+        if (video != null) BottomBar { PrimaryButton("התחלת צנזור", Icons.Filled.PlayArrow, onClick = onStart) }
     }
 }
 
@@ -121,14 +151,15 @@ private fun EmptyState(loading: Boolean, error: String?, onPick: () -> Unit, onP
             val pulse = rememberInfiniteTransition(label = "pulse")
             val scale by pulse.animateFloat(0.92f, 1.08f, infiniteRepeatable(tween(1600), RepeatMode.Reverse), label = "scale")
             Box(contentAlignment = Alignment.Center) {
-                Box(Modifier.size((84 * scale).dp).clip(RoundedCornerShape(26.dp)).background(Palette.Shield500.copy(alpha = 0.18f)))
+                Box(Modifier.size((96 * scale).dp).clip(RoundedCornerShape(30.dp)).background(Palette.Shield400.copy(alpha = 0.16f)))
                 Box(
-                    Modifier.size(72.dp).clip(RoundedCornerShape(22.dp)).background(Brush.linearGradient(listOf(Palette.Shield400, Palette.Shield700))),
+                    Modifier.size(76.dp).clip(RoundedCornerShape(24.dp)).background(Glass.Accent)
+                        .border(1.dp, Brush.verticalGradient(listOf(Color(0x80FFFFFF), Color(0x00FFFFFF))), RoundedCornerShape(24.dp)),
                     contentAlignment = Alignment.Center,
                 ) { Icon(Icons.Filled.VideoLibrary, null, tint = Color.White, modifier = Modifier.size(34.dp)) }
             }
             Spacer(Modifier.height(20.dp))
-            Text("בחרו סרטון או תמונה", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+            Text("בחרו סרטון או תמונה", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.3).sp)
             Spacer(Modifier.height(8.dp))
             Text(
                 // RLM first so the paragraph is right-to-left even though it starts with the Latin brand name
@@ -140,13 +171,7 @@ private fun EmptyState(loading: Boolean, error: String?, onPick: () -> Unit, onP
             else {
                 PrimaryButton("בחירת סרטון או תמונה", Icons.Filled.Movie, onClick = onPick)
                 Spacer(Modifier.height(10.dp))
-                androidx.compose.material3.OutlinedButton(
-                    onClick = onPickMany, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(14.dp),
-                ) {
-                    Icon(Icons.Filled.Collections, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("כמה תמונות בבת אחת")
-                }
+                GlassButton("כמה תמונות בבת אחת", Icons.Filled.Collections, onClick = onPickMany)
             }
             if (error != null) Text(error, color = Palette.Danger, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp))
             Spacer(Modifier.height(16.dp))
@@ -245,12 +270,12 @@ fun ProcessingScreen(job: JobState, onPause: () -> Unit, onResume: () -> Unit, o
                 for ((i, step) in STEPS.withIndex()) StepRow(i, step.second, step.third, done = i < active, now = i == active, paused = job.paused)
                 Spacer(Modifier.height(14.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedButton(onClick = if (job.paused) onResume else onPause, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) {
+                    GlassOutlined(onClick = if (job.paused) onResume else onPause, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) {
                         Icon(if (job.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, null)
                         Spacer(Modifier.width(6.dp))
                         Text(if (job.paused) "המשך" else "השהיה")
                     }
-                    OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) {
+                    GlassOutlined(onClick = onCancel, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) {
                         Icon(Icons.Filled.Stop, null, tint = Palette.Danger)
                         Spacer(Modifier.width(6.dp))
                         Text("ביטול", color = Color(0xFFFECACA))
@@ -324,7 +349,7 @@ fun ResultScreen(
             ComparePlayer(video.uri, censoredUri, video.width.toFloat() / video.height, mode, null, Modifier.fillMaxWidth())
         }
         PrimaryButton(if (saved) "נשמר בגלריה" else "שמירה בגלריה", Icons.Filled.Download, enabled = !saved, onClick = onSave)
-        OutlinedButton(onClick = onShare, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(14.dp)) {
+        GlassOutlined(onClick = onShare, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(16.dp)) {
             Icon(Icons.Filled.Share, null)
             Spacer(Modifier.width(8.dp))
             Text("שיתוף")
@@ -340,8 +365,8 @@ fun ResultScreen(
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = onAdjust, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) { Icon(Icons.Filled.Refresh, null); Spacer(Modifier.width(6.dp)); Text("כוונון") }
-            OutlinedButton(onClick = onNew, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) { Icon(Icons.Filled.Movie, null); Spacer(Modifier.width(6.dp)); Text("סרטון חדש") }
+            GlassOutlined(onClick = onAdjust, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) { Icon(Icons.Filled.Refresh, null); Spacer(Modifier.width(6.dp)); Text("כוונון") }
+            GlassOutlined(onClick = onNew, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) { Icon(Icons.Filled.Movie, null); Spacer(Modifier.width(6.dp)); Text("סרטון חדש") }
         }
         PrivacyPill()
     }
