@@ -234,14 +234,15 @@ class Processor(private val context: Context) {
                 if (!raw.any()) return null
                 censored++
                 val e = Composer.edgeMasks(raw, m.width, m.height, s.aggressive) ?: return null
-                return Renderer.Mask(e.soft.width, e.soft.height, e.soft.data, e.band.data)
+                val cloth = if (s.fill == "clothing") a.clothFor(i) else null
+                return Renderer.Mask(e.soft.width, e.soft.height, e.soft.data, e.band.data, cloth, a.clothWidth, a.clothHeight)
             }
         }
         // the models aren't needed to render: free them (their memory, and any GPU / AI-chip buffers) for the
         // video decoder and encoder
         models?.close()
         models = null
-        val options = Renderer.Options(CensorSettingsColor.rgb(s), s.animated, s.keepAudio, s.quality, softness = s.softness)
+        val options = Renderer.Options(CensorSettingsColor.rgb(s), s.animated, s.keepAudio, s.quality, softness = s.softness, clothing = s.fill == "clothing")
         fun render(o: Renderer.Options) = Renderer(context, m).render(
             out, source, o, total,
             shouldContinue = { checkpoint(meter) },
@@ -262,7 +263,7 @@ class Processor(private val context: Context) {
             out.delete()
             censored = 0
             try {
-                render(Renderer.Options(options.rgb, options.animated, options.keepAudio, options.quality, softwareEncoder = true, softness = options.softness))
+                render(Renderer.Options(options.rgb, options.animated, options.keepAudio, options.quality, softwareEncoder = true, softness = options.softness, clothing = options.clothing))
             } catch (e2: Renderer.IncompleteException) {
                 out.delete()
                 error("קידוד הסרטון נכשל: המקודד איבד פריימים (${e2.written} מתוך ${e2.sent}). נסו שוב, או בחרו איכות ייצוא אחרת.")
@@ -333,7 +334,8 @@ class Processor(private val context: Context) {
         val px = IntArray(w * h)
         out.getPixels(px, 0, w, 0, 0, w, h)
         com.blueshield.core.pipeline.StillImage.alpha(a, s, decisions, w, h, px)?.let { alpha ->
-            com.blueshield.core.pipeline.StillImage.paint(px, w, h, alpha, CensorSettingsColor.rgb(s))
+            val cloth = if (s.fill == "clothing") a.clothFor(0) else null
+            com.blueshield.core.pipeline.StillImage.paint(px, w, h, alpha, CensorSettingsColor.rgb(s), cloth, a.clothWidth, a.clothHeight)
             out.setPixels(px, 0, w, 0, 0, w, h)
         }
         val file = File(context.filesDir, "outputs/blueshield_photo_${System.currentTimeMillis()}.jpg").also { it.parentFile?.mkdirs() }

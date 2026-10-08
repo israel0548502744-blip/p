@@ -10,6 +10,8 @@ import com.blueshield.core.image.TextGuard
 import com.blueshield.core.ml.ModelStore
 import java.io.File
 import kotlin.math.hypot
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
@@ -51,7 +53,22 @@ object StillImage {
      * Paints [rgb] over [pixels] (ARGB, [w] × [h], modified in place) where [alpha] is set — except on-screen
      * text, which stays visible (same rule as the video shader).
      */
-    fun paint(pixels: IntArray, w: Int, h: Int, alpha: ByteMask, rgb: Int) {
+    /** Bilinear RGBA (0..1) of the garment map at cell position (x, y), or null where no garment is known. */
+    private fun clothAt(c: ByteArray, cw: Int, ch: Int, x: Float, y: Float): FloatArray? {
+        val x0 = x.toInt().coerceIn(0, cw - 1); val y0 = y.toInt().coerceIn(0, ch - 1)
+        val x1 = min(cw - 1, x0 + 1); val y1 = min(ch - 1, y0 + 1)
+        val fx = (x - x0).coerceIn(0f, 1f); val fy = (y - y0).coerceIn(0f, 1f)
+        val out = FloatArray(4)
+        for (k in 0..3) {
+            fun v(xx: Int, yy: Int) = (c[(yy * cw + xx) * 4 + k].toInt() and 0xFF) / 255f
+            val top = v(x0, y0) + (v(x1, y0) - v(x0, y0)) * fx
+            val bot = v(x0, y1) + (v(x1, y1) - v(x0, y1)) * fx
+            out[k] = top + (bot - top) * fy
+        }
+        return if (out[3] > 0.02f) out else null
+    }
+
+    fun paint(pixels: IntArray, w: Int, h: Int, alpha: ByteMask, rgb: Int, cloth: ByteArray? = null, clothW: Int = 0, clothH: Int = 0) {
         val text = TextGuard.mask(pixels, w, h)
         val cr = rgb shr 16 and 0xFF
         val cg = rgb shr 8 and 0xFF
@@ -64,8 +81,19 @@ object StillImage {
             val r = p shr 16 and 0xFF
             val g = p shr 8 and 0xFF
             val b = p and 0xFF
+            var fr = cr
+            var fg = cg
+            var fb = cb
+            if (cloth != null) clothAt(cloth, clothW, clothH, (i % w + 0.5f) * clothW / w - 0.5f, (i / w + 0.5f) * clothH / h - 0.5f)?.let { c ->
+                // the garment continued over the skin, with the body's shading (same as the video shader)
+                val lum = (0.299f * r + 0.587f * g + 0.114f * b) / 255f
+                val shade = Math.pow((max(lum, 0.01f) / c[3]).toDouble(), 0.8).toFloat().coerceIn(0.6f, 1.35f)
+                fr = (c[0] * shade * 255f).roundToInt().coerceIn(0, 255)
+                fg = (c[1] * shade * 255f).roundToInt().coerceIn(0, 255)
+                fb = (c[2] * shade * 255f).roundToInt().coerceIn(0, 255)
+            }
             pixels[i] = (p and -0x1000000) or
-                ((r + (cr - r) * f).roundToInt() shl 16) or ((g + (cg - g) * f).roundToInt() shl 8) or (b + (cb - b) * f).roundToInt()
+                ((r + (fr - r) * f).roundToInt() shl 16) or ((g + (fg - g) * f).roundToInt() shl 8) or (b + (fb - b) * f).roundToInt()
         }
     }
 }

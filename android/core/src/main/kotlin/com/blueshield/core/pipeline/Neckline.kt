@@ -12,7 +12,7 @@ import kotlin.math.min
  * * the face itself is never censored (forehead to chin);
  * * the neck is not censored either…
  * * …unless the bare skin continues down into the chest (a low neckline): then everything from
- *   about one centimetre below the chin downwards is censored.
+ *   the end of the throat (about half a face below the chin) downwards is censored — the throat stays visible.
  *
  * All sizes are relative to the face box (NudeNet face detection, motion-tracked), so it works at any zoom.
  */

@@ -63,7 +63,23 @@ class Analysis(
     val people: Map<Int, PersonTrack>,
     /** Merged duplicate track id -> surviving id. */
     val aliases: Map<Int, Int> = emptyMap(),
+    /** Per-frame garment colour maps ([ClothMap], RGBA rows packed as a 4×-wide ByteMask). */
+    val cloth: MaskStore? = null,
 ) : AutoCloseable {
+    /** The garment colour map of frame [i] (RGBA, [clothWidth] × [clothHeight]), or null when nothing is known. */
+    fun clothFor(i: Int): ByteArray? {
+        val c = cloth ?: return null
+        // a cover held over from a neighbouring frame (drop-out fill) takes that frame's colours
+        for (j in intArrayOf(i, i - 1, i + 1, i - 2, i + 2)) {
+            if (j < 0 || j >= c.size) continue
+            val m = c[j]
+            if (m.any()) return m.data
+        }
+        return null
+    }
+    val clothWidth get() = (cloth?.width ?: 0) / 4
+    val clothHeight get() = cloth?.height ?: 0
+
     val frameCount get() = records.size
 
     fun decisions(settings: CensorSettings, overrides: Map<Int, Override>): Map<Int, Boolean> {
@@ -152,7 +168,10 @@ class Analysis(
         return max(0, segStride - 1) + if (settings.aggressive) 1 else 0
     }
 
-    override fun close() = store.close()
+    override fun close() {
+        store.close()
+        cloth?.close()
+    }
 }
 
 /**
@@ -215,9 +234,13 @@ class Analyzer(
         skinOn, spec.tracking.hysteresisOffRatio,
     )
     val store = MaskStore(storeFile, maskWidth, maskHeight)
+    /** Garment colour next to the skin, per frame ([ClothMap]): the "continue the clothes" fill. */
+    private val clothSize = ClothMap.size(width, height)
+    val clothStore = MaskStore(File(storeFile.path + ".cloth"), clothSize.first * 4, clothSize.second)
     private val records = ArrayList<FrameRecord>()
     private var lastSkin: FloatMask? = null
     private var lastPerson: FloatMask? = null
+    private var lastClothes: FloatMask? = null
     private var faceMap: FloatMask? = null
     private var sinceSeg = Int.MAX_VALUE / 2
     var processed = 0
@@ -293,7 +316,7 @@ class Analyzer(
                 var seg = if (fullDue) {
                     timed("seg_full") { segmenter.segment(frame, settings.includeFace, tiled = settings.aggressive) }
                 } else { // between whole-frame passes: carry the last result along with the motion
-                    SkinSegmenter.Result(flow.warp(lastSkin!!), flow.warp(lastPerson!!), flow.warp(faceMap!!))
+                    SkinSegmenter.Result(flow.warp(lastSkin!!), flow.warp(lastPerson!!), flow.warp(faceMap!!), flow.warp(lastClothes!!))
                 }
                 // the close-up per-person pass only for people who are (still) to be censored: a man already
                 // recognised, or a small child, is never covered, so his skin needn't be found in detail
@@ -334,9 +357,11 @@ class Analyzer(
                 lastSkin = skin
                 lastPerson = seg.person
                 faceMap = seg.face
+                lastClothes = seg.clothes
                 sinceSeg = 0
             } else {
                 lastSkin = flow.warp(lastSkin!!)
+                lastClothes = lastClothes?.let { flow.warp(it) }
                 sinceSeg++
             }
             val skinBin = timed("fuser") { fuser.update(lastSkin!!, flow, fresh) }
@@ -397,6 +422,10 @@ class Analyzer(
             }
             records += FrameRecord(p, r)
             timed("store") { store.append(ByteMask(width, height, owners).resizeNearest(store.width, store.height)) }
+            timed("cloth") {
+                val c = lastClothes?.let { ClothMap.compute(frame, skinBin, it) } ?: ByteArray(clothSize.first * 4 * clothSize.second)
+                clothStore.append(ByteMask(clothSize.first * 4, clothSize.second, c))
+            }
             lastSkinBinary = skinBin
             processed = idx + 1
             onFrame(idx)
@@ -481,7 +510,7 @@ class Analyzer(
         return BooleanArray(n) { grown.data[it].toInt() != 0 }
     }
 
-    fun finish(): Analysis = Analysis(settings, spec, fps, store, records.toList(), people.all.filterValues { it.frames > 0 }, people.aliases.toMap())
+    fun finish(): Analysis = Analysis(settings, spec, fps, store, records.toList(), people.all.filterValues { it.frames > 0 }, people.aliases.toMap(), clothStore)
 
     companion object {
         val FACE_LABELS = setOf("FACE_FEMALE", "FACE_MALE")

@@ -32,12 +32,18 @@ class Renderer(private val context: Context, private val meta: VideoMeta) {
     }
 
     /** [data]: the cover; [band]: its blurred edge band (Composer.edgeMasks), where the shader decides by colour. */
-    class Mask(val width: Int, val height: Int, val data: ByteArray, val band: ByteArray = data)
+    class Mask(
+        val width: Int, val height: Int, val data: ByteArray, val band: ByteArray = data,
+        /** Garment colours for the "continue the clothes" fill (RGBA, [clothW] × [clothH]), or null. */
+        val cloth: ByteArray? = null, val clothW: Int = 0, val clothH: Int = 0,
+    )
 
     class Options(
         val rgb: Int, val animated: Boolean, val keepAudio: Boolean, val quality: String, val softwareEncoder: Boolean = false,
         /** Edge softness 0..100 (the settings slider): width of the alpha ramp across the fitted edge. */
         val softness: Int = 20,
+        /** Fill the cover with the continued garment instead of the colour. */
+        val clothing: Boolean = false,
     )
 
     /** The encoded video lost frames (a hardware encoder or the muxer dropped them): the file would be corrupt. */
@@ -184,8 +190,10 @@ class Renderer(private val context: Context, private val meta: VideoMeta) {
                     }
                     val m = source.mask(index, decInfo.presentationTimeUs)
                     if (m != null) shader.uploadMask(m.width, m.height, m.data, m.band) else shader.uploadMask(1, 1, ZERO)
+                    if (opts.clothing) shader.uploadCloth(m?.clothW ?: 0, m?.clothH ?: 0, m?.cloth)
                     shader.draw(w, h, st4, opts.rgb, (decInfo.presentationTimeUs / 1e6).toFloat(), opts.animated,
-                        ringTexels = com.blueshield.core.pipeline.Composer.EDGE_RING, soft = 0.1f + opts.softness.coerceIn(0, 100) / 100f * 0.5f)
+                        ringTexels = com.blueshield.core.pipeline.Composer.EDGE_RING, soft = 0.1f + opts.softness.coerceIn(0, 100) / 100f * 0.5f,
+                        clothing = opts.clothing)
                     val now = System.nanoTime()
                     if (now - lastPreview > 700_000_000L) {
                         lastPreview = now

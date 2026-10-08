@@ -63,6 +63,16 @@ fun SettingsSection(s: CensorSettings, hasAudio: Boolean, enabled: Boolean, onCh
             }
 
             Spacer(Modifier.height(18.dp))
+            SectionTitle("סגנון הכיסוי")
+            Spacer(Modifier.height(10.dp))
+            Segmented(listOf("color" to "צבע אחיד", "clothing" to "המשך הבגד"), s.fill, { onChange(s.copy(fill = it)) }, enabled)
+            Text(
+                if (s.fill == "clothing") "העור מתמלא בצבע הבגד שלידו, עם הצללות הגוף: זרוע הופכת לשרוול, מחשוף לצווארון. איפה שאין בגד ליד, משתמשים בצבע שנבחר למטה."
+                else "העור מכוסה בצבע אחיד, לפי הקווים של הגוף.",
+                color = Palette.Ink400, fontSize = 11.5.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 6.dp),
+            )
+
+            Spacer(Modifier.height(18.dp))
             SectionTitle("צבע הצנזור")
             Spacer(Modifier.height(10.dp))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {

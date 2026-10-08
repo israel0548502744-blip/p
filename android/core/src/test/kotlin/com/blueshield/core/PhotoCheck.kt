@@ -43,7 +43,8 @@ class PhotoCheck {
             println("PERSON #${p.id} ${p.gender} pFemale=${"%.2f".format(p.pFemale)} votes=${p.votes} age=${p.age} child=${p.child} censored=${d[p.id]} box=$box")
         }
         val px = IntArray(w * h) { (0xFF shl 24) or ((full.data[it * 3].toInt() and 0xFF) shl 16) or ((full.data[it * 3 + 1].toInt() and 0xFF) shl 8) or (full.data[it * 3 + 2].toInt() and 0xFF) }
-        StillImage.alpha(a, settings, d, w, h, px.copyOf())?.let { StillImage.paint(px, w, h, it, CensorSettings.parseColor(settings.color)) }
+        val cloth = if (settings.fill == "clothing") a.clothFor(0) else null
+        StillImage.alpha(a, settings, d, w, h, px.copyOf())?.let { StillImage.paint(px, w, h, it, CensorSettings.parseColor(settings.color), cloth, a.clothWidth, a.clothHeight) }
         // Debug panel at analysis size, scaled to the photo size.
         val out = java.awt.image.BufferedImage(w * 2, h, java.awt.image.BufferedImage.TYPE_INT_RGB)
         out.setRGB(0, 0, w, h, px, 0, w)

@@ -69,6 +69,8 @@ class CensorSettings:
     target: str = "female"  # 'female' = only people classified as women | 'everyone'
     gender_threshold: int = 70  # % confidence needed to call someone female / male
     uncertain_policy: str = "censor"  # what to do with people the classifier is unsure about
+    # 'color' = solid colour | 'clothing' = continue the garment over the skin (Android; the desktop renders colour)
+    fill: str = "color"
 
     def validate(self) -> "CensorSettings":
         hex_to_bgr(self.color)
@@ -83,6 +85,8 @@ class CensorSettings:
             self.target = "female"
         if self.uncertain_policy not in POLICIES:
             self.uncertain_policy = "censor"
+        if self.fill not in ("color", "clothing"):
+            self.fill = "color"
         return self
 
     def to_dict(self) -> dict:
@@ -805,7 +809,7 @@ NECK_BAND_HEIGHT = 0.7
 NECK_PROBE_HALF_WIDTH = 0.35
 NECK_PROBE_HEIGHT = 0.6
 CLEAVAGE_MIN_FILL = 0.12
-CLEAVAGE_START = 0.06  # ≈ 1 cm below the chin
+CLEAVAGE_START = 0.45  # the end of the throat (~half a face below the chin): the throat itself stays visible
 SPECK_PERSON_FRAC = 0.006
 SPECK_FRAME_FRAC = 0.0006
 CLEAVAGE_STICKY_FRAMES = 3  # a low neckline seen in this many frames counts for the rest of the shot
@@ -817,7 +821,7 @@ _JAW = 0.25
 def apply_neckline(skin: np.ndarray, face: tuple[float, float, float, float],
                    face_prob: Optional[np.ndarray] = None, known_cleavage: bool = False) -> bool:
     """Face and neck stay uncensored; a low neckline (bare skin continuing into the chest) is censored from
-    about one centimetre below the chin. Same algorithm as the Android ``Neckline.apply``.
+    the end of the throat (about half a face below the chin). Same algorithm as the Android ``Neckline.apply``.
 
     Returns whether a low neckline was seen in this frame; ``known_cleavage`` (seen on this face before) makes
     the decision stick, so the censoring doesn't flicker when the head turns or tilts."""

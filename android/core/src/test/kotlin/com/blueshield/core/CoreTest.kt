@@ -318,7 +318,7 @@ class CoreTest {
         com.blueshield.core.pipeline.Neckline.apply(low, w, h, face, spec.neckline)
         val start = (110 + spec.neckline.cleavageStart * 70).toInt()
         assertFalse(low[(start - 2) * w + 100], "just under the chin stays free")
-        assertTrue(low[(start + 3) * w + 100] && low[200 * w + 100], "the neckline is censored from ~1 cm below the chin")
+        assertTrue(low[(start + 3) * w + 100] && low[200 * w + 100], "the neckline is censored from the end of the throat")
     }
 
     @Test fun armOutsideTheBoxFollowsItsOwner() {
@@ -446,6 +446,31 @@ class CoreTest {
         store(auto, fastest = true).use { m -> assertTrue(m.engineOf(ModelStore.FACES) in setOf(ModelStore.CPU, "same")); assertTrue(ModelStore.FACES in m.measured) }
         // several inputs (the outline decoder): stays on the plain engine
         store(Memory(), fastest = false).use { m -> assertEquals(ModelStore.CPU, m.engineOf(ModelStore.SAM_DECODER)) }
+    }
+
+    @Test fun clothMapContinuesTheGarmentOverTheSkin() {
+        // a bare arm (skin) in the middle of a blue sleeve (clothes) on a grey wall
+        val w = 64; val h = 48
+        val img = RgbImage(w, h)
+        val skin = BooleanArray(w * h)
+        val clothes = FloatMask(w, h)
+        for (y in 0 until h) for (x in 0 until w) {
+            val i = y * w + x
+            val (r, g, b) = when {
+                x in 24..39 -> { skin[i] = true; Triple(220, 170, 140) }
+                x in 12..51 -> { clothes.data[i] = 0.9f; Triple(30, 60, 200) }
+                else -> Triple(128, 128, 128)
+            }
+            img.data[i * 3] = r.toByte(); img.data[i * 3 + 1] = g.toByte(); img.data[i * 3 + 2] = b.toByte()
+        }
+        val c = com.blueshield.core.pipeline.ClothMap.compute(img, skin, clothes)
+        val (cw, _) = com.blueshield.core.pipeline.ClothMap.size(w, h)
+        val cell = (6 * cw + 8) * 4 // the middle of the arm
+        assertTrue((c[cell + 3].toInt() and 0xFF) > 0, "a garment colour is known on the arm")
+        assertTrue(abs((c[cell + 2].toInt() and 0xFF) - 200) < 20 && (c[cell].toInt() and 0xFF) < 60, "the arm takes the sleeve's blue, not the wall's grey")
+        // no clothes anywhere: nothing known, the renderer falls back to the colour
+        val none = com.blueshield.core.pipeline.ClothMap.compute(img, skin, FloatMask(w, h))
+        assertTrue((0 until none.size / 4).all { none[it * 4 + 3].toInt() == 0 })
     }
 
     @Test fun personGridMatchesModelOutputs() {

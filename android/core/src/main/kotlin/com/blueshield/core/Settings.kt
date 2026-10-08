@@ -21,6 +21,8 @@ data class CensorSettings(
     @SerialName("gender_threshold") val genderThreshold: Int = 70,
     /** "censor" (safe default) or "keep": what happens to people the classifier is unsure about. */
     @SerialName("uncertain_policy") val uncertainPolicy: String = "censor",
+    /** "color" = a solid colour; "clothing" = the garment next to the skin continued over it (a sleeve, a collar). */
+    val fill: String = "color",
 ) {
     fun validated(): CensorSettings = copy(
         sensitivity = sensitivity.coerceIn(0, 100),
@@ -30,6 +32,7 @@ data class CensorSettings(
         quality = if (quality in setOf("high", "balanced", "small")) quality else "balanced",
         target = if (target in setOf("female", "everyone")) target else "female",
         uncertainPolicy = if (uncertainPolicy in setOf("censor", "keep")) uncertainPolicy else "censor",
+        fill = if (fill in setOf("color", "clothing")) fill else "color",
     ).also { parseColor(it.color) }
 
     val sensitivity01: Float get() = sensitivity / 100f

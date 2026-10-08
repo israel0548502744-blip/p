@@ -75,7 +75,8 @@ class PipelineE2ETest {
         val meta = VideoMeta.probe(ctx, fixture("tiny_portrait.mp4"))
         assertEquals(112, meta.width); assertEquals(200, meta.height)
         val p = Processor(ctx)
-        val result = p.run(meta, CensorSettings(speed = "fast")) { }
+        // (also runs the "continue the clothes" fill: garment-colour maps uploaded to the shader)
+        val result = p.run(meta, CensorSettings(speed = "fast", fill = "clothing")) { }
         assertEquals("error: ${result.error}", JobState.Stage.COMPLETE, result.stage)
         val r = MediaMetadataRetriever()
         r.setDataSource(result.output!!.path)

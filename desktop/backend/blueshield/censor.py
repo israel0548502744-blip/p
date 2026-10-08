@@ -107,7 +107,7 @@ def _ycc(rgb: np.ndarray) -> np.ndarray:
 
 def fitted_alpha(bgr: np.ndarray, soft: np.ndarray, band: np.ndarray, ring_px: float, ramp: float) -> np.ndarray:
     """The cover's edge fitted to this frame (the Android CensorShader's algorithm): in the band's grey zone, the
-    mean colour of the sure cover (this frame's skin) and of the sure surroundings on two rings around each pixel;
+    mean colour of the sure cover (this frame's skin) and of the sure surroundings on three rings around each pixel;
     the pixel (with four neighbours, against speckle) goes to the closer one, the coarse mask as a prior."""
     h, w = soft.shape
     v = soft.copy()
@@ -116,9 +116,9 @@ def fitted_alpha(bgr: np.ndarray, soft: np.ndarray, band: np.ndarray, ring_px: f
         f = _ycc(bgr[..., ::-1].astype(np.float32) / 255.0)
         s = np.zeros((len(ys), 3), np.float32); sn = np.zeros(len(ys), np.float32)
         b = np.zeros_like(s); bn = np.zeros_like(sn)
-        for r in (1, 2):
+        for ri, r in enumerate((0.5, 1.0, 2.0)):  # the inner ring keeps fingers apart
             for k in range(16):
-                t = 2 * math.pi * (k + 0.5 * (r - 1)) / 16
+                t = 2 * math.pi * (k + 0.5 * ri) / 16
                 yy = np.clip(np.rint(ys + math.sin(t) * ring_px * r).astype(int), 0, h - 1)
                 xx = np.clip(np.rint(xs + math.cos(t) * ring_px * r).astype(int), 0, w - 1)
                 m = soft[yy, xx]; c = f[yy, xx]
@@ -127,11 +127,11 @@ def fitted_alpha(bgr: np.ndarray, soft: np.ndarray, band: np.ndarray, ring_px: f
         ok = (sn >= 3) & (bn >= 3)
         s /= np.maximum(sn, 1)[:, None]; b /= np.maximum(bn, 1)[:, None]
         acc = np.zeros(len(ys), np.float32)
-        for dx, dy in ((0, 0), (2, 0), (-2, 0), (0, 2), (0, -2)):
+        for dx, dy in ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)):
             c = f[np.clip(ys + dy, 0, h - 1), np.clip(xs + dx, 0, w - 1)]
             ds = np.linalg.norm(c - s, axis=1); db = np.linalg.norm(c - b, axis=1)
             acc += db / (ds + db + 0.004)
-        v[ys, xs] = np.where(ok, 0.6 * acc / 5 + 0.4 * soft[ys, xs], soft[ys, xs])
+        v[ys, xs] = np.where(ok, 0.7 * acc / 5 + 0.3 * soft[ys, xs], soft[ys, xs])
     return np.clip((v - 0.5) / ramp + 0.5, 0.0, 1.0)
 
 

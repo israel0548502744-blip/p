@@ -16,14 +16,15 @@ import kotlin.math.sqrt
 
 /** Skin segmentation (MediaPipe Selfie Multiclass): body skin, face skin and person probability maps. */
 class SkinSegmenter(private val models: ModelStore, private val faceExclusion: Float = 0.35f) {
-    class Result(val skin: FloatMask, val person: FloatMask, val face: FloatMask)
+    /** Per-pixel probabilities: body skin, any person, face skin, clothes (what "the rest of her shirt" is). */
+    class Result(val skin: FloatMask, val person: FloatMask, val face: FloatMask, val clothes: FloatMask = FloatMask(skin.width, skin.height))
 
     /** Model runs so far (profiling). */
     var runs = 0
         private set
 
     /** Model output for one (letterboxed) input: SIZE × SIZE probability maps + where the input sits in them. */
-    private class Raw(val skin: FloatArray, val person: FloatArray, val face: FloatArray, val side: Int, val left: Int, val top: Int) {
+    private class Raw(val skin: FloatArray, val person: FloatArray, val face: FloatArray, val clothes: FloatArray, val side: Int, val left: Int, val top: Int) {
         val k get() = SIZE.toFloat() / side
 
         /** Resample the maps for the input-image rectangle [x0,x1)×[y0,y1), written at an offset into a frame-sized buffer. */
@@ -35,11 +36,12 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
             Resample.bilinear(skin, SIZE, SIZE, k, k, offX, offY, out.skin.data, w, x0, y0, x1, y1, max)
             Resample.bilinear(person, SIZE, SIZE, k, k, offX, offY, out.person.data, w, x0, y0, x1, y1, max)
             Resample.bilinear(face, SIZE, SIZE, k, k, offX, offY, out.face.data, w, x0, y0, x1, y1, max)
+            Resample.bilinear(clothes, SIZE, SIZE, k, k, offX, offY, out.clothes.data, w, x0, y0, x1, y1, max)
         }
     }
 
     fun segment(img: RgbImage, includeFace: Boolean, tiled: Boolean = false): Result {
-        val out = Result(FloatMask(img.width, img.height), FloatMask(img.width, img.height), FloatMask(img.width, img.height))
+        val out = Result(FloatMask(img.width, img.height), FloatMask(img.width, img.height), FloatMask(img.width, img.height), FloatMask(img.width, img.height))
         run(img, includeFace).into(out, 0, 0, 0, 0, img.width, img.height, max = false)
         if (tiled && (img.width > img.height * 1.2f || img.height > img.width * 1.2f)) {
             val side = min(img.width, img.height)
@@ -65,7 +67,7 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
     fun segmentRois(img: RgbImage, boxes: List<Box>, base: Result, includeFace: Boolean, roi: PipelineSpec.Roi, baseIsFresh: Boolean = false): Result {
         val w = img.width
         val h = img.height
-        val roiOut = Result(FloatMask(w, h), FloatMask(w, h), FloatMask(w, h))
+        val roiOut = Result(FloatMask(w, h), FloatMask(w, h), FloatMask(w, h), FloatMask(w, h))
         val cover = BooleanArray(w * h)
         // crops first, then the model on all of them (side by side when there are several), then the pasting
         class Crop(val a: Int, val b: Int, val side: Int, val rx1: Int, val ry1: Int, val rx2: Int, val ry2: Int)
@@ -101,12 +103,14 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
         val skin = base.skin.copy()
         val person = base.person.copy()
         val face = base.face.copy()
+        val clothes = base.clothes.copy()
         for (i in 0 until w * h) if (cover[i]) {
             skin.data[i] = roiOut.skin.data[i]
             person.data[i] = roiOut.person.data[i]
             face.data[i] = roiOut.face.data[i]
+            clothes.data[i] = roiOut.clothes.data[i]
         }
-        return Result(skin, person, face)
+        return Result(skin, person, face, clothes)
     }
 
     /** Runs the model on [img] letterboxed (edge-replicated) to a square, so portrait video keeps its proportions. */
@@ -122,6 +126,7 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
         val skin = FloatArray(SIZE * SIZE)
         val person = FloatArray(SIZE * SIZE)
         val face = FloatArray(SIZE * SIZE)
+        val clothes = FloatArray(SIZE * SIZE)
         val p = FloatArray(6)
         for (i in 0 until SIZE * SIZE) {
             var mx = Float.NEGATIVE_INFINITY
@@ -137,8 +142,9 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
             // the body-skin class sometimes bleeds onto faces (glasses, side light): keep faces clear
             skin[i] = if (includeFace) max(bodySkin, faceSkin) else if (faceSkin >= faceExclusion) 0f else bodySkin
             person[i] = 1f - p[0] / s
+            clothes[i] = p[4] / s
         }
-        return Raw(skin, person, face, side, left, top)
+        return Raw(skin, person, face, clothes, side, left, top)
     }
 
     companion object {

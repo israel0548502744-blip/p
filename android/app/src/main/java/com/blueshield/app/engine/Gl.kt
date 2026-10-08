@@ -75,9 +75,12 @@ class CensorShader(rotation: Int) {
     private val uStF: Int
     private val uRing: Int
     private val uSoft: Int
+    private val uCloth: Int
+    private val uFill: Int
     private val rot = rotation
     val videoTex: Int
     private val maskTex: Int
+    private val clothTex: Int
     private val quad: FloatBuffer = ByteBuffer.allocateDirect(8 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
         .apply { put(floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f)); position(0) }
 
@@ -95,10 +98,18 @@ class CensorShader(rotation: Int) {
         uStF = GLES20.glGetUniformLocation(program, "uStF")
         uRing = GLES20.glGetUniformLocation(program, "uRing")
         uSoft = GLES20.glGetUniformLocation(program, "uSoft")
-        val tex = IntArray(2)
-        GLES20.glGenTextures(2, tex, 0)
+        uCloth = GLES20.glGetUniformLocation(program, "uCloth")
+        uFill = GLES20.glGetUniformLocation(program, "uFill")
+        val tex = IntArray(3)
+        GLES20.glGenTextures(3, tex, 0)
         videoTex = tex[0]
         maskTex = tex[1]
+        clothTex = tex[2]
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, clothTex)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, videoTex)
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
@@ -132,11 +143,21 @@ class CensorShader(rotation: Int) {
         GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_LUMINANCE_ALPHA, width, height, 0, GLES20.GL_LUMINANCE_ALPHA, GLES20.GL_UNSIGNED_BYTE, ByteBuffer.wrap(interleaved))
     }
 
+    private var hasCloth = false
+
+    /** Garment colour map ([com.blueshield.core.pipeline.ClothMap], RGBA, display orientation), or null for none. */
+    fun uploadCloth(width: Int, height: Int, rgba: ByteArray?) {
+        hasCloth = rgba != null
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, clothTex)
+        if (rgba == null) GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, 1, 1, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, ByteBuffer.wrap(ByteArray(4)))
+        else GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, width, height, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, ByteBuffer.wrap(rgba))
+    }
+
     /**
      * @param ringTexels radius (mask texels) of the ring the edge decision samples skin / surroundings on
      * @param soft width of the final 0→1 alpha ramp around the decision (0.1 crisp … 0.6 soft)
      */
-    fun draw(viewW: Int, viewH: Int, stMatrix: FloatArray, rgb: Int, timeSec: Float, animated: Boolean, ringTexels: Float = 3f, soft: Float = 0.3f) {
+    fun draw(viewW: Int, viewH: Int, stMatrix: FloatArray, rgb: Int, timeSec: Float, animated: Boolean, ringTexels: Float = 3f, soft: Float = 0.3f, clothing: Boolean = false) {
         GLES20.glViewport(0, 0, viewW, viewH)
         GLES20.glUseProgram(program)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
@@ -157,6 +178,10 @@ class CensorShader(rotation: Int) {
         val (mx, my) = if (rot % 180 != 0) maskH to maskW else maskW to maskH
         GLES20.glUniform2f(uRing, ringTexels / mx, ringTexels / my)
         GLES20.glUniform1f(uSoft, soft)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, clothTex)
+        GLES20.glUniform1i(uCloth, 2)
+        GLES20.glUniform1i(uFill, if (clothing && hasCloth) 1 else 0)
         GLES20.glEnableVertexAttribArray(aPos)
         GLES20.glVertexAttribPointer(aPos, 2, GLES20.GL_FLOAT, false, 0, quad)
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
@@ -165,7 +190,7 @@ class CensorShader(rotation: Int) {
 
     fun release() {
         GLES20.glDeleteProgram(program)
-        GLES20.glDeleteTextures(2, intArrayOf(videoTex, maskTex), 0)
+        GLES20.glDeleteTextures(3, intArrayOf(videoTex, maskTex, clothTex), 0)
     }
 
     private fun link(vs: String, fs: String): Int {
@@ -217,6 +242,8 @@ class CensorShader(rotation: Int) {
             uniform mat4 uStF;
             uniform vec2 uRing;
             uniform float uSoft;
+            uniform sampler2D uCloth;
+            uniform int uFill;
             varying vec2 vVideo;
             varying vec2 vPos;
             float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
@@ -252,17 +279,20 @@ class CensorShader(rotation: Int) {
                 float y = luma(c);
                 return vec3(y, 1.128 * (c.b - y), 1.426 * (c.r - y));
             }
-            // Edge of the cover fitted to this frame (same algorithm as the desktop renderer): on two rings around
+            // Edge of the cover fitted to this frame (same algorithm as the desktop renderer): on three rings around
             // the pixel, the mean colour of the sure cover (this frame's skin) and of the sure surroundings; the
             // pixel (and four neighbours, against speckle) is decided by which it is closer to, with the coarse
             // mask as a prior.
             float fitted(vec2 pos, float a0) {
                 vec3 s = vec3(0.0); float sn = 0.0;
                 vec3 b = vec3(0.0); float bn = 0.0;
-                for (int r = 1; r <= 2; r++) {
+                // three rings (half, one and two radii): the inner one keeps fingers apart, the outer ones see past a
+                // wide blur of the coarse mask
+                for (int r = 0; r < 3; r++) {
+                    float rr = r == 0 ? 0.5 : r == 1 ? 1.0 : 2.0;
                     for (int k = 0; k < 16; k++) {
-                        float t = 6.2831853 * (float(k) + 0.5 * float(r - 1)) / 16.0;
-                        vec2 p = pos + vec2(cos(t), sin(t)) * uRing * float(r);
+                        float t = 6.2831853 * (float(k) + 0.5 * float(r)) / 16.0;
+                        vec2 p = pos + vec2(cos(t), sin(t)) * uRing * rr;
                         float m = texture2D(uMask, toDisplay(p)).r;
                         if (m > 0.9) { s += ycc(video(p)); sn += 1.0; }
                         else if (m < 0.1) { b += ycc(video(p)); bn += 1.0; }
@@ -273,13 +303,13 @@ class CensorShader(rotation: Int) {
                 b /= bn;
                 float acc = 0.0;
                 for (int i = 0; i < 5; i++) {
-                    vec2 o = i == 0 ? vec2(0.0) : i == 1 ? vec2(2.0, 0.0) : i == 2 ? vec2(-2.0, 0.0) : i == 3 ? vec2(0.0, 2.0) : vec2(0.0, -2.0);
+                    vec2 o = i == 0 ? vec2(0.0) : i == 1 ? vec2(1.0, 0.0) : i == 2 ? vec2(-1.0, 0.0) : i == 3 ? vec2(0.0, 1.0) : vec2(0.0, -1.0);
                     vec3 c = ycc(video(pos + o * uTexel));
                     float ds = distance(c, s);
                     float db = distance(c, b);
                     acc += db / (ds + db + 0.004);
                 }
-                return 0.6 * acc / 5.0 + 0.4 * a0;
+                return 0.7 * acc / 5.0 + 0.3 * a0;
             }
             void main() {
                 vec4 video = texture2D(uVideo, vVideo);
@@ -291,7 +321,15 @@ class CensorShader(rotation: Int) {
                 float a = clamp((v - 0.5) / uSoft + 0.5, 0.0, 1.0);
                 if (a > 0.0) a *= 1.0 - isText(video);
                 vec3 fill = uColor;
-                if (uAnimated == 1) {
+                if (uFill == 1) {
+                    // the garment next to the skin, continued over it, with the body's own shading (an arm becomes a
+                    // sleeve); A is the local mean brightness, 0 where no garment colour is known
+                    vec4 cl = texture2D(uCloth, d);
+                    if (cl.a > 0.02) {
+                        float shade = clamp(pow(max(luma(video.rgb), 0.01) / cl.a, 0.8), 0.6, 1.35);
+                        fill = clamp(cl.rgb * shade, 0.0, 1.0);
+                    }
+                } else if (uAnimated == 1) {
                     float wave = sin((d.x * 0.9 + d.y * 0.6) * 18.0 + uTime * 2.4);
                     fill = clamp(uColor * (1.0 + 0.12 * wave + 0.04 * sin(uTime * 3.1)) + step(0.85, wave) * 0.07, 0.0, 1.0);
                 }
