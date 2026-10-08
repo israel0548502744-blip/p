@@ -44,7 +44,15 @@ class PhotoCheck {
         }
         val px = IntArray(w * h) { (0xFF shl 24) or ((full.data[it * 3].toInt() and 0xFF) shl 16) or ((full.data[it * 3 + 1].toInt() and 0xFF) shl 8) or (full.data[it * 3 + 2].toInt() and 0xFF) }
         val cloth = if (settings.fill == "clothing") a.clothFor(0) else null
-        StillImage.alpha(a, settings, d, w, h, px.copyOf())?.let { StillImage.paint(px, w, h, it, CensorSettings.parseColor(settings.color), cloth, a.clothWidth, a.clothHeight) }
+        val alpha = StillImage.alpha(a, settings, d, w, h, px.copyOf())
+        alpha?.let { StillImage.paint(px, w, h, it, CensorSettings.parseColor(settings.color), cloth, a.clothWidth, a.clothHeight) }
+        // -Dblueshield.photoAlpha=alpha.png: the final censor alpha (grey 0..255, photo size) for scoring against a ground truth
+        System.getProperty("blueshield.photoAlpha")?.takeIf { it.isNotBlank() }?.let { path ->
+            val g = java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_BYTE_GRAY)
+            val r = g.raster
+            for (y in 0 until h) for (x in 0 until w) r.setSample(x, y, 0, alpha?.let { (it.data[y * w + x].toInt() and 0xFF) } ?: 0)
+            javax.imageio.ImageIO.write(g, "png", File(path))
+        }
         // Debug panel at analysis size, scaled to the photo size.
         val out = java.awt.image.BufferedImage(w * 2, h, java.awt.image.BufferedImage.TYPE_INT_RGB)
         out.setRGB(0, 0, w, h, px, 0, w)
