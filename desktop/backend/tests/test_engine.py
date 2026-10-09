@@ -196,6 +196,26 @@ def test_neck_is_free_but_a_low_neckline_is_censored():
     assert not tilted[start2 - 2, 100] and tilted[start2 + 3, 100]
 
 
+def test_fingers_in_front_of_the_neck_stay_censored():
+    from blueshield.pipeline import apply_neckline
+    face = (120, 40, 180, 110)  # chin at y 110
+
+    def scene(touch_neck):
+        m = np.zeros((300, 300), bool)
+        m[40:141, 135:166] = True  # face + neck
+        m[95:171, 205:261] = True  # palm off to the right
+        m[108:115, (166 if touch_neck else 172):206] = True  # a finger reaching into the throat band
+        m[120:127, 175:206] = True
+        return m
+    apart = scene(False)
+    apply_neckline(apart, face)
+    assert apart[111, 180] and apart[123, 185]  # fingertips by the chin stay censored
+    assert not apart[120, 150]  # the throat stays free
+    touching = scene(True)
+    apply_neckline(touching, face)
+    assert not touching[111, 168] and not touching[120, 150]  # skin joined to the throat in the band is the neck
+
+
 def test_own_face_check_reads_the_inner_half_of_the_box():
     from blueshield.pipeline import mean_in
     m = np.zeros((100, 100), np.float32)

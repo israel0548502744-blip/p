@@ -329,6 +329,29 @@ class CoreTest {
         assertTrue(tilted[(start2 + 3) * w + 100], "censored from the end of the throat below the real chin")
     }
 
+    @Test fun fingersInFrontOfTheNeckStayCensored() {
+        val w = 300; val h = 300
+        val face = Box(120f, 40f, 180f, 110f) // 60 × 70 px, chin at y 110
+        val spec = PipelineSpec.bundled
+        // a hand held up beside the chin: palm and wrist off to the right, two fingers reaching left into the throat band
+        // (not touching the neck), plus the face and a plain neck
+        fun scene(touchNeck: Boolean) = BooleanArray(w * h) { i ->
+            val x = i % w; val y = i / w
+            val neck = x in 135..165 && y in 40..140
+            val palm = x in 205..260 && y in 95..170
+            val finger1 = x in (if (touchNeck) 166 else 172)..205 && y in 108..114
+            val finger2 = x in 175..205 && y in 120..126
+            neck || palm || finger1 || finger2
+        }
+        val apart = scene(false)
+        com.blueshield.core.pipeline.Neckline.apply(apart, w, h, face, spec.neckline)
+        assertTrue(apart[111 * w + 180] && apart[123 * w + 185], "fingertips by the chin stay censored")
+        assertFalse(apart[120 * w + 150], "the throat stays free")
+        val touching = scene(true)
+        com.blueshield.core.pipeline.Neckline.apply(touching, w, h, face, spec.neckline)
+        assertFalse(touching[111 * w + 168] || touching[120 * w + 150], "skin joined to the throat inside the band is the neck: free")
+    }
+
     @Test fun marginGrowsAcrossShadedSkinButNotOntoCloth() {
         val w = 30; val h = 6
         // lit skin | the same skin turning into shade, 3 % per pixel | a dark sleeve

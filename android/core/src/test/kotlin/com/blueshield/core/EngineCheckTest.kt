@@ -145,6 +145,7 @@ class EngineCheckTest {
 
     @Test fun areaScalerMatchesTheTestedDecodePath() {
         // the photo tests decode with ffmpeg's area scaler; the app scales the decoded photo with AreaScaler
+        org.junit.Assume.assumeTrue("ffmpeg not available", PipelineIntegrationTest.ffmpegOk()) // like the integration test
         val f = File(repo, "tests/fixtures/woman_and_man.jpg")
         val full = PipelineIntegrationTest.decode(f, 768, 432).first()
         val w = 300

@@ -931,6 +931,11 @@ def face_chin(face_prob: np.ndarray, face: tuple[float, float, float, float]) ->
     return float(min(max(ys[rows][-1] + 1.0, lo), hi))
 
 
+_THROAT_HALF = 0.25  # face widths: the throat's own column, always cleared
+_HAND_SIDE = 0.02  # share of a face's area beside the throat band (level with the chin) that marks a raised hand
+_HAND_ROWS = 0.2  # face heights below the chin that still count as "level with the chin"
+
+
 def apply_neckline(skin: np.ndarray, face: tuple[float, float, float, float],
                    face_prob: Optional[np.ndarray] = None, known_cleavage: bool = False) -> bool:
     """Face and throat stay uncensored; bare skin is censored from the end of the throat (a little over half a
@@ -968,7 +973,33 @@ def apply_neckline(skin: np.ndarray, face: tuple[float, float, float, float],
     bx0, bx1 = max(0, int(cx - NECK_BAND_HALF_WIDTH * fw)), min(w, int(cx + NECK_BAND_HALF_WIDTH * fw) + 1)
     by0, by1 = max(0, int(chin - _JAW * fh)), min(h, int(clear_to) + 1)
     if bx1 > bx0 and by1 > by0:
-        skin[by0:by1, bx0:bx1] = False
+        # a hand or arm reaching into the band from the side keeps its fingers censored there; only the throat's
+        # own column is always cleared (same as Android's Neckline.handInBand)
+        clear = np.ones((by1 - by0, bx1 - bx0), bool)
+        n, labels = cv2.connectedComponents(skin.astype(np.uint8), connectivity=8)
+        if n > 1:
+            rows = labels[by0:by1]
+            side = np.zeros(n, np.int64)
+            outside = np.ones(w, bool)
+            outside[bx0:bx1] = False
+            side_rows = max(0, min(by1, int(chin + _HAND_ROWS * fh)) - by0)  # level with the chin only (shoulders join lower)
+            np.add.at(side, rows[:side_rows][:, outside].ravel(), 1)
+            in_band = np.zeros(n, bool)
+            in_band[np.unique(rows[:, bx0:bx1])] = True
+            hand = in_band & (side >= _HAND_SIDE * fw * fh)
+            hand[0] = False
+            if hand.any():
+                xs = np.arange(bx0, bx1)
+                throat = np.broadcast_to(np.abs(xs + 0.5 - cx) <= _THROAT_HALF * fw, (by1 - by0, bx1 - bx0))
+                # skin joined to the throat's column inside the band (the sides of a neck) is cleared as well
+                band = skin[by0:by1, bx0:bx1].astype(np.uint8)
+                nb, blab = cv2.connectedComponents(band, connectivity=8)
+                joined = np.zeros(nb, bool)
+                joined[np.unique(blab[throat & (band > 0)])] = True
+                joined[0] = False
+                neck = joined[blab] | throat
+                clear = ~hand[labels[by0:by1, bx0:bx1]] | neck
+        skin[by0:by1, bx0:bx1][clear] = False
     return seen
 
 

@@ -40,6 +40,8 @@ jobs:
       - name: Accept Android SDK licenses (the SDK is preinstalled on the runner)
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
       - uses: gradle/actions/setup-gradle@v4
+      - name: ffmpeg (the photo-scaling and pipeline integration tests decode with it)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
       - name: Core unit tests (JVM)
         working-directory: android
         run: chmod +x gradlew && ./gradlew :core:test --no-daemon --stacktrace

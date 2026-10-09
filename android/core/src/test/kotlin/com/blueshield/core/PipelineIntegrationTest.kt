@@ -27,7 +27,7 @@ class PipelineIntegrationTest {
         private var womanAndMan: Analysis? = null
         private var wmFrames: List<RgbImage> = emptyList()
 
-        private fun ffmpegOk() = runCatching { ProcessBuilder("ffmpeg", "-version").start().waitFor() == 0 }.getOrDefault(false)
+        fun ffmpegOk() = runCatching { ProcessBuilder("ffmpeg", "-version").start().waitFor() == 0 }.getOrDefault(false)
 
         fun decode(file: File, w: Int, h: Int): List<RgbImage> {
             // the frames the file really holds (no duplicates for variable-frame-rate phone videos), upright

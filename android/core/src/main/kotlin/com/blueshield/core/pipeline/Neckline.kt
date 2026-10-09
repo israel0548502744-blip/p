@@ -3,6 +3,7 @@ package com.blueshield.core.pipeline
 import com.blueshield.core.PipelineSpec
 import com.blueshield.core.image.Box
 import com.blueshield.core.image.MaskOps
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -24,6 +25,15 @@ object Neckline {
     private const val INNER = 0.75f
     private const val FACE_EDGE_PROB = 0.2f
     private const val JAW = 0.25f
+
+    /** Half-width of the throat's own column, in face widths: it and the skin joined to it in the band are always cleared. */
+    private const val THROAT_HALF = 0.25f
+
+    /** Skin beside the throat band, at its height, that marks a region as a hand or an arm (share of a face's area). */
+    private const val HAND_SIDE = 0.02f
+
+    /** How far below the chin (face heights) skin beside the band still counts as a raised hand. */
+    private const val HAND_ROWS = 0.2f
 
     /** [faceProb]: the segmenter's facial-skin probability (frame-sized), so a hand held at the cheek stays censored. */
     /**
@@ -66,8 +76,61 @@ object Neckline {
         val bx0 = (cx - n.bandHalfWidth * fw).toInt()
         val bx1 = (cx + n.bandHalfWidth * fw).toInt() + 1
         // the band starts a little above the chin line, so the jaw corners outside the face ellipse are covered too
-        fill(skin, w, h, bx0, (chin - JAW * fh).toInt(), bx1, clearTo.toInt() + 1) { _, _ -> true }
+        val by0 = (chin - JAW * fh).toInt()
+        val by1 = clearTo.toInt() + 1
+        val hand = handInBand(skin, w, h, bx0, by0, bx1, by1, (chin + HAND_ROWS * fh).toInt(), fw * fh)
+        val neck = hand?.let { neckInBand(skin, w, h, bx0, by0, bx1, by1, cx, THROAT_HALF * fw) }
+        // a hand reaching into the band from the side keeps its fingers censored there (a hand held in front of the
+        // face had its fingertips cut off) — unless that skin joins the throat inside the band: the sides of a neck
+        fill(skin, w, h, bx0, by0, bx1, by1) { x, y -> hand == null || !hand[y * w + x] || neck!![y * w + x] }
         return seen
+    }
+
+    /**
+     * Skin of regions that reach into the throat band (x0..x1, y0..y1) from the side: level with the chin (rows y0 until
+     * [sideEnd]) at least [HAND_SIDE] of a face's area of them lies left or right of the band — a hand or an arm held
+     * up by the face, not a neck (bare shoulders join the neck lower down). Null when there is none.
+     */
+    private fun handInBand(skin: BooleanArray, w: Int, h: Int, x0: Int, y0: Int, x1: Int, y1: Int, sideEnd: Int, faceArea: Float): BooleanArray? {
+        val ya = max(0, y0)
+        val yb = min(h, y1)
+        if (yb <= ya) return null
+        val (labels, count) = MaskOps.connectedComponents(skin, w, h)
+        if (count <= 1) return null
+        val inBand = BooleanArray(count)
+        val side = IntArray(count)
+        for (y in ya until yb) for (x in 0 until w) {
+            val l = labels[y * w + x]
+            if (l == 0) continue
+            if (x >= x0 && x < x1) inBand[l] = true else if (y < sideEnd) side[l]++
+        }
+        val keep = BooleanArray(count) { it != 0 && inBand[it] && side[it] >= HAND_SIDE * faceArea }
+        if (keep.none { it }) return null
+        return BooleanArray(w * h) { keep[labels[it]] }
+    }
+
+    /**
+     * Skin inside the band (x0..x1, y0..y1) connected, within the band, to the throat's own column (|x − cx| ≤ [half]):
+     * the throat and the sides of the neck. A fingertip resting in the band over a phone is not.
+     */
+    private fun neckInBand(skin: BooleanArray, w: Int, h: Int, x0: Int, y0: Int, x1: Int, y1: Int, cx: Float, half: Float): BooleanArray {
+        val out = BooleanArray(w * h)
+        val xa = max(0, x0)
+        val xb = min(w, x1)
+        val ya = max(0, y0)
+        val yb = min(h, y1)
+        val bw = xb - xa
+        val bh = yb - ya
+        if (bw <= 0 || bh <= 0) return out
+        val sub = BooleanArray(bw * bh) { skin[(ya + it / bw) * w + xa + it % bw] }
+        val (labels, count) = MaskOps.connectedComponents(sub, bw, bh)
+        val throat = BooleanArray(count)
+        for (i in sub.indices) if (labels[i] != 0 && abs(xa + i % bw + 0.5f - cx) <= half) throat[labels[i]] = true
+        for (i in sub.indices) {
+            val x = xa + i % bw
+            if (labels[i] != 0 && throat[labels[i]] || abs(x + 0.5f - cx) <= half) out[(ya + i / bw) * w + x] = true
+        }
+        return out
     }
 
     /**
