@@ -190,7 +190,9 @@ class ModelStore(
         const val SAM_ENCODER_512 = "mobilesam_encoder_512.onnx"
         const val SAM_ENCODER_1024 = "mobilesam_encoder_1024.onnx"
         const val SAM_DECODER = "mobilesam_decoder.onnx"
-        val ALL = listOf(SEGMENTER, PERSONS, FACES, GENDER, NUDENET, AGE_GENDER, SAM_ENCODER_512, SAM_ENCODER_1024, SAM_DECODER)
+        /** Skin / clothes / hair segmenter: the clothes veto ([ClothesSegmenter]). */
+        const val CLOTHES = "skin_clothes_hair_mnv3s_512.onnx"
+        val ALL = listOf(SEGMENTER, PERSONS, FACES, GENDER, NUDENET, AGE_GENDER, SAM_ENCODER_512, SAM_ENCODER_1024, SAM_DECODER, CLOTHES)
     }
 }
 

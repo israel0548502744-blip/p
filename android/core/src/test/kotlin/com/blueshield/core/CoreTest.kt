@@ -8,6 +8,7 @@ import com.blueshield.core.image.ByteMask
 import com.blueshield.core.image.FloatMask
 import com.blueshield.core.image.MaskOps
 import com.blueshield.core.image.RgbImage
+import com.blueshield.core.ml.ClothesSegmenter
 import com.blueshield.core.ml.ModelStore
 import com.blueshield.core.ml.PersonDetector
 import com.blueshield.core.ml.runFloat
@@ -471,6 +472,39 @@ class CoreTest {
         // no clothes anywhere: nothing known, the renderer falls back to the colour
         val none = com.blueshield.core.pipeline.ClothMap.compute(img, skin, FloatMask(w, h))
         assertTrue((0 until none.size / 4).all { none[it * 4 + 3].toInt() == 0 })
+    }
+
+    @Test fun clothesVetoDropsSkinOnlyOnClothes() {
+        val skin = floatArrayOf(0.9f, 0.9f, 0.6f, 0.95f, 0.7f)
+        val selfie = floatArrayOf(0.9f, 0.6f, 0.6f, 0.95f, 0.7f)
+        val clothes = floatArrayOf(0.2f, 0.7f, 0.5f, 0.9f, 0.49f)
+        ClothesSegmenter.veto(skin, selfie, clothes, 0.5f, 0.85f)
+        // no clothes: kept; clothes and an unsure selfie model: dropped; a very sure selfie model wins; below the threshold: kept
+        assertTrue(floatArrayOf(0.9f, 0f, 0f, 0.95f, 0.7f).contentEquals(skin), skin.joinToString())
+    }
+
+    @Test fun clothesSegmenterPastesItsCropsIntoTheFrame() {
+        val repo = File(System.getProperty("blueshield.repo") ?: "../..")
+        assertTrue(spec.clothesVeto.enabled && File(repo, "models/onnx/${ModelStore.CLOTHES}").exists())
+        ModelStore({ File(repo, "models/onnx/$it").readBytes() }).use { m ->
+            val w = 120
+            val h = 90
+            val rnd = java.util.Random(3)
+            val img = RgbImage(w, h, ByteArray(w * h * 3) { rnd.nextInt(256).toByte() })
+            val seg = ClothesSegmenter(m)
+            assertFalse(seg.segment(img, emptyList()).covered.any { it })
+            assertEquals(0, seg.runs)
+            // one crop reaching out of the frame (left), one into the bottom-right corner
+            val r = seg.segment(img, listOf(Triple(-20, 10, 60), Triple(70, 50, 80)))
+            assertEquals(2, seg.runs)
+            for (y in 0 until h) for (x in 0 until w) {
+                val i = y * w + x
+                val inside = (x < 40 && y in 10 until 70) || (x >= 70 && y >= 50)
+                assertEquals(inside, r.covered[i], "covered at $x,$y")
+                assertTrue(r.clothes.data[i] in 0f..1f)
+                if (!inside) assertEquals(0f, r.clothes.data[i])
+            }
+        }
     }
 
     @Test fun personGridMatchesModelOutputs() {

@@ -13,6 +13,7 @@ import com.blueshield.core.image.Guided
 import com.blueshield.core.image.MaskOps
 import com.blueshield.core.image.RgbImage
 import com.blueshield.core.ml.AgeGenderModel
+import com.blueshield.core.ml.ClothesSegmenter
 import com.blueshield.core.ml.ColorSkin
 import com.blueshield.core.ml.FaceDetector
 import com.blueshield.core.ml.GenderModel
@@ -205,6 +206,16 @@ class Analyzer(
     private val segmenter = SkinSegmenter(models, spec.thresholds.faceExclusion)
     /** Skin-model runs so far (profiling). */
     val segmenterRuns get() = segmenter.runs
+    private val veto = spec.clothesVeto
+    /** Second opinion on clothing ([ClothesSegmenter]), on the same per-person crops as the close-up skin pass. */
+    private val clothesModel = if (veto.enabled) ClothesSegmenter(models) else null
+    /** Clothes-model runs so far (profiling). */
+    val clothesRuns get() = clothesModel?.runs ?: 0
+    /** The clothes model's latest maps, carried along with the motion between refreshes ([PipelineSpec.ClothesVeto.videoEvery]). */
+    private var vetoMaps: ClothesSegmenter.Result? = null
+    /** Track ids [vetoMaps] was computed for, and frames since. */
+    private var vetoIds: Set<Int> = emptySet()
+    private var sinceVeto = Int.MAX_VALUE / 2
     private val personDetector = PersonDetector(models)
     private val nudeNet = NudeNet(models)
     private val pm = spec.personMasks
@@ -252,6 +263,8 @@ class Analyzer(
     var lastSkinBinary: BooleanArray? = null
         private set
     fun visiblePeople(): List<PersonTrack> = people.visible()
+    /** Debugging tools: called with intermediate skin maps of freshly segmented frames ("selfie", "clothes", "vetoed", "refined"). */
+    var debugMaps: ((String, FloatMask) -> Unit)? = null
     fun currentDecision(t: PersonTrack) = censorDecision(t.gender.label(settings.threshold01), settings.target, settings.uncertainPolicy, child = t.gender.isChild)
 
     /** Analyse a chunk of consecutive frames (all at width × height). */
@@ -320,9 +333,11 @@ class Analyzer(
                 }
                 // the close-up per-person pass only for people who are (still) to be censored: a man already
                 // recognised, or a small child, is never covered, so his skin needn't be found in detail
-                val roiBoxes = people.visible().filter { currentDecision(it) }.map { it.box }
+                val roiTracks = people.visible().filter { currentDecision(it) }
+                val roiBoxes = roiTracks.map { it.box }
                 if (roiBoxes.isNotEmpty()) seg = timed("seg_rois") { segmenter.segmentRois(frame, roiBoxes, seg, settings.includeFace, spec.roi, baseIsFresh = fullDue) }
                 var skin = seg.skin
+                val clothesMaps = clothesModel?.let { m -> timed("clothes") { clothesMaps(m, frame, roiTracks, cut) } }
                 if (settings.aggressive) {
                     val color = ColorSkin.probability(frame)
                     val personPx = MaskOps.dilate(ByteMask(width, height, ByteArray(width * height) { if (seg.person.data[it] > 0.4f) -1 else 0 }), 4)
@@ -332,6 +347,12 @@ class Analyzer(
                         if (facePx != null && facePx.data[i].toInt() != 0) b = 0f
                         max(seg.skin.data[i], b)
                     })
+                }
+                debugMaps?.invoke("selfie", seg.skin)
+                if (clothesMaps != null) {
+                    debugMaps?.invoke("clothes", clothesMaps.clothes)
+                    skin = timed("veto") { vetoClothes(skin, seg, clothesMaps) }
+                    debugMaps?.invoke("vetoed", skin)
                 }
                 val plausible = ColorSkin.plausible(frame, spec.thresholds.skinColor.maxBlueOverRed, spec.thresholds.skinColor.minLuma)
                 // edges: re-fit the coarse (256 px model) probability to the frame's own outlines — first the pixels
@@ -354,6 +375,7 @@ class Analyzer(
                 skin = FloatMask(width, height, FloatArray(width * height) {
                     if (!gate[it]) 0f else refined[it] * plausible.data[it]
                 })
+                debugMaps?.invoke("refined", skin)
                 lastSkin = skin
                 lastPerson = seg.person
                 faceMap = seg.face
@@ -362,6 +384,7 @@ class Analyzer(
             } else {
                 lastSkin = flow.warp(lastSkin!!)
                 lastClothes = lastClothes?.let { flow.warp(it) }
+                carryVeto()
                 sinceSeg++
             }
             val skinBin = timed("fuser") { fuser.update(lastSkin!!, flow, fresh) }
@@ -478,6 +501,46 @@ class Analyzer(
         PersonMasks.followArms(own, skinBin, width, height, logits)
         for (i in 0 until n) if (skinBin[i] && own[i] > 0) out[i] = own[i].toByte() else if (!skinBin[i]) out[i] = 0
         return out
+    }
+
+    /**
+     * The clothes model's maps for this (freshly segmented) frame: recomputed on the square crops of the close-up
+     * skin pass ([SkinSegmenter.roiCrops]: the whole-person crop — even one as large as the frame — and, with
+     * [PipelineSpec.ClothesVeto.tiles], the tiles) every [PipelineSpec.ClothesVeto.videoEvery] frames, after a cut,
+     * or when someone new is to be covered; carried along with the motion otherwise.
+     */
+    private fun clothesMaps(m: ClothesSegmenter, frame: RgbImage, tracks: List<PersonTrack>, cut: Boolean): ClothesSegmenter.Result {
+        val ids = tracks.map { it.id }.toSet()
+        sinceVeto++
+        val old = vetoMaps
+        if (old != null && !cut && sinceVeto < max(1, veto.videoEvery) && vetoIds.containsAll(ids)) {
+            return carryVeto()!!
+        }
+        val crops = tracks.flatMap { t -> SkinSegmenter.roiCrops(t.box, spec.roi.sideScale).let { if (veto.tiles) it else it.take(1) } }
+            .filter { it.third >= spec.roi.minSidePx }
+        val r = m.segment(frame, crops)
+        vetoMaps = r
+        vetoIds = ids
+        sinceVeto = 0
+        return r
+    }
+
+    /** Moves the clothes model's maps along with this frame's motion (between refreshes). */
+    private fun carryVeto(): ClothesSegmenter.Result? {
+        val v = vetoMaps ?: return null
+        return ClothesSegmenter.Result(flow.warp(v.clothes), v.covered).also { vetoMaps = it }
+    }
+
+    /**
+     * The clothes veto: skin probability 0 where the clothes model sees clothing ([PipelineSpec.ClothesVeto.clothesMin])
+     * and the selfie model is not very sure of skin ([PipelineSpec.ClothesVeto.skinMax]) — trousers, a shirt, a belt
+     * the selfie model took for skin. (Its skin channel is not used to add skin where the selfie model is unsure:
+     * measured on the ground-truth photos it found some shaded skin but painted shoes and belts, a net loss.)
+     */
+    private fun vetoClothes(skin: FloatMask, seg: SkinSegmenter.Result, c: ClothesSegmenter.Result): FloatMask {
+        val out = skin.data.copyOf()
+        ClothesSegmenter.veto(out, seg.skin.data, c.clothes.data, veto.clothesMin, veto.skinMax)
+        return FloatMask(width, height, out)
     }
 
     /**

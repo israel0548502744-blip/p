@@ -30,7 +30,8 @@ class PhotoCheck {
         val settings = (if (parts.size > 2) kotlinx.serialization.json.Json.decodeFromString(CensorSettings.serializer(), parts[2]) else CensorSettings()).validated()
         val repo = File(System.getProperty("blueshield.repo") ?: "../..")
         val models = ModelStore({ File(repo, "models/onnx/$it").readBytes() })
-        val spec = PipelineSpec.bundled
+        // -Dblueshield.spec=file.json: a variant of shared/pipeline.json (ablations), as in QualityCheck
+        val spec = System.getProperty("blueshield.spec")?.takeIf { it.isNotBlank() }?.let { PipelineSpec.parse(File(it).readText()) } ?: PipelineSpec.bundled
         val (w, h, _) = PipelineIntegrationTest.probe(File(parts[0]))
         val (aw, ah) = Analyzer.scaledSize(w, h, spec.analysisMaxSide)
         val (mw, mh) = Analyzer.scaledSize(w, h, spec.maskMaxSide)
@@ -42,9 +43,19 @@ class PhotoCheck {
         val still = spec.copy(gender = spec.gender.copy(voteFactor = 1.0, minVotes = 1, minWeight = 0.3, minAgeVotes = 1))
         val analyzer = Analyzer(models, settings.copy(speed = "quality"), still, aw, ah, 1.0, mw, mh, File.createTempFile("photo", ".bin"), spec.personMasks.photoSize)
         var prob: com.blueshield.core.image.FloatMask? = null
+        // -Dblueshield.photoMaps=prefix: intermediate skin maps as 8-bit PNGs (prefix_selfie.png, _clothes, _vetoed, _refined)
+        System.getProperty("blueshield.photoMaps")?.takeIf { it.isNotBlank() }?.let { pre ->
+            val tag = File(parts[1]).nameWithoutExtension
+            analyzer.debugMaps = { name, m ->
+                val g = java.awt.image.BufferedImage(m.width, m.height, java.awt.image.BufferedImage.TYPE_BYTE_GRAY)
+                for (y in 0 until m.height) for (x in 0 until m.width) g.raster.setSample(x, y, 0, (m.data[y * m.width + x] * 255).toInt().coerceIn(0, 255))
+                javax.imageio.ImageIO.write(g, "png", File("${pre}_${tag}_$name.png"))
+            }
+        }
         analyzer.process(listOf(img)) { prob = analyzer.lastSkinProbability }
         val a = analyzer.finish()
-        println("PHOTO ${w}x$h analysed at ${aw}x$ah in ${"%.1f".format((System.nanoTime() - t0) / 1e9)} s")
+        println("PHOTO ${w}x$h analysed at ${aw}x$ah in ${"%.1f".format((System.nanoTime() - t0) / 1e9)} s; skin runs ${analyzer.segmenterRuns}, clothes runs ${analyzer.clothesRuns}")
+        println("TIMINGS " + analyzer.timings.entries.sortedByDescending { it.value }.joinToString { "${it.key}=${"%.0f".format(it.value / 1e6)}ms" })
         val d = a.decisions(settings, emptyMap())
         for (p in a.summaries(settings, emptyMap())) {
             val box = a.people[p.id]?.box

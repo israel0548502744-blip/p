@@ -151,7 +151,7 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
         const val SIZE = 256
 
         /** Close-up crops run side by side on this many threads (one model thread each). */
-        private val pool: java.util.concurrent.ExecutorService by lazy {
+        internal val pool: java.util.concurrent.ExecutorService by lazy {
             val n = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
             java.util.concurrent.Executors.newFixedThreadPool(n) { r -> Thread(r, "blueshield-seg").apply { isDaemon = true } }
         }
