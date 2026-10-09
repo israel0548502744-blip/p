@@ -135,6 +135,52 @@ object EdgeSnap {
     const val REMOVE_BELOW = 0.25f
     const val ADD_ABOVE = 0.8f
 
+    /**
+     * Grows the binary [mask] by up to [radius] pixels, but only across smooth colour: a pixel joins when its colour
+     * differs from the mask pixel next to it by at most [maxStep] (sum of the RGB differences over the mean RGB sum
+     * of the two). The rim of shaded skin the fit left out is taken back; a clear edge (an arm against a dark dress,
+     * a hand against a white wall) stops it, so there is no halo around the arm.
+     */
+    fun growAlongColour(mask: ByteMask, px: IntArray, radius: Float, maxStep: Float = GROW_STEP): ByteMask {
+        val w = mask.width
+        val h = mask.height
+        val out = mask.data.copyOf()
+        val steps = radius.roundToInt()
+        if (steps <= 0) return ByteMask(w, h, out)
+        fun set(i: Int) = out[i].toInt() != 0
+        var frontier = IntArray(out.size).let { f ->
+            var n = 0
+            for (i in out.indices) if (set(i)) {
+                val x = i % w
+                if ((x > 0 && !set(i - 1)) || (x < w - 1 && !set(i + 1)) || (i >= w && !set(i - w)) || (i + w < out.size && !set(i + w))) f[n++] = i
+            }
+            f.copyOf(n)
+        }
+        fun step(a: Int, b: Int): Float {
+            val ra = a shr 16 and 0xFF; val ga = a shr 8 and 0xFF; val ba = a and 0xFF
+            val rb = b shr 16 and 0xFF; val gb = b shr 8 and 0xFF; val bb = b and 0xFF
+            val mean = max(40f, (ra + ga + ba + rb + gb + bb) / 2f)
+            return (kotlin.math.abs(ra - rb) + kotlin.math.abs(ga - gb) + kotlin.math.abs(ba - bb)) / mean
+        }
+        val next = IntArray(out.size)
+        repeat(steps) {
+            var n = 0
+            for (i in frontier) {
+                val x = i % w
+                for (j in intArrayOf(if (x > 0) i - 1 else -1, if (x < w - 1) i + 1 else -1, i - w, i + w)) {
+                    if (j < 0 || j >= out.size || set(j) || step(px[i], px[j]) > maxStep) continue
+                    out[j] = -1
+                    next[n++] = j
+                }
+            }
+            frontier = next.copyOf(n)
+        }
+        return ByteMask(w, h, out)
+    }
+
+    /** Colour step [growAlongColour] crosses (6 %: shading across skin, not skin to cloth or wall). */
+    const val GROW_STEP = 0.06f
+
     private fun blur3(hist: FloatArray, bins: Int): FloatArray {
         var cur = hist
         for (axis in 0 until 3) {
@@ -152,7 +198,7 @@ object EdgeSnap {
         return cur
     }
 
-    private fun downscale(pixels: IntArray, w: Int, h: Int, sw: Int, sh: Int): IntArray {
+    internal fun downscale(pixels: IntArray, w: Int, h: Int, sw: Int, sh: Int): IntArray {
         val out = IntArray(sw * sh)
         for (y in 0 until sh) {
             val y0 = y * h / sh

@@ -328,6 +328,26 @@ class CoreTest {
         assertTrue(tilted[(start2 + 3) * w + 100], "censored from the end of the throat below the real chin")
     }
 
+    @Test fun marginGrowsAcrossShadedSkinButNotOntoCloth() {
+        val w = 30; val h = 6
+        // lit skin | the same skin turning into shade, 3 % per pixel | a dark sleeve
+        fun skin(f: Float) = (0xFF shl 24) or ((200 * f).toInt() shl 16) or ((150 * f).toInt() shl 8) or (120 * f).toInt()
+        val px = IntArray(w * h) { i ->
+            val x = i % w
+            when {
+                x < 10 -> skin(1f)
+                x < 15 -> skin(1f - 0.03f * (x - 9))
+                else -> 0xFF28283C.toInt()
+            }
+        }
+        val mask = com.blueshield.core.image.ByteMask(w, h, ByteArray(w * h) { if (it % w < 10) -1 else 0 })
+        val g = com.blueshield.core.image.EdgeSnap.growAlongColour(mask, px, 8f)
+        for (y in 0 until h) {
+            assertTrue((0 until 15).all { g.data[y * w + it].toInt() != 0 }, "the shaded rim joins")
+            assertTrue((15 until w).none { g.data[y * w + it].toInt() != 0 }, "the sleeve does not")
+        }
+    }
+
     @Test fun armOutsideTheBoxFollowsItsOwner() {
         assertEquals(spec.ownerReach, Composer.OWNER_REACH)
         assertEquals(spec.unassignedMinAreaWithPeople, Composer.UNASSIGNED_MIN_AREA_WITH_PEOPLE)
