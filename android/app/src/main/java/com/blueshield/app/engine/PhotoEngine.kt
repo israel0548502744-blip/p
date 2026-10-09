@@ -8,17 +8,20 @@ import android.graphics.Matrix
 import android.media.ExifInterface
 import android.net.Uri
 import android.os.Build
+import com.blueshield.core.image.AreaScaler
 import com.blueshield.core.image.RgbImage
 import kotlin.math.max
 
 /** Loads a photo upright (EXIF orientation applied), capped at [maxSide] px on its long side. */
 object PhotoLoader {
-    fun load(context: Context, uri: Uri, maxSide: Int = 4096): Bitmap {
+    /** [onFileSize]: the size stored in the file, before any capping (diagnostics). */
+    fun load(context: Context, uri: Uri, maxSide: Int = 4096, onFileSize: (Int, Int) -> Unit = { _, _ -> }): Bitmap {
         val cr = context.contentResolver
         if (Build.VERSION.SDK_INT >= 28) {
             return ImageDecoder.decodeBitmap(ImageDecoder.createSource(cr, uri)) { d, info, _ ->
                 d.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
                 d.isMutableRequired = true
+                onFileSize(info.size.width, info.size.height)
                 val long = max(info.size.width, info.size.height)
                 if (long > maxSide) {
                     val k = maxSide.toFloat() / long
@@ -28,6 +31,7 @@ object PhotoLoader {
         }
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         cr.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        onFileSize(bounds.outWidth, bounds.outHeight)
         var sample = 1
         while (max(bounds.outWidth, bounds.outHeight) / sample > maxSide) sample *= 2
         val bmp = cr.openInputStream(uri)?.use {
@@ -47,9 +51,18 @@ object PhotoLoader {
             .copy(Bitmap.Config.ARGB_8888, true)
     }
 
-    /** Area-averaged RGB copy at [w] × [h] (the analysis size). */
+    /**
+     * RGB copy at [w] × [h] (the analysis size): every pixel the mean of the photo area it covers, like the ffmpeg
+     * "area" scaling the photo tests decode with (createScaledBitmap's filtering is bilinear: at a 12 MP photo's
+     * reduction it reads only a few source pixels per output pixel, and thin edges come out differently). Read row
+     * by row: no scaled bitmap and no full-size pixel array.
+     */
     fun toRgb(bmp: Bitmap, w: Int, h: Int): RgbImage {
-        val scaled = if (bmp.width == w && bmp.height == h) bmp else Bitmap.createScaledBitmap(bmp, w, h, true)
+        if (w <= bmp.width && h <= bmp.height) {
+            return AreaScaler(bmp.width, bmp.height, w, h).scale { y, row -> bmp.getPixels(row, 0, bmp.width, 0, y, bmp.width, 1) }
+        }
+        // larger than the photo (never for the analysis size, which only shrinks): bilinear
+        val scaled = Bitmap.createScaledBitmap(bmp, w, h, true)
         val px = IntArray(w * h)
         scaled.getPixels(px, 0, w, 0, 0, w, h)
         val out = RgbImage(w, h)

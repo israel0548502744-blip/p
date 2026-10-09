@@ -11,6 +11,7 @@ import kotlin.test.Test
 /**
  * Opt-in photo diagnostics (not part of the normal test run):
  *   gradle test --tests '*PhotoCheck*' -Dblueshield.photo=in.jpg:out.png[:settings-json][>alpha.png][;next job...]
+ *   [-Dblueshield.photoScale=area|bilinear: scale the photo to the analysis size as the phone does, not by ffmpeg]
  * Runs the photo pipeline exactly as the app does and writes out.png = censored | debug (raw skin
  * probability in red, person boxes in green) side by side; prints every person's decision.
  */
@@ -37,8 +38,20 @@ class PhotoCheck {
         val (w, h, _) = PipelineIntegrationTest.probe(File(parts[0]))
         val (aw, ah) = Analyzer.scaledSize(w, h, spec.analysisMaxSide)
         val (mw, mh) = Analyzer.scaledSize(w, h, spec.maskMaxSide)
-        val img = PipelineIntegrationTest.decode(File(parts[0]), aw, ah).first()
         val full = PipelineIntegrationTest.decode(File(parts[0]), w, h).first()
+        // -Dblueshield.photoScale=area|bilinear: the analysis image scaled from the full-size photo the way the phone
+        // does it (area: PhotoLoader.toRgb; bilinear: createScaledBitmap's filtering, which the app used before)
+        // instead of by ffmpeg's area scaler
+        val scale = System.getProperty("blueshield.photoScale")
+        val img = when {
+            // (a small odd-sized photo's analysis size is 1 px larger: the phone scales that bilinearly too)
+            scale == "area" && aw <= w && ah <= h -> com.blueshield.core.image.AreaScaler(w, h, aw, ah).scale { y, row ->
+                for (x in 0 until w) row[x] = ((full.data[(y * w + x) * 3].toInt() and 0xFF) shl 16) or
+                    ((full.data[(y * w + x) * 3 + 1].toInt() and 0xFF) shl 8) or (full.data[(y * w + x) * 3 + 2].toInt() and 0xFF)
+            }
+            scale == "area" || scale == "bilinear" -> bilinear(full, aw, ah)
+            else -> PipelineIntegrationTest.decode(File(parts[0]), aw, ah).first()
+        }
         for (d0 in com.blueshield.core.ml.PersonDetector(models).detect(img, 0.2f)) println("DET ${"%.2f".format(d0.score)} ${d0.box}")
         val t0 = System.nanoTime()
         var prob: com.blueshield.core.image.FloatMask? = null
@@ -102,5 +115,26 @@ class PhotoCheck {
         out.createGraphics().drawImage(dbg, w, 0, w, h, null)
         javax.imageio.ImageIO.write(out, "png", File(parts[1]))
         a.close()
+    }
+
+    /** Plain bilinear sampling (pixel centres, 2 × 2 taps, no prefilter), like Skia's linear bitmap filtering. */
+    private fun bilinear(src: RgbImage, w: Int, h: Int): RgbImage {
+        val out = RgbImage(w, h)
+        val sx = src.width.toFloat() / w
+        val sy = src.height.toFloat() / h
+        for (y in 0 until h) for (x in 0 until w) {
+            val fx = ((x + 0.5f) * sx - 0.5f).coerceIn(0f, src.width - 1f)
+            val fy = ((y + 0.5f) * sy - 0.5f).coerceIn(0f, src.height - 1f)
+            val x0 = fx.toInt(); val y0 = fy.toInt()
+            val x1 = minOf(x0 + 1, src.width - 1); val y1 = minOf(y0 + 1, src.height - 1)
+            val ax = fx - x0; val ay = fy - y0
+            for (c in 0 until 3) {
+                fun v(xx: Int, yy: Int) = (src.data[(yy * src.width + xx) * 3 + c].toInt() and 0xFF).toFloat()
+                val top = v(x0, y0) + (v(x1, y0) - v(x0, y0)) * ax
+                val bot = v(x0, y1) + (v(x1, y1) - v(x0, y1)) * ax
+                out.data[(y * w + x) * 3 + c] = (top + (bot - top) * ay + 0.5f).toInt().coerceIn(0, 255).toByte()
+            }
+        }
+        return out
     }
 }

@@ -456,7 +456,9 @@ class CoreTest {
             ModelStore.Engine("missing") { error("no such accelerator on this device") },
             ModelStore.Engine("same") { ai.onnxruntime.OrtSession.SessionOptions() },
         )
-        fun store(m: Memory, fastest: Boolean) = ModelStore({ java.io.File(repo, "models/onnx/$it").readBytes() }, engines = engines, pickFastest = fastest, memory = m)
+        fun store(m: Memory, fastest: Boolean) = ModelStore(
+            { java.io.File(repo, "models/onnx/$it").readBytes() }, engines = engines, pickFastest = fastest, memory = m, probeImage = EngineCheckTest::probe,
+        )
         // a chosen kind of processor: the first engine that works, the missing one skipped
         val chosen = Memory()
         store(chosen, fastest = false).use { m ->
