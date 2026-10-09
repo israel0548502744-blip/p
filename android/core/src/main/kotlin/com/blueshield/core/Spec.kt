@@ -41,8 +41,11 @@ data class PipelineSpec(
         @SerialName("clothes_min") val clothesMin: Float = 0.5f,
         /** ... unless the selfie model is at least this sure it is skin. */
         @SerialName("skin_max") val skinMax: Float = 0.85f,
-        /** Video: refresh every this many analysed frames (the motion carries the map in between); photos: always. */
-        @SerialName("video_every") val videoEvery: Int = 1,
+        /**
+         * Video: refresh every this many freshly segmented frames (the motion carries the map in between; 2 measured as
+         * good as 1 at half the cost); photos: always.
+         */
+        @SerialName("video_every") val videoEvery: Int = 2,
         /**
          * Also on the extra tiles along a tall or wide person ([com.blueshield.core.ml.SkinSegmenter.roiCrops]); off = only
          * the whole-person crop (at 512 px it already sees an arm about as large as the 256 px skin model sees it in a tile).
