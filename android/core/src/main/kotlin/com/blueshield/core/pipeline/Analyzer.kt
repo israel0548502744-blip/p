@@ -291,18 +291,12 @@ class Analyzer(
                 people.update(frame, timed("persons") { personDetector.detect(frame, personMin) }, idx, dets.filter { it.label in FACE_LABELS }.map { it.box })
                 regions.update(dets.filter { it.label in labels })
                 // faces to keep uncovered: the sensitive-region detector's, plus each person's own face found by the
-                // face detector in their head area (it finds the small, turned and dim faces the other one misses)
+                // face detector in their head area (it finds the small, turned and dim faces the other one misses).
+                // The own faces are checked against the facial-skin map: on the first frame of a shot — and on a
+                // photo — there is none yet (or only the previous shot's), so they wait for this frame's below.
                 val nudeFaces = dets.filter { it.label in FACE_LABELS }
-                val seen = people.visible().filter { it.misses == 0 }
-                val own = if (settings.includeFace) emptyList() else timed("faces") {
-                    seen.mapNotNull { t -> classifier.face(frame, t.box, faceMap, seen.filter { it !== t }.map { it.box }) }
-                        .filter { b -> nudeFaces.none { it.box.iou(b) > 0.3f } }
-                        // a real face is facial skin to the segmenter too (a cartoon face on a balloon, a printed
-                        // T-shirt is not): without that it would uncover the hand holding it
-                        .filter { b -> faceMap?.let { meanIn(it, b) >= OWN_FACE_SKIN } ?: false }
-                        .map { Detection("FACE", 0.5f, it) }
-                }
-                faces.update(nudeFaces + own)
+                if (!settings.includeFace && (faceMap == null || cut)) pendingFaces = nudeFaces
+                else faces.update(nudeFaces + ownFaces(frame, nudeFaces))
             }
 
             // skin: whole frame on detection keyframes, per-person crops on every analysed frame
@@ -379,6 +373,10 @@ class Analyzer(
                     }
                 }
             }
+            pendingFaces?.let { nf ->
+                faces.update(nf + ownFaces(frame, nf))
+                pendingFaces = null
+            }
             if (!settings.includeFace) {
                 // Faces and necks are never censored unless asked (the segmenter sometimes labels a whole face as
                 // body skin); a low neckline is censored from just below the chin. See [Neckline].
@@ -429,6 +427,25 @@ class Analyzer(
             lastSkinBinary = skinBin
             processed = idx + 1
             onFrame(idx)
+        }
+    }
+
+    /** This frame's sensitive-region face detections, waiting for its facial-skin map (see [process]). */
+    private var pendingFaces: List<Detection>? = null
+
+    /**
+     * Each visible person's own face found by the face detector in their head area, except those the sensitive-region
+     * detector already has. A real face is facial skin to the segmenter too (a cartoon face on a balloon, a printed
+     * T-shirt is not): without that check it would uncover the hand holding it.
+     */
+    private fun ownFaces(frame: RgbImage, nudeFaces: List<Detection>): List<Detection> {
+        if (settings.includeFace) return emptyList()
+        val seen = people.visible().filter { it.misses == 0 }
+        return timed("faces") {
+            seen.mapNotNull { t -> classifier.face(frame, t.box, faceMap, seen.filter { it !== t }.map { it.box }) }
+                .filter { b -> nudeFaces.none { it.box.iou(b) > 0.3f } }
+                .filter { b -> faceMap?.let { meanIn(it, b) >= OWN_FACE_SKIN } ?: false }
+                .map { Detection("FACE", 0.5f, it) }
         }
     }
 
