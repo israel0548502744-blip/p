@@ -31,7 +31,28 @@ data class PipelineSpec(
     val neckline: Neckline,
     /** Per-person outlines (MobileSAM) for skin ownership and clipping. */
     @SerialName("person_masks") val personMasks: PersonMasksSpec,
+    /** Second opinion on clothing (skin / clothes / hair segmenter) that removes "skin" the selfie model found on clothes. */
+    @SerialName("clothes_veto") val clothesVeto: ClothesVeto = ClothesVeto(),
 ) {
+    @Serializable
+    data class ClothesVeto(
+        val enabled: Boolean = false,
+        /** Skin is dropped where the clothes probability is at least this ... */
+        @SerialName("clothes_min") val clothesMin: Float = 0.5f,
+        /** ... unless the selfie model is at least this sure it is skin. */
+        @SerialName("skin_max") val skinMax: Float = 0.85f,
+        /**
+         * Video: refresh every this many freshly segmented frames (the motion carries the map in between; 2 measured as
+         * good as 1 at half the cost); 0 = photos only (no clothes model on video). Photos: always.
+         */
+        @SerialName("video_every") val videoEvery: Int = 2,
+        /**
+         * Also on the extra tiles along a tall or wide person ([com.blueshield.core.ml.SkinSegmenter.roiCrops]); off = only
+         * the whole-person crop (at 512 px it already sees an arm about as large as the 256 px skin model sees it in a tile).
+         */
+        val tiles: Boolean = false,
+    )
+
     @Serializable
     data class PersonMasksSpec(
         @SerialName("video_size") val videoSize: Int,

@@ -156,6 +156,7 @@ fun AboutScreen() {
                     "מודל מגדר " + ltr("FaceRes, @vladmandic/human-models (MIT)"),
                     "face-api.js AgeGenderNet, @vladmandic/face-api (MIT)",
                     "NudeNet v3 (MIT)",
+                    "Skin-Clothes-Hair Segmentation, Kazuhito Takahashi (MIT)",
                 )) Text(m, color = Palette.Ink300, fontSize = 12.sp)
             }
         }

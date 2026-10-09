@@ -35,6 +35,7 @@ object Accelerators {
         ModelStore.SEGMENTER to "עור", ModelStore.PERSONS to "אנשים", ModelStore.FACES to "פנים", ModelStore.GENDER to "מגדר",
         ModelStore.AGE_GENDER to "גיל", ModelStore.NUDENET to "אזורים רגישים", ModelStore.SAM_ENCODER_512 to "קווי מתאר",
         ModelStore.SAM_ENCODER_1024 to "קווי מתאר (תמונות)", ModelStore.SAM_DECODER to "קווי מתאר (פענוח)",
+        ModelStore.CLOTHES to "בגדים",
     )
 
     private fun prefs(c: Context) = c.getSharedPreferences("accelerators", Context.MODE_PRIVATE)

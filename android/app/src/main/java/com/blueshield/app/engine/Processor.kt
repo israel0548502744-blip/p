@@ -316,6 +316,8 @@ class Processor(private val context: Context) {
         Accelerators.saveReport(context, m)
         // the 1024 px outline encoder holds a few hundred MB while loaded; the photo still has to be painted
         m.release(ModelStore.SAM_ENCODER_1024)
+        // so does the clothes model after running on several crops side by side (its buffers stay allocated)
+        m.release(ModelStore.CLOTHES)
         photoOriginal = bmp
         photoSettings = s
         Breadcrumbs.mark("photo: analysed, ${photo?.people?.size ?: 0} people")

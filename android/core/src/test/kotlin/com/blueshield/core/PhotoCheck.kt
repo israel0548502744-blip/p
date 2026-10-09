@@ -42,8 +42,23 @@ class PhotoCheck {
         for (d0 in com.blueshield.core.ml.PersonDetector(models).detect(img, 0.2f)) println("DET ${"%.2f".format(d0.score)} ${d0.box}")
         val t0 = System.nanoTime()
         var prob: com.blueshield.core.image.FloatMask? = null
-        val a = StillImage.analyze(models, settings, spec, img, mw, mh, File.createTempFile("photo", ".bin")) { prob = it.lastSkinProbability }
-        println("PHOTO ${w}x$h analysed at ${aw}x$ah in ${"%.1f".format((System.nanoTime() - t0) / 1e9)} s")
+        var analyzer: Analyzer? = null
+        // -Dblueshield.photoMaps=prefix: intermediate skin maps as 8-bit PNGs (prefix_<out>_selfie.png, _clothes, _vetoed, _refined)
+        val maps = System.getProperty("blueshield.photoMaps")?.takeIf { it.isNotBlank() }
+        val a = StillImage.analyze(models, settings, spec, img, mw, mh, File.createTempFile("photo", ".bin"), prepare = { an ->
+            analyzer = an
+            maps?.let { pre ->
+                val tag = File(parts[1]).nameWithoutExtension
+                an.debugMaps = { name, m ->
+                    val g = java.awt.image.BufferedImage(m.width, m.height, java.awt.image.BufferedImage.TYPE_BYTE_GRAY)
+                    for (y in 0 until m.height) for (x in 0 until m.width) g.raster.setSample(x, y, 0, (m.data[y * m.width + x] * 255).toInt().coerceIn(0, 255))
+                    javax.imageio.ImageIO.write(g, "png", File("${pre}_${tag}_$name.png"))
+                }
+            }
+        }) { prob = it.lastSkinProbability }
+        val an = analyzer!!
+        println("PHOTO ${w}x$h analysed at ${aw}x$ah in ${"%.1f".format((System.nanoTime() - t0) / 1e9)} s; skin runs ${an.segmenterRuns}, clothes runs ${an.clothesRuns}")
+        println("TIMINGS " + an.timings.entries.sortedByDescending { it.value }.joinToString { "${it.key}=${"%.0f".format(it.value / 1e6)}ms" })
         val d = a.decisions(settings, emptyMap())
         for (p in a.summaries(settings, emptyMap())) {
             val box = a.people[p.id]?.box
