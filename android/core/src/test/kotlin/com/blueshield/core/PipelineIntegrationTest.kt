@@ -74,6 +74,8 @@ class PipelineIntegrationTest {
             frames.chunked(analyzer.detStride * 4).forEach { analyzer.process(it) }
             val sec = (System.nanoTime() - t0) / 1e9
             println("analysed ${frames.size} frames of ${file.name} at ${aw}x$ah in ${"%.1f".format(sec)} s (${"%.1f".format(frames.size / sec)} fps)")
+            // the clothes veto is for photos only (clothes_veto.video_every 0): no clothes model on a video
+            if (PipelineSpec.bundled.clothesVeto.videoEvery == 0) assertEquals(0, analyzer.clothesRuns, "clothes model runs on a video")
             return analyzer.finish() to frames
         }
 
@@ -122,8 +124,11 @@ class PipelineIntegrationTest {
 
     @Test fun stillImageCensorsTheWomanOnly() {
         val img = wmFrames[30]
+        var clothesRuns = 0
         val a = com.blueshield.core.pipeline.StillImage.analyze(models, CensorSettings(), PipelineSpec.bundled, img, img.width, img.height,
-            File.createTempFile("still", ".bin"))
+            File.createTempFile("still", ".bin")) { clothesRuns = it.clothesRuns }
+        // a photo gets the clothes veto (the clothes model sees everyone who gets the close-up skin pass)
+        if (PipelineSpec.bundled.clothesVeto.enabled) assertTrue(clothesRuns >= 1, "clothes runs $clothesRuns")
         val s = CensorSettings()
         val sides = a.people.values.associateBy { if (it.box.cx / img.width < 0.5f) "left" else "right" }
         println("still: " + a.summaries(s, emptyMap()).joinToString { "#${it.id} ${it.gender} p=${"%.2f".format(it.pFemale)} v=${it.votes}" })
