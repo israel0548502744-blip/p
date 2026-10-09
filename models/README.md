@@ -30,9 +30,12 @@ e.g. on older women), and the age decides "adult woman" vs. "girl".
 | `skin_clothes_hair_mnv3s_512.onnx` | [Skin-Clothes-Hair-Segmentation-using-SMP](https://github.com/Kazuhito00/Skin-Clothes-Hair-Segmentation-using-SMP) by Kazuhito Takahashi (MIT), `DeepLabV3Plus(timm-mobilenetv3_small_100)_1366_2.16M_0.8297/best_model_simplifier.onnx` | `shared/tools/build_skin_clothes_hair.py` (graph unchanged, weights stored fp16) | max abs diff 0.03 on real photos; < 0.02 % of pixels change side of 0.5 |
 
 `skin_clothes_hair_mnv3s_512.onnx` is the **clothes veto** (`clothes_veto` in `shared/pipeline.json`,
-`ClothesSegmenter` in `android/core`): input `x.1` 1×3×512×512 RGB/255 normalised with the ImageNet mean/std,
-output 1×3×512×512 probabilities (skin, clothes, hair). It runs on the same per-person square crops as the
-close-up skin pass; where it says clothes and the selfie model is not very sure of skin, the skin is dropped.
+`ClothesSegmenter` in `android/core`, `detectors.ClothesSegmenter` on the desktop): input `x.1` 1×3×512×512
+RGB/255 normalised with the ImageNet mean/std, output 1×3×512×512 probabilities (skin, clothes, hair). It runs on
+the same per-person square crops as the close-up skin pass; a skin blob lying largely (`blob_share`) where it says
+clothes and the selfie model is not very sure of skin loses those pixels (a belt, a patch on trousers), an arm
+mostly on bare skin is never cut. Photos only for now (`video_every` 0): on video it also took paint off
+motion-blurred arms.
 Licence: MIT, Copyright (c) 2021 KazuhitoTakahashi (the upstream README notes the training set is the author's
 own, 452 images, and accuracy depends on background, clothing and skin colour). Adds 4.4 MB to the APK
 (the models in `onnx/` total about 100 MB).
