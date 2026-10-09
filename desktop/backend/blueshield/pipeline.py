@@ -35,6 +35,7 @@ from .censor import BlueCensor, hex_to_bgr
 from .config import ANALYSIS_MAX_SIDE, MASK_MAX_SIDE, WORK_DIR
 from .detectors import (ROI_FULL_EVERY_DET, SegResult, AGGRESSIVE_LABELS, FACE_LABELS, SENSITIVE_LABELS, SensitiveRegionDetector, SkinSegmenter,
                         color_skin_probability, skin_color_plausible)
+from . import gender as gender_mod
 from .gender import GenderClassifier, censor_decision
 from .maskstore import MaskStore
 from .people import PersonTrack, PersonTracker
@@ -361,11 +362,10 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
                 else:  # between whole-frame passes: carry the last result along with the motion
                     seg = SegResult(flow.warp(state["last_skin"]), flow.warp(state["last_person"]),
                                     flow.warp(state["face_map"]))
-                # the close-up per-person pass only for people who are (still) to be censored: a man already
-                # recognised, or a small child, is never covered, so his skin needn't be found in detail
+                # the close-up per-person pass only for people who are (still) to be censored, or not decided yet: a
+                # man already recognised, or a small child, is never covered, so his skin needn't be found in detail
                 th = settings.gender_threshold / 100.0
-                roi_boxes = [tuple(t.box) for t in people.visible()
-                             if censor_decision(t.gender.label(th), settings.target, settings.uncertain_policy, "auto", t.gender.is_child)]
+                roi_boxes = [tuple(t.box) for t in people.visible() if _roi_wanted(t, settings, th)]
                 if roi_boxes:
                     seg = seg_model.segment_rois(frame, roi_boxes, seg, include_face=settings.include_face,
                                                  base_is_fresh=full_due)
@@ -801,6 +801,16 @@ def run_pipeline(engine: Engine, info: media.VideoInfo, settings: CensorSettings
         return result, analysis
     analysis.close()
     return result
+
+
+def _roi_wanted(t, settings: CensorSettings, th: float) -> bool:
+    """Close-up skin pass for everyone to be censored — and, when unsure people are kept, also for everyone not
+    decided yet (too few face votes), who may still turn out to be a woman. Same as the Android ``roiWanted``."""
+    g = t.gender
+    if censor_decision(g.label(th), settings.target, settings.uncertain_policy, "auto", g.is_child):
+        return True
+    undecided = g.votes < gender_mod.MIN_VOTES or g.weight < gender_mod.MIN_WEIGHT
+    return undecided and censor_decision(g.label(th), settings.target, "censor", "auto", g.is_child)
 
 
 # face / neck / neckline rules (sizes relative to the face box) — mirror shared/pipeline.json "neckline"

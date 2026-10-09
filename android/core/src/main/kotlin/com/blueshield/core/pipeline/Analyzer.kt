@@ -312,9 +312,9 @@ class Analyzer(
                 } else { // between whole-frame passes: carry the last result along with the motion
                     SkinSegmenter.Result(flow.warp(lastSkin!!), flow.warp(lastPerson!!), flow.warp(faceMap!!), flow.warp(lastClothes!!))
                 }
-                // the close-up per-person pass only for people who are (still) to be censored: a man already
-                // recognised, or a small child, is never covered, so his skin needn't be found in detail
-                val roiBoxes = people.visible().filter { currentDecision(it) }.map { it.box }
+                // the close-up per-person pass only for people who are (still) to be censored, or not decided yet: a
+                // man already recognised, or a small child, is never covered, so his skin needn't be found in detail
+                val roiBoxes = people.visible().filter { roiWanted(it) }.map { it.box }
                 if (roiBoxes.isNotEmpty()) seg = timed("seg_rois") { segmenter.segmentRois(frame, roiBoxes, seg, settings.includeFace, spec.roi, baseIsFresh = fullDue) }
                 var skin = seg.skin
                 if (settings.aggressive) {
@@ -428,6 +428,18 @@ class Analyzer(
             processed = idx + 1
             onFrame(idx)
         }
+    }
+
+    /**
+     * Whether [t] gets the close-up skin pass: everyone who is to be censored, and — when unsure people are kept —
+     * also everyone not decided yet (too few face votes). On a photo nobody is classified before the skin pass, so
+     * with "keep" every woman used to get only the coarse whole-frame skin.
+     */
+    private fun roiWanted(t: PersonTrack): Boolean {
+        if (currentDecision(t)) return true
+        val g = t.gender
+        val undecided = g.votes < spec.gender.minVotes || g.weight < spec.gender.minWeight
+        return undecided && censorDecision(g.label(settings.threshold01), settings.target, "censor", child = g.isChild)
     }
 
     /** This frame's sensitive-region face detections, waiting for its facial-skin map (see [process]). */
