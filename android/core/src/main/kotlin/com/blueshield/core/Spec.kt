@@ -51,6 +51,10 @@ data class PipelineSpec(
          * the whole-person crop (at 512 px it already sees an arm about as large as the 256 px skin model sees it in a tile).
          */
         val tiles: Boolean = false,
+        /** > 0: a skin blob loses its vetoed pixels only when they are at least this share of it (0 = pixel by pixel). */
+        @SerialName("blob_share") val blobShare: Float = 0f,
+        /** ... and keeps the soft rim (below the skin threshold) of a blob that stays, this far (fraction of the frame diagonal). */
+        @SerialName("blob_rim") val blobRim: Float = 0f,
     )
 
     @Serializable

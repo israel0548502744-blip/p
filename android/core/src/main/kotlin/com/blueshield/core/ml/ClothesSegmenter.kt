@@ -76,5 +76,31 @@ class ClothesSegmenter(private val models: ModelStore) {
         fun veto(skin: FloatArray, selfie: FloatArray, clothes: FloatArray, clothesMin: Float, skinMax: Float) {
             for (i in skin.indices) if (clothes[i] >= clothesMin && selfie[i] < skinMax) skin[i] = 0f
         }
+
+        /**
+         * The clothes veto by blob: as [veto], but a skin blob ([skin] at least [on], 8-connected) loses its vetoed
+         * pixels only when they are at least [share] of it — a patch of "skin" on trousers goes, an arm whose
+         * motion-blurred hand the clothes model calls clothing stays whole, and so does its soft rim (vetoed pixels
+         * below [on] within [rim] pixels of a blob that stays). Other vetoed pixels below [on] go.
+         */
+        fun vetoBlobs(skin: FloatArray, selfie: FloatArray, clothes: FloatArray, w: Int, h: Int, clothesMin: Float, skinMax: Float, on: Float, share: Float, rim: Int) {
+            val (labels, count) = com.blueshield.core.image.MaskOps.connectedComponents(BooleanArray(w * h) { skin[it] >= on }, w, h)
+            val total = IntArray(count)
+            val vetoed = IntArray(count)
+            for (i in skin.indices) {
+                val l = labels[i]
+                if (l == 0) continue
+                total[l]++
+                if (clothes[i] >= clothesMin && selfie[i] < skinMax) vetoed[l]++
+            }
+            val drop = BooleanArray(count) { it > 0 && vetoed[it] > 0 && vetoed[it] >= share * total[it] }
+            val kept = com.blueshield.core.image.ByteMask(w, h, ByteArray(w * h) { val l = labels[it]; if (l != 0 && !drop[l]) -1 else 0 })
+            val near = if (rim > 0) com.blueshield.core.image.MaskOps.dilate(kept, rim) else kept
+            for (i in skin.indices) {
+                if (clothes[i] < clothesMin || selfie[i] >= skinMax) continue
+                val l = labels[i]
+                if (if (l == 0) near.data[i].toInt() == 0 else drop[l]) skin[i] = 0f
+            }
+        }
     }
 }

@@ -510,6 +510,28 @@ class CoreTest {
         assertTrue(floatArrayOf(0.9f, 0f, 0f, 0.95f, 0.7f).contentEquals(skin), skin.joinToString())
     }
 
+    @Test fun clothesVetoByBlobKeepsAnArmWithABlurredHand() {
+        // 20 × 6: an arm (columns 0..11, rows 1..3) whose blurred end (columns 8..11) the clothes model calls clothing,
+        // with a soft rim below it (row 4, under the skin threshold) also on "clothing"; a patch of "skin" on trousers
+        // (columns 15..18, rows 1..3), three quarters of it on clothing.
+        val w = 20
+        val h = 6
+        val skin = FloatArray(w * h)
+        val clothes = FloatArray(w * h)
+        for (y in 1..3) for (x in 0..11) skin[y * w + x] = if (x < 8) 0.95f else 0.6f
+        for (x in 8..11) { skin[4 * w + x] = 0.3f; for (y in 1..4) clothes[y * w + x] = 0.9f }
+        for (y in 1..3) for (x in 15..18) { skin[y * w + x] = 0.6f; if (x > 15) clothes[y * w + x] = 0.9f }
+        val selfie = skin.copyOf()
+        val pixel = skin.copyOf()
+        ClothesSegmenter.veto(pixel, selfie, clothes, 0.5f, 0.85f)
+        assertEquals(0f, pixel[2 * w + 9]) // pixel by pixel the hand is cut off
+        val blob = skin.copyOf()
+        ClothesSegmenter.vetoBlobs(blob, selfie, clothes, w, h, 0.5f, 0.85f, on = 0.47f, share = 0.4f, rim = 2)
+        for (y in 1..3) for (x in 0..11) assertEquals(skin[y * w + x], blob[y * w + x], "arm at $x,$y")
+        for (x in 8..11) assertEquals(0.3f, blob[4 * w + x], "the arm's rim at $x")
+        for (y in 1..3) for (x in 15..18) assertEquals(if (x > 15) 0f else 0.6f, blob[y * w + x], "trousers at $x,$y")
+    }
+
     @Test fun clothesSegmenterPastesItsCropsIntoTheFrame() {
         val repo = File(System.getProperty("blueshield.repo") ?: "../..")
         assertTrue(spec.clothesVeto.enabled && File(repo, "models/onnx/${ModelStore.CLOTHES}").exists())

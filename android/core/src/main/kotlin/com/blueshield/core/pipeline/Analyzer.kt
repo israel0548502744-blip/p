@@ -565,12 +565,17 @@ class Analyzer(
     /**
      * The clothes veto: skin probability 0 where the clothes model sees clothing ([PipelineSpec.ClothesVeto.clothesMin])
      * and the selfie model is not very sure of skin ([PipelineSpec.ClothesVeto.skinMax]) — trousers, a shirt, a belt
-     * the selfie model took for skin. (Its skin channel is not used to add skin where the selfie model is unsure:
-     * measured on the ground-truth photos it found some shaded skin but painted shoes and belts, a net loss.)
+     * the selfie model took for skin. By blob ([PipelineSpec.ClothesVeto.blobShare]): only a skin blob that lies largely
+     * on clothing loses its vetoed pixels, so the veto takes a patch of "skin" off trousers or a belt but never cuts into
+     * an arm (the clothes model calls a motion-blurred hand over a dark shirt clothing). (Its skin channel is not used:
+     * to add skin where the selfie model is unsure it found some shaded skin but painted shoes and belts, a net loss;
+     * as a veto it calls the brown belt skin too.)
      */
     private fun vetoClothes(skin: FloatMask, seg: SkinSegmenter.Result, c: ClothesSegmenter.Result): FloatMask {
         val out = skin.data.copyOf()
-        ClothesSegmenter.veto(out, seg.skin.data, c.clothes.data, veto.clothesMin, veto.skinMax)
+        if (veto.blobShare > 0f) ClothesSegmenter.vetoBlobs(out, seg.skin.data, c.clothes.data, width, height, veto.clothesMin, veto.skinMax, skinOn, veto.blobShare,
+            (veto.blobRim * hypot(width.toFloat(), height.toFloat())).roundToInt())
+        else ClothesSegmenter.veto(out, seg.skin.data, c.clothes.data, veto.clothesMin, veto.skinMax)
         return FloatMask(width, height, out)
     }
 

@@ -77,11 +77,13 @@
     "clip_logit": -1000.0
   },
   "clothes_veto": {
-    "$comment": "Second opinion on clothing: a skin/clothes/hair segmenter (models/onnx/skin_clothes_hair_mnv3s_512.onnx, 512 px) on each to-be-censored person's whole-person square crop (tiles: also the extra tiles of the close-up skin pass; measured: no better, and the edge of a sleeve cost an arm's rim). Skin probability is set to 0 where its clothes probability >= clothes_min and the selfie model's skin probability < skin_max (a very sure selfie model wins). Video: refreshed every video_every freshly segmented frames (and when someone new is to be covered), carried by the motion in between (2: same quality as 1 on the 10-clip check, half the cost).",
+    "$comment": "Second opinion on clothing: a skin/clothes/hair segmenter (models/onnx/skin_clothes_hair_mnv3s_512.onnx, 512 px) on each square crop of the close-up skin pass's whole-person crops (tiles: also its extra tiles; measured: no better, and the edge of a sleeve cost an arm's rim). A pixel is vetoed where its clothes probability >= clothes_min and the selfie model's skin probability < skin_max (a very sure selfie model wins). By blob (blob_share > 0): a skin blob (8-connected, at the skin threshold) loses its vetoed pixels only when they are at least blob_share of it, and the soft rim of a blob that stays (within blob_rim of the frame diagonal) is never vetoed: a brown belt or a patch of 'skin' on trousers goes, a forearm whose motion-blurred end the clothes model calls clothing stays whole (pixel by pixel it cost 1.3 % of the dance photo's skin). Video: refreshed every video_every freshly segmented frames (and when someone new is to be covered), carried by the motion in between; 0 = photos only.",
     "enabled": true,
     "clothes_min": 0.5,
     "skin_max": 0.85,
     "video_every": 2,
-    "tiles": false
+    "tiles": false,
+    "blob_share": 0.2,
+    "blob_rim": 0.01
   }
 }
