@@ -10,7 +10,7 @@ import kotlin.test.Test
 
 /**
  * Opt-in photo diagnostics (not part of the normal test run):
- *   gradle test --tests '*PhotoCheck*' -Dblueshield.photo=in.jpg:out.png[:settings-json]
+ *   gradle test --tests '*PhotoCheck*' -Dblueshield.photo=in.jpg:out.png[:settings-json][>alpha.png][;next job...]
  * Runs the photo pipeline exactly as the app does and writes out.png = censored | debug (raw skin
  * probability in red, person boxes in green) side by side; prints every person's decision.
  */
@@ -18,7 +18,15 @@ class PhotoCheck {
     @Test fun photo() {
         val arg = System.getProperty("blueshield.photo")
         assumeTrue("no photo job", !arg.isNullOrBlank())
-        val parts = arg!!.split(":", limit = 3)
+        // several jobs in one run: "in1:out1[:json][>alpha1];in2:out2..." (the alpha path after '>' overrides photoAlpha)
+        for (job in arg!!.split(";").map { it.trim() }.filter { it.isNotEmpty() }) {
+            val (spec, alpha) = job.split(">", limit = 2).let { it[0] to it.getOrNull(1) }
+            run(spec, alpha ?: System.getProperty("blueshield.photoAlpha"))
+        }
+    }
+
+    private fun run(arg: String, alphaPath: String?) {
+        val parts = arg.split(":", limit = 3)
         val settings = (if (parts.size > 2) kotlinx.serialization.json.Json.decodeFromString(CensorSettings.serializer(), parts[2]) else CensorSettings()).validated()
         val repo = File(System.getProperty("blueshield.repo") ?: "../..")
         val models = ModelStore({ File(repo, "models/onnx/$it").readBytes() })
@@ -47,7 +55,7 @@ class PhotoCheck {
         val alpha = StillImage.alpha(a, settings, d, w, h, px.copyOf())
         alpha?.let { StillImage.paint(px, w, h, it, CensorSettings.parseColor(settings.color), cloth, a.clothWidth, a.clothHeight) }
         // -Dblueshield.photoAlpha=alpha.png: the final censor alpha (grey 0..255, photo size) for scoring against a ground truth
-        System.getProperty("blueshield.photoAlpha")?.takeIf { it.isNotBlank() }?.let { path ->
+        alphaPath?.takeIf { it.isNotBlank() }?.let { path ->
             val g = java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_BYTE_GRAY)
             val r = g.raster
             for (y in 0 until h) for (x in 0 until w) r.setSample(x, y, 0, alpha?.let { (it.data[y * w + x].toInt() and 0xFF) } ?: 0)
