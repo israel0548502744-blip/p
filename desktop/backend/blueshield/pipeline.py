@@ -33,14 +33,14 @@ import numpy as np
 from . import media, outlines
 from .censor import BlueCensor, hex_to_bgr
 from .config import ANALYSIS_MAX_SIDE, MASK_MAX_SIDE, WORK_DIR
-from .detectors import (ROI_FULL_EVERY_DET, SegResult, AGGRESSIVE_LABELS, FACE_LABELS, SENSITIVE_LABELS, SensitiveRegionDetector, SkinSegmenter,
-                        color_skin_probability, skin_color_plausible)
+from .detectors import (ROI_FULL_EVERY_DET, SegResult, AGGRESSIVE_LABELS, FACE_LABELS, SENSITIVE_LABELS, Detection,
+                        SensitiveRegionDetector, SkinSegmenter, color_skin_probability, skin_color_plausible)
 from . import gender as gender_mod
 from .gender import GenderClassifier, censor_decision
 from .maskstore import MaskStore
 from .people import PersonTrack, PersonTracker
 from .persons import PersonDetector
-from .tracking import BoxTracker, FlowEstimator, TemporalFuser, scene_cut
+from .tracking import BoxTracker, FlowEstimator, TemporalFuser, _iou, scene_cut
 
 log = logging.getLogger("blueshield.pipeline")
 
@@ -317,7 +317,27 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
                           on_threshold=skin_threshold)
     last_cls: dict[int, int] = {}
     state = {"prev_small": None, "last_skin": None, "since_seg": 10 ** 9, "analyzed": 0, "face_map": None,
-             "last_person": None}
+             "last_person": None, "pending_faces": None}
+
+    def own_faces(frame: np.ndarray, nude_faces: list) -> list:
+        """Each visible person's own face found by the face detector in their head area, except those the
+        sensitive-region detector already has. A real face is facial skin to the segmenter too (a cartoon face on
+        a balloon, a printed T-shirt is not): without that check it would uncover the hand holding it. Same as
+        the Android ``Analyzer.ownFaces``."""
+        if settings.include_face:
+            return []
+        seen = [t for t in people.visible() if not t.misses]
+        face_map = state["face_map"]
+        out = []
+        for t in seen:
+            b = gender_model.face_box(frame, tuple(t.box), face_map, others=[tuple(o.box) for o in seen if o is not t])
+            if b is None or any(_iou(d.box, b) > 0.3 for d in nude_faces):
+                continue
+            if face_map is None or mean_in(face_map, b) < OWN_FACE_SKIN:
+                continue
+            out.append(Detection("FACE", 0.5, b))
+        return out
+
     CHUNK = 8 * det_stride  # frames buffered so detector keyframes can be batched
 
     def process_chunk(frames: list[np.ndarray], start_index: int) -> None:
@@ -345,7 +365,15 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
                 people.update(frame, person_model.detect(frame, person_min_score), idx,
                               faces=[tuple(d.box) for d in nude[k] if d.label in FACE_LABELS])
                 regions.update([d for d in nude[k] if d.label in labels])
-                faces.update([d for d in nude[k] if d.label in FACE_LABELS])
+                # faces to keep uncovered: the sensitive-region detector's, plus each person's own face found by the
+                # face detector in their head area (it finds the small, turned and dim faces the other one misses).
+                # The own faces are checked against the facial-skin map: on the first frame of a shot there is none
+                # yet (or only the previous shot's), so they wait for this frame's (below).
+                nude_faces = [d for d in nude[k] if d.label in FACE_LABELS]
+                if not settings.include_face and (state["face_map"] is None or cut):
+                    state["pending_faces"] = nude_faces
+                else:
+                    faces.update(nude_faces + own_faces(frame, nude_faces))
 
             # ── skin segmentation: whole frame on detection keyframes, per-person crops on every analysed frame ──
             boxes = [tuple(t.box) for t in people.visible()]
@@ -405,6 +433,9 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
                             p_male, weight, age, _ = res
                             t.gender.add(p_male, weight)
                             t.gender.add_age(age)
+            if state["pending_faces"] is not None:
+                faces.update(state["pending_faces"] + own_faces(frame, state["pending_faces"]))
+                state["pending_faces"] = None
             if not settings.include_face:
                 # Faces and necks are never censored unless asked (the segmenter sometimes labels a whole face as
                 # body skin); a low neckline is censored from just below the chin. See apply_neckline.
@@ -802,6 +833,17 @@ def run_pipeline(engine: Engine, info: media.VideoInfo, settings: CensorSettings
         return result, analysis
     analysis.close()
     return result
+
+
+OWN_FACE_SKIN = 0.3  # mean facial-skin probability the segmenter needs inside a face box found only by the face detector
+
+
+def mean_in(m: np.ndarray, b: tuple[float, float, float, float]) -> float:
+    """Mean of ``m`` over the inner half of box ``b`` (frame pixels). Same as the Android ``Analyzer.meanIn``."""
+    cx, cy, bw, bh = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2, b[2] - b[0], b[3] - b[1]
+    x0, x1 = max(0, int(cx - bw / 4)), min(m.shape[1], int(cx + bw / 4) + 1)
+    y0, y1 = max(0, int(cy - bh / 4)), min(m.shape[0], int(cy + bh / 4) + 1)
+    return float(m[y0:y1, x0:x1].mean()) if x1 > x0 and y1 > y0 else 0.0
 
 
 def _roi_wanted(t, settings: CensorSettings, th: float) -> bool:

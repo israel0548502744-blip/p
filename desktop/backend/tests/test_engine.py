@@ -194,3 +194,12 @@ def test_neck_is_free_but_a_low_neckline_is_censored():
     apply_neckline(tilted, face, face_prob)
     start2 = int(100 + CLEAVAGE_START * 70)
     assert not tilted[start2 - 2, 100] and tilted[start2 + 3, 100]
+
+
+def test_own_face_check_reads_the_inner_half_of_the_box():
+    from blueshield.pipeline import mean_in
+    m = np.zeros((100, 100), np.float32)
+    m[40:60, 40:60] = 1
+    # inner half of (30, 30, 70, 70): rows / columns 40..60 (same rounding as the Android Analyzer.meanIn)
+    assert abs(mean_in(m, (30, 30, 70, 70)) - 400 / 441) < 1e-6
+    assert mean_in(m, (0, 0, 20, 20)) == 0.0

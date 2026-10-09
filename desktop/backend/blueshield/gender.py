@@ -235,12 +235,14 @@ class GenderClassifier:
         return float(gender[0]), float(age)
 
     def find_face(self, frame: np.ndarray, box: tuple[float, float, float, float],
-                  face_map: Optional[np.ndarray] = None, others=()) -> Optional[tuple[np.ndarray, Face, float, tuple[float, float]]]:
+                  face_map: Optional[np.ndarray] = None, others=(), min_px: float = 0.0
+                  ) -> Optional[tuple[np.ndarray, Face, float, tuple[float, float]]]:
         """Locate a person's face: (crop, face-in-crop, frame px per crop px, crop origin in frame) or None.
 
         ``face_map`` (facial-skin probability from the segmentation model, frame-sized)
         lets us find the head even when the person box is wide (outstretched arms)
-        or the face is in profile.
+        or the face is in profile. A face narrower than ``min_px`` frame pixels doesn't count: the next crop is
+        tried (same as the Android ``GenderClassifier.locate``).
         """
         crops = []
         head = head_crop(frame, box, face_map, others=others) if face_map is not None else None
@@ -260,9 +262,20 @@ class GenderClassifier:
             faces = [f for f in self.faces.detect(crop, 0.5)
                      if (f.box[1] + f.box[3]) / 2 < 0.75 * crop.shape[0] and owns_face(in_frame(f.box), box, others)]
             face = pick_face(faces, crop.shape[1], centred=n == 0 and head is not None)
-            if face is not None:
+            if face is not None and (face.box[2] - face.box[0]) * scale >= min_px:
                 return crop, face, scale, origin
         return None
+
+    def face_box(self, frame: np.ndarray, box: tuple[float, float, float, float],
+                 face_map: Optional[np.ndarray] = None, others=(), min_px: float = 6.0) -> Optional[tuple[float, float, float, float]]:
+        """This person's face (frame pixels) without classifying it: faces the sensitive-region detector misses
+        (small, turned, in the dark, in a crowd) must still stay uncovered, and need not be big enough to classify.
+        Same as the Android ``GenderClassifier.face``."""
+        found = self.find_face(frame, box, face_map, others, min_px)
+        if found is None:
+            return None
+        _, face, scale, (ox, oy) = found
+        return (ox + face.box[0] * scale, oy + face.box[1] * scale, ox + face.box[2] * scale, oy + face.box[3] * scale)
 
     def classify_person(self, frame: np.ndarray, box: tuple[float, float, float, float],
                         face_map: Optional[np.ndarray] = None, found=None, others=()) -> Optional[tuple[float, float, float, tuple]]:
@@ -271,7 +284,7 @@ class GenderClassifier:
         P(male) averages the log-odds of both face models: their mistakes are largely independent (e.g. older
         women, whom FaceRes alone often calls male), so the ensemble is much steadier than either.
         """
-        found = found if found is not None else self.find_face(frame, box, face_map, others)
+        found = found if found is not None else self.find_face(frame, box, face_map, others, min_px=14)
         if found is None:
             return None
         crop, face, scale, (ox, oy) = found
