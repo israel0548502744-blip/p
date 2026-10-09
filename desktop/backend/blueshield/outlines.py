@@ -113,9 +113,11 @@ def _blur3(hist: np.ndarray) -> np.ndarray:
     return a.reshape(-1)
 
 
-def recolour(p: np.ndarray, rgb: np.ndarray, band: int) -> np.ndarray:
+def recolour(p: np.ndarray, rgb: np.ndarray, band: int, keep_above: float = 2.0) -> np.ndarray:
     """Decide the pixels within ``band`` of the coarse boundary of ``p`` by colour (sure skin deep inside vs.
-    the sure surroundings just outside). Returns a new probability map."""
+    the sure surroundings just outside). Pixels the model is sure of (``p`` >= ``keep_above``) are never removed:
+    one colour model of the whole frame calls the shaded side of an arm, or skin under coloured light,
+    background. Returns a new probability map."""
     inside = (p > 0.5).astype(np.uint8)
     if not inside.any():
         return p
@@ -140,9 +142,9 @@ def recolour(p: np.ndarray, rgb: np.ndarray, band: int) -> np.ndarray:
     # only clear colour evidence moves the boundary (see EdgeSnap.recolour): remove inside pixels whose colour is
     # clearly not this skin, add outside pixels whose colour clearly is; ambiguous colours keep the model's opinion
     in_mask = inside[sel] > 0
-    move = (in_mask & (like < REMOVE_BELOW)) | (~in_mask & (like > ADD_ABOVE))
-    out = p.copy()
     vals = p[sel]
+    move = (in_mask & (like < REMOVE_BELOW) & (vals < keep_above)) | (~in_mask & (like > ADD_ABOVE))
+    out = p.copy()
     vals[move] = 0.75 * like[move] + 0.25 * vals[move]
     out[sel] = vals
     return out

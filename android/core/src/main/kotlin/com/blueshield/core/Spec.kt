@@ -53,6 +53,8 @@ data class PipelineSpec(
         val eps: Float,
         /** Width (fraction of the frame diagonal) of the band around the skin boundary decided by colour (0 = off). */
         @SerialName("color_band") val colorBand: Float = 0f,
+        /** Skin probability from which the colour decision never removes a pixel (the model is sure of it). */
+        @SerialName("color_keep") val colorKeep: Float = 2f,
     )
 
     @Serializable

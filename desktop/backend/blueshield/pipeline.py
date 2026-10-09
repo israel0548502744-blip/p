@@ -381,7 +381,7 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
                 # near the boundary by colour (this frame's skin vs. what surrounds it), then a guided filter
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 band = max(2, int(round(REFINE_COLOR_BAND * float(np.hypot(aw, ah)))))
-                skin = outlines.recolour(skin.astype(np.float32), rgb, band)
+                skin = outlines.recolour(skin.astype(np.float32), rgb, band, REFINE_COLOR_KEEP)
                 skin = guided_filter(outlines.guide(rgb), skin.astype(np.float32), max(2, int(round(REFINE_RADIUS * (aw + ah)))), REFINE_EPS)
                 skin = skin * skin_color_plausible(frame)
                 # skin only counts on a person: skin-coloured objects (wood, a mug, a lamp) are not people
@@ -490,6 +490,7 @@ REFINE_EPS = 0.004
 FILL_GAP = 2  # censor drop-outs up to this many frames long are filled at render time
 GATE_PAD = 0.3  # person_gate: skin counts within this much (box sizes) around a person's box
 REFINE_COLOR_BAND = 0.008  # band around the skin boundary decided by colour, fraction of the frame diagonal
+REFINE_COLOR_KEEP = 0.85  # …which never removes a pixel the model is at least this sure is skin
 # per-person outlines (MobileSAM): see outlines.PersonMasks and shared/pipeline.json "person_masks"
 PM_VIDEO_SIZE = 512
 PM_PHOTO_SIZE = 1024

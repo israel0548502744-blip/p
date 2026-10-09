@@ -10,6 +10,11 @@ import kotlin.math.roundToInt
  * the nearest strong edge (the outline of an arm or a hand) instead of following the coarse model's blobs.
  * The guide mixes brightness with a skin-tone channel (red minus green), so skin against a white dress or a
  * beige wall still has an edge to snap to.
+ *
+ * The photo fit no longer decides the band around the boundary by colour ([recolour]): its one colour model of
+ * the whole picture took the shaded side of an arm, or skin lit purple, for background and cut it away (the
+ * mirror selfie's left forearm .89 -> .68 recall). A local, brightness-invariant model (log-chroma, per window)
+ * did no better than none: it added warm shadows next to arms and still removed coloured-lit hands.
  */
 object EdgeSnap {
     /** Guide value per pixel, 0..~1.5 (ARGB pixels). */
@@ -36,8 +41,6 @@ object EdgeSnap {
         val src = FloatArray(mask.data.size) { (mask.data[it].toInt() and 0xFF) / 255f }
         Resample.bilinear(src, mask.width, mask.height, mask.width.toFloat() / sw, mask.height.toFloat() / sh, 0f, 0f, p, sw, 0, 0, sw, sh, max = false)
         val diag = kotlin.math.hypot(sw.toFloat(), sh.toFloat())
-        val band = max(3, (0.012f * diag).roundToInt())
-        recolour(p, px, sw, sh, band)
         // the window must reach from the coarse boundary to the true edge: ~ one analysis pixel and a bit
         val r = max(2, (0.003f * diag).roundToInt())
         val q = Guided.filter(g, p, sw, sh, r, 0.0015f)
@@ -53,9 +56,11 @@ object EdgeSnap {
      * Decides the pixels near the coarse boundary by colour: a colour histogram of the picture's sure skin
      * (deep inside the mask) against one of its sure surroundings (just outside it: the dress, the paper, the
      * wall next to the arm), then each pixel within [band] of the boundary takes its skin likelihood. This is
-     * what moves the boundary from the model's blob onto the actual arm.
+     * what moves the boundary from the model's blob onto the actual arm. A pixel the model is sure of ([p] at
+     * least [keepAbove]) is never removed: one colour model of the whole frame calls the shaded side of an arm,
+     * or skin under coloured light, background.
      */
-    internal fun recolour(p: FloatArray, px: IntArray, w: Int, h: Int, band: Int) {
+    internal fun recolour(p: FloatArray, px: IntArray, w: Int, h: Int, band: Int, keepAbove: Float = 2f) {
         // everything happens within 2 × band of the mask: work on that rectangle only (people rarely fill the frame)
         var x0 = w
         var y0 = h
@@ -73,7 +78,7 @@ object EdgeSnap {
         if (x1 < 0) return
         val m = 2 * band + 1
         x0 = max(0, x0 - m); y0 = max(0, y0 - m); x1 = min(w - 1, x1 + m); y1 = min(h - 1, y1 + m)
-        if (x0 == 0 && y0 == 0 && x1 == w - 1 && y1 == h - 1) return recolourAll(p, px, w, h, band)
+        if (x0 == 0 && y0 == 0 && x1 == w - 1 && y1 == h - 1) return recolourAll(p, px, w, h, band, keepAbove)
         val cw = x1 - x0 + 1
         val ch = y1 - y0 + 1
         val cp = FloatArray(cw * ch)
@@ -82,11 +87,11 @@ object EdgeSnap {
             System.arraycopy(p, (y0 + y) * w + x0, cp, y * cw, cw)
             System.arraycopy(px, (y0 + y) * w + x0, cpx, y * cw, cw)
         }
-        recolourAll(cp, cpx, cw, ch, band)
+        recolourAll(cp, cpx, cw, ch, band, keepAbove)
         for (y in 0 until ch) System.arraycopy(cp, y * cw, p, (y0 + y) * w + x0, cw)
     }
 
-    internal fun recolourAll(p: FloatArray, px: IntArray, w: Int, h: Int, band: Int) {
+    internal fun recolourAll(p: FloatArray, px: IntArray, w: Int, h: Int, band: Int, keepAbove: Float = 2f) {
         val n = w * h
         val inside = ByteMask(w, h, ByteArray(n) { if (p[it] > 0.5f) -1 else 0 })
         if (!inside.any()) return
@@ -122,6 +127,7 @@ object EdgeSnap {
             // colour is clearly not this skin, one outside is added only when it clearly is. Ambiguous colours
             // (another person's skin next to this one in a crowd) keep the model's opinion.
             val inMask = inside.data[i].toInt() != 0
+            if (inMask && p[i] >= keepAbove) continue
             if ((inMask && like < REMOVE_BELOW) || (!inMask && like > ADD_ABOVE)) p[i] = 0.75f * like + 0.25f * p[i]
         }
     }

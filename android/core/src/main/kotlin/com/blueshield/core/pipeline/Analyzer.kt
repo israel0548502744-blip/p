@@ -337,7 +337,7 @@ class Analyzer(
                         (0xFF shl 24) or ((frame.data[o].toInt() and 0xFF) shl 16) or ((frame.data[o + 1].toInt() and 0xFF) shl 8) or (frame.data[o + 2].toInt() and 0xFF)
                     }
                     val p = skin.data.copyOf()
-                    timed("colour") { EdgeSnap.recolour(p, px, width, height, max(2, (spec.refine.colorBand * hypot(width.toFloat(), height.toFloat())).roundToInt())) }
+                    timed("colour") { EdgeSnap.recolour(p, px, width, height, max(2, (spec.refine.colorBand * hypot(width.toFloat(), height.toFloat())).roundToInt()), spec.refine.colorKeep) }
                     timed("guided") { Guided.filter(EdgeSnap.guide(px), p, width, height, gr, spec.refine.eps) }
                 } else {
                     val luma = frame.gray().data.also { for (i in it.indices) it[i] /= 255f }
