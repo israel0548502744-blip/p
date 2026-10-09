@@ -70,3 +70,12 @@ def test_neckline_constants_match():
         n["band_half_width"], n["band_height"], n["probe_half_width"], n["probe_height"], n["cleavage_min_fill"],
         n["cleavage_start"], n["speck_person_frac"], n["speck_frame_frac"])
 
+
+
+def test_clothes_veto_constants_match():
+    from blueshield import pipeline as p
+    v = SPEC["clothes_veto"]
+    assert (p.VETO_ENABLED, p.VETO_CLOTHES_MIN, p.VETO_SKIN_MAX, p.VETO_VIDEO_EVERY, p.VETO_BLOB_SHARE, p.VETO_BLOB_RIM) == (
+        v["enabled"], v["clothes_min"], v["skin_max"], v["video_every"], v["blob_share"], v["blob_rim"])
+    assert v["tiles"] is False  # the desktop runs the clothes model on the whole-person crops only
+    assert p.ROI_MIN_SIDE == SPEC["roi"]["min_side_px"]

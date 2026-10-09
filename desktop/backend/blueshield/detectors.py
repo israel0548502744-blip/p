@@ -4,6 +4,8 @@
   Produces soft masks that follow the true outline of exposed skin.
 * :class:`SensitiveRegionDetector` — NudeNet YOLOv8 detector for exposed sensitive
   body areas. Supports batched inference and GPU execution providers.
+* :class:`ClothesSegmenter` — skin / clothes / hair segmenter, a second opinion on clothing (the clothes veto,
+  :func:`veto_blobs`).
 * :func:`color_skin_probability` — classic YCrCb/HSV skin model, used only *inside*
   person regions to catch skin the network missed (aggressive mode).
 """
@@ -257,6 +259,66 @@ AGGRESSIVE_LABELS = SENSITIVE_LABELS | {
     "MALE_BREAST_EXPOSED", "BELLY_EXPOSED", "ARMPITS_EXPOSED",
     "FEMALE_BREAST_COVERED", "FEMALE_GENITALIA_COVERED", "BUTTOCKS_COVERED",
 }
+
+
+class ClothesSegmenter:
+    """Skin / clothes / hair segmentation (Kazuhito Takahashi's DeepLabV3+ on MobileNetV3-small, MIT): a second
+    opinion on what is clothing. The selfie model now and then calls a belt, trousers or a purple-lit dress body
+    skin; this model, trained on exactly skin vs. clothes, vetoes those blobs (:func:`veto_blobs`). It sees the
+    square whole-person crops of the close-up skin pass at SIZE x SIZE (RGB / 255, ImageNet mean and std, NCHW;
+    outputs are probabilities: skin, clothes, hair). Same as the Android ``ClothesSegmenter``."""
+
+    SIZE = 512
+    MEAN = np.array([0.485, 0.456, 0.406], np.float32)
+    STD = np.array([0.229, 0.224, 0.225], np.float32)
+
+    def __init__(self) -> None:
+        import onnxruntime as ort
+
+        so = ort.SessionOptions()
+        so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        self.session = ort.InferenceSession(str(models.CLOTHES_FILE), sess_options=so, providers=models.onnx_providers())
+        self.input_name = self.session.get_inputs()[0].name
+        self.runs = 0
+
+    def segment(self, bgr: np.ndarray, crops: list[tuple[int, int, int]]) -> np.ndarray:
+        """Frame-sized clothes probability from square crops (left, top, side), 0 outside every crop (max where
+        crops overlap); out-of-frame parts of a crop are edge-replicated."""
+        h, w = bgr.shape[:2]
+        out = np.zeros((h, w), np.float32)
+        for a, b, side in crops:
+            x0, y0, x1, y1 = max(0, a), max(0, b), min(w, a + side), min(h, b + side)
+            if x1 <= x0 or y1 <= y0:
+                continue
+            crop = cv2.copyMakeBorder(bgr[y0:y1, x0:x1], y0 - b, b + side - y1, x0 - a, a + side - x1, cv2.BORDER_REPLICATE)
+            rgb = cv2.resize(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB), (self.SIZE, self.SIZE),
+                             interpolation=cv2.INTER_AREA if side >= 2 * self.SIZE else cv2.INTER_LINEAR)
+            x = ((rgb.astype(np.float32) / 255.0 - self.MEAN) / self.STD).transpose(2, 0, 1)[None]
+            clothes = self.session.run(None, {self.input_name: np.ascontiguousarray(x)})[0][0, 1]
+            self.runs += 1
+            c = cv2.resize(clothes, (side, side), interpolation=cv2.INTER_LINEAR)
+            np.maximum(out[y0:y1, x0:x1], c[y0 - b:y1 - b, x0 - a:x1 - a], out=out[y0:y1, x0:x1])
+        return out
+
+
+def veto_blobs(skin: np.ndarray, selfie: np.ndarray, clothes: np.ndarray, clothes_min: float, skin_max: float,
+               on: float, share: float, rim: int) -> np.ndarray:
+    """The clothes veto by blob: a pixel is vetoed where the clothes probability is at least ``clothes_min`` and the
+    selfie model's own skin probability is below ``skin_max``; a skin blob (``skin`` >= ``on``, 8-connected) loses its
+    vetoed pixels only when they are at least ``share`` of it, and the soft rim (below ``on``) within ``rim`` pixels
+    of a blob that stays is kept — a patch of "skin" on trousers or a belt goes, an arm whose motion-blurred end the
+    clothes model calls clothing stays whole. Returns a new map. Same as the Android ``ClothesSegmenter.vetoBlobs``."""
+    cand = (clothes >= clothes_min) & (selfie < skin_max)
+    n, lab = cv2.connectedComponents((skin >= on).astype(np.uint8), connectivity=8)
+    total = np.bincount(lab.ravel(), minlength=n)
+    vetoed = np.bincount(lab.ravel(), weights=cand.ravel().astype(np.float64), minlength=n)
+    drop = (vetoed > 0) & (vetoed >= share * total)
+    drop[0] = False
+    kept = (lab > 0) & ~drop[lab]
+    near = cv2.dilate(kept.astype(np.uint8), np.ones((2 * rim + 1, 2 * rim + 1), np.uint8)) > 0 if rim > 0 else kept
+    out = skin.copy()
+    out[cand & np.where(lab == 0, ~near, drop[lab])] = 0
+    return out
 
 
 @dataclass

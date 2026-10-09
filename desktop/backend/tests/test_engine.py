@@ -203,3 +203,36 @@ def test_own_face_check_reads_the_inner_half_of_the_box():
     # inner half of (30, 30, 70, 70): rows / columns 40..60 (same rounding as the Android Analyzer.meanIn)
     assert abs(mean_in(m, (30, 30, 70, 70)) - 400 / 441) < 1e-6
     assert mean_in(m, (0, 0, 20, 20)) == 0.0
+
+
+def test_clothes_veto_by_blob_keeps_an_arm_with_a_blurred_hand():
+    from blueshield.detectors import veto_blobs
+    # an arm (columns 0..11) whose blurred end (8..11) the clothes model calls clothing, with a soft rim below it;
+    # a patch of "skin" on trousers (15..18), three quarters of it on clothing (same case as the Android CoreTest)
+    skin = np.zeros((6, 20), np.float32)
+    clothes = np.zeros_like(skin)
+    skin[1:4, 0:12] = 0.95
+    skin[1:4, 8:12] = 0.6
+    skin[4, 8:12] = 0.3
+    clothes[1:5, 8:12] = 0.9
+    skin[1:4, 15:19] = 0.6
+    clothes[1:4, 16:19] = 0.9
+    out = veto_blobs(skin, skin.copy(), clothes, 0.5, 0.85, on=0.47, share=0.4, rim=2)
+    assert (out[1:5, 0:12] == skin[1:5, 0:12]).all()  # the arm and its rim stay whole
+    assert (out[1:4, 15] == 0.6).all() and (out[1:4, 16:19] == 0).all()  # the trousers' vetoed part goes
+
+
+def test_clothes_segmenter_pastes_its_crops_into_the_frame():
+    from blueshield.detectors import ClothesSegmenter
+    rng = np.random.default_rng(3)
+    img = rng.integers(0, 256, (90, 120, 3), dtype=np.uint8)
+    seg = ClothesSegmenter()
+    assert not seg.segment(img, []).any() and seg.runs == 0
+    # one crop reaching out of the frame (left), one into the bottom-right corner
+    m = seg.segment(img, [(-20, 10, 60), (70, 50, 80)])
+    assert seg.runs == 2 and m.shape == (90, 120)
+    assert ((m >= 0) & (m <= 1)).all()
+    outside = np.ones((90, 120), bool)
+    outside[10:70, 0:40] = False
+    outside[50:, 70:] = False
+    assert (m[outside] == 0).all()

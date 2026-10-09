@@ -43,6 +43,7 @@ SEGMENTER_URL = (
 )
 PERSON_FILE = ROOT_DIR.parent / "models" / "onnx" / "yolox_tiny.onnx"  # bundled in the repository
 PERSON_URL = "https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_tiny.onnx"
+CLOTHES_FILE = ROOT_DIR.parent / "models" / "onnx" / "skin_clothes_hair_mnv3s_512.onnx"  # bundled (clothes veto)
 SAM_FILES = [ROOT_DIR.parent / "models" / "onnx" / f for f in
              ("mobilesam_encoder_512.onnx", "mobilesam_encoder_1024.onnx", "mobilesam_decoder.onnx")]
 FACE_FILE = MODELS_DIR / "blaze_face_short_range.tflite"

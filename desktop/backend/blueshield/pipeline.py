@@ -33,8 +33,9 @@ import numpy as np
 from . import media, outlines
 from .censor import BlueCensor, hex_to_bgr
 from .config import ANALYSIS_MAX_SIDE, MASK_MAX_SIDE, WORK_DIR
-from .detectors import (ROI_FULL_EVERY_DET, SegResult, AGGRESSIVE_LABELS, FACE_LABELS, SENSITIVE_LABELS, Detection,
-                        SensitiveRegionDetector, SkinSegmenter, color_skin_probability, skin_color_plausible)
+from .detectors import (ROI_FULL_EVERY_DET, SegResult, AGGRESSIVE_LABELS, FACE_LABELS, SENSITIVE_LABELS, ClothesSegmenter,
+                        Detection, SensitiveRegionDetector, SkinSegmenter, color_skin_probability, roi_crops,
+                        skin_color_plausible, veto_blobs)
 from . import gender as gender_mod
 from .gender import GenderClassifier, censor_decision
 from .maskstore import MaskStore
@@ -175,6 +176,9 @@ class Engine:
 
     def outlines(self, size: int) -> outlines.PersonMasks:
         return self._get(f"outlines{size}", lambda: outlines.PersonMasks(size))
+
+    def clothes(self) -> ClothesSegmenter:
+        return self._get("clothes", ClothesSegmenter)
 
 
 @dataclass
@@ -318,6 +322,23 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
     last_cls: dict[int, int] = {}
     state = {"prev_small": None, "last_skin": None, "since_seg": 10 ** 9, "analyzed": 0, "face_map": None,
              "last_person": None, "pending_faces": None}
+    # the clothes veto (shared/pipeline.json "clothes_veto"): the clothes model's latest map, carried along with the
+    # motion between refreshes, the track ids it was computed for, and freshly segmented frames since
+    veto = {"model": engine.clothes() if VETO_ENABLED and VETO_VIDEO_EVERY > 0 else None, "map": None, "ids": set(),
+            "since": 10 ** 9}
+
+    def clothes_map(frame: np.ndarray, tracks: list, cut: bool) -> np.ndarray:
+        """The clothes model's map for this freshly segmented frame: recomputed on the whole-person crops of the
+        close-up skin pass every VETO_VIDEO_EVERY frames, after a cut, or when someone new is to be covered; carried
+        along with the motion otherwise. Same as the Android ``Analyzer.clothesMaps``."""
+        ids = {t.tid for t in tracks}
+        veto["since"] += 1
+        if veto["map"] is not None and not cut and veto["since"] < max(1, VETO_VIDEO_EVERY) and ids <= veto["ids"]:
+            veto["map"] = flow.warp(veto["map"])
+            return veto["map"]
+        crops = [c for c in (roi_crops(tuple(t.box))[0] for t in tracks) if c[2] >= ROI_MIN_SIDE]
+        veto["map"], veto["ids"], veto["since"] = veto["model"].segment(frame, crops), ids, 0
+        return veto["map"]
 
     def own_faces(frame: np.ndarray, nude_faces: list) -> list:
         """Each visible person's own face found by the face detector in their head area, except those the
@@ -393,11 +414,13 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
                 # the close-up per-person pass only for people who are (still) to be censored, or not decided yet: a
                 # man already recognised, or a small child, is never covered, so his skin needn't be found in detail
                 th = settings.gender_threshold / 100.0
-                roi_boxes = [tuple(t.box) for t in people.visible() if _roi_wanted(t, settings, th)]
+                roi_tracks = [t for t in people.visible() if _roi_wanted(t, settings, th)]
+                roi_boxes = [tuple(t.box) for t in roi_tracks]
                 if roi_boxes:
                     seg = seg_model.segment_rois(frame, roi_boxes, seg, include_face=settings.include_face,
                                                  base_is_fresh=full_due, orphan_skin=skin_threshold)
                 skin = seg.skin
+                clothes = clothes_map(frame, roi_tracks, cut) if veto["model"] is not None else None
                 if settings.aggressive:
                     person_px = cv2.dilate((seg.person > 0.4).astype(np.uint8), np.ones((9, 9), np.uint8))
                     backup = color_skin_probability(frame) * person_px * 0.9
@@ -405,6 +428,9 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
                         face = cv2.dilate((seg.face > 0.3).astype(np.uint8), np.ones((15, 15), np.uint8))
                         backup *= 1 - face
                     skin = np.maximum(skin, backup)
+                if clothes is not None:  # the clothes veto: blobs of "skin" lying largely on clothing go
+                    skin = veto_blobs(skin.astype(np.float32), seg.skin, clothes, VETO_CLOTHES_MIN, VETO_SKIN_MAX,
+                                      skin_threshold, VETO_BLOB_SHARE, int(round(VETO_BLOB_RIM * float(np.hypot(aw, ah)))))
                 # edges: re-fit the coarse (256 px model) probability to the frame's own outlines — first the pixels
                 # near the boundary by colour (this frame's skin vs. what surrounds it), then a guided filter
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -418,6 +444,8 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
                 state["face_map"] = seg.face
             else:
                 state["last_skin"] = flow.warp(state["last_skin"])
+                if veto["map"] is not None:
+                    veto["map"] = flow.warp(veto["map"])
                 state["since_seg"] += 1
             skin_bin = fuser.update(state["last_skin"], flow, fresh)
             if k in nude:
@@ -522,6 +550,16 @@ FILL_GAP = 2  # censor drop-outs up to this many frames long are filled at rende
 GATE_PAD = 0.3  # person_gate: skin counts within this much (box sizes) around a person's box
 REFINE_COLOR_BAND = 0.008  # band around the skin boundary decided by colour, fraction of the frame diagonal
 REFINE_COLOR_KEEP = 0.85  # …which never removes a pixel the model is at least this sure is skin
+ROI_MIN_SIDE = 24  # shared/pipeline.json roi.min_side_px: smaller crops are skipped
+# the clothes veto — mirror shared/pipeline.json "clothes_veto" (see detectors.veto_blobs); on video the clothes map is
+# refreshed every VETO_VIDEO_EVERY freshly segmented frames and carried along with the motion in between. 0: photos
+# only — on video it also took paint off motion-blurred arms — so the desktop (videos only) doesn't run it at all.
+VETO_ENABLED = True
+VETO_CLOTHES_MIN = 0.5
+VETO_SKIN_MAX = 0.85
+VETO_VIDEO_EVERY = 0
+VETO_BLOB_SHARE = 0.2
+VETO_BLOB_RIM = 0.01
 # per-person outlines (MobileSAM): see outlines.PersonMasks and shared/pipeline.json "person_masks"
 PM_VIDEO_SIZE = 512
 PM_PHOTO_SIZE = 1024
