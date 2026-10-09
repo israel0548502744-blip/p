@@ -10,11 +10,14 @@ import kotlin.math.min
  * Face, neck and neckline rules on a frame's binary skin mask (same algorithm as the desktop `apply_neckline`).
  *
  * * the face itself is never censored (forehead to chin);
- * * the neck is not censored either…
- * * …unless the bare skin continues down into the chest (a low neckline): then everything from
- *   the end of the throat (about half a face below the chin) downwards is censored — the throat stays visible.
+ * * nor is the throat: bare skin is censored from the end of the throat (a little over half a face below the
+ *   chin) downwards — a low neckline, a V-neck. The chin is where the segmenter's facial skin ends ([faceChin]):
+ *   face boxes end anywhere from the lower lip to well under the chin.
  *
  * All sizes are relative to the face box (NudeNet face detection, motion-tracked), so it works at any zoom.
+ * (The throat used to be cleared deeper, 0.7 face heights, unless a low neckline was seen below it: that decision
+ * flipped with a pixel's shift of the picture, and a narrow V-neck was never "seen" — its skin stayed uncovered.
+ * Now both depths are the same; the neckline probe only feeds the sticky flag.)
  */
 object Neckline {
     /** Inner part of the face ellipse that is always cleared; the rim only where the segmenter sees face skin. */
@@ -45,7 +48,7 @@ object Neckline {
             val r2 = dx * dx + dy * dy
             r2 <= INNER * INNER || (r2 <= 1f && (faceProb == null || faceProb[y * w + x] >= FACE_EDGE_PROB))
         }
-        val chin = face.y2
+        val chin = if (faceProb != null) faceChin(faceProb, w, h, face) else face.y2
         val bandBottom = chin + n.bandHeight * fh
         // is there bare skin straight below the neck (a neckline that shows the chest)?
         val px0 = max(0, (cx - n.probeHalfWidth * fw).toInt())
@@ -66,6 +69,31 @@ object Neckline {
         fill(skin, w, h, bx0, (chin - JAW * fh).toInt(), bx1, clearTo.toInt() + 1) { _, _ -> true }
         return seen
     }
+
+    /**
+     * The chin: the lowest row between the face centre and a little under the box that is mostly facial skin (the
+     * segmenter's facial-skin class, central 40 % of the face width), kept within [CHIN_UP] face heights above and
+     * [CHIN_DOWN] below the box's bottom edge; the box's edge where no row is.
+     */
+    fun faceChin(faceProb: FloatArray, w: Int, h: Int, face: Box): Float {
+        val fh = face.h
+        val x0 = max(0, (face.cx - 0.2f * face.w).toInt())
+        val x1 = min(w, (face.cx + 0.2f * face.w).toInt() + 1)
+        if (x1 <= x0) return face.y2
+        val lo = face.y2 - CHIN_UP * fh
+        val hi = face.y2 + CHIN_DOWN * fh
+        var last = -1
+        for (y in max(0, face.cy.toInt())..min(h - 1, hi.toInt())) {
+            var on = 0
+            for (x in x0 until x1) if (faceProb[y * w + x] >= 0.5f) on++
+            if (on >= 0.5f * (x1 - x0)) last = y
+        }
+        if (last < 0) return face.y2
+        return (last + 1f).coerceIn(lo, hi)
+    }
+
+    private const val CHIN_UP = 0.35f
+    private const val CHIN_DOWN = 0.1f
 
     /**
      * The head of an upright person whose face no detector found (seen from behind, turned away, in the dark): the

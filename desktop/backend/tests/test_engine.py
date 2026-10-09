@@ -178,7 +178,7 @@ def test_neck_is_free_but_a_low_neckline_is_censored():
 
     def body(cleavage):
         m = np.zeros((300, 200), bool)
-        m[40:(251 if cleavage else 152), 75:126] = True
+        m[40:(251 if cleavage else 145), 75:126] = True  # the neck: to half a face below the chin
         return m
     plain = body(False)
     apply_neckline(plain, face)
@@ -187,3 +187,10 @@ def test_neck_is_free_but_a_low_neckline_is_censored():
     apply_neckline(low, face)
     start = int(110 + CLEAVAGE_START * 70)
     assert not low[start - 2, 100] and low[start + 3, 100] and low[200, 100]
+    # the chin is where the facial skin ends, not the face box's bottom edge (here 10 px above it)
+    face_prob = np.zeros((300, 200), np.float32)
+    face_prob[40:100, 70:131] = 1
+    tilted = body(True)
+    apply_neckline(tilted, face, face_prob)
+    start2 = int(100 + CLEAVAGE_START * 70)
+    assert not tilted[start2 - 2, 100] and tilted[start2 + 3, 100]

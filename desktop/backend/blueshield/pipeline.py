@@ -805,11 +805,11 @@ def run_pipeline(engine: Engine, info: media.VideoInfo, settings: CensorSettings
 
 # face / neck / neckline rules (sizes relative to the face box) — mirror shared/pipeline.json "neckline"
 NECK_BAND_HALF_WIDTH = 0.6
-NECK_BAND_HEIGHT = 0.7
+NECK_BAND_HEIGHT = 0.55  # = CLEAVAGE_START: the throat ends at the same depth whether or not a neckline is seen
 NECK_PROBE_HALF_WIDTH = 0.35
 NECK_PROBE_HEIGHT = 0.6
 CLEAVAGE_MIN_FILL = 0.12
-CLEAVAGE_START = 0.45  # the end of the throat (~half a face below the chin): the throat itself stays visible
+CLEAVAGE_START = 0.55  # the end of the throat (a little over half a face below the chin): the throat stays visible
 # (a third of the earlier 0.006 / 0.0006: those removed a small hand far from the camera, measured)
 SPECK_PERSON_FRAC = 0.002
 SPECK_FRAME_FRAC = 0.0002
@@ -817,12 +817,34 @@ CLEAVAGE_STICKY_FRAMES = 3  # a low neckline seen in this many frames counts for
 _FACE_INNER = 0.75
 _FACE_EDGE_PROB = 0.2
 _JAW = 0.25
+_CHIN_UP, _CHIN_DOWN = 0.35, 0.1
+
+
+def face_chin(face_prob: np.ndarray, face: tuple[float, float, float, float]) -> float:
+    """The chin: the lowest row between the face centre and a little under the box that is mostly facial skin
+    (central 40 % of the face width), kept within _CHIN_UP face heights above and _CHIN_DOWN below the box's
+    bottom edge; the box's edge where no row is. Same as the Android ``Neckline.faceChin``."""
+    h, w = face_prob.shape
+    x1, y1, x2, y2 = face
+    fh, cx = y2 - y1, (x1 + x2) / 2
+    x0, xe = max(0, int(cx - 0.2 * (x2 - x1))), min(w, int(cx + 0.2 * (x2 - x1)) + 1)
+    if xe <= x0:
+        return y2
+    lo, hi = y2 - _CHIN_UP * fh, y2 + _CHIN_DOWN * fh
+    ys = np.arange(max(0, int((y1 + y2) / 2)), min(h - 1, int(hi)) + 1)
+    if ys.size == 0:
+        return y2
+    rows = (face_prob[ys, x0:xe] >= 0.5).sum(axis=1) >= 0.5 * (xe - x0)
+    if not rows.any():
+        return y2
+    return float(min(max(ys[rows][-1] + 1.0, lo), hi))
 
 
 def apply_neckline(skin: np.ndarray, face: tuple[float, float, float, float],
                    face_prob: Optional[np.ndarray] = None, known_cleavage: bool = False) -> bool:
-    """Face and neck stay uncensored; a low neckline (bare skin continuing into the chest) is censored from
-    the end of the throat (about half a face below the chin). Same algorithm as the Android ``Neckline.apply``.
+    """Face and throat stay uncensored; bare skin is censored from the end of the throat (a little over half a
+    face below the chin, which is where the facial skin ends) downwards. Same algorithm as the Android
+    ``Neckline.apply``.
 
     Returns whether a low neckline was seen in this frame; ``known_cleavage`` (seen on this face before) makes
     the decision stick, so the censoring doesn't flicker when the head turns or tilts."""
@@ -845,7 +867,7 @@ def apply_neckline(skin: np.ndarray, face: tuple[float, float, float, float],
         else:
             clear |= r2 <= 1
         skin[ey0:ey1, ex0:ex1][clear] = False
-    chin = y2
+    chin = face_chin(face_prob, face) if face_prob is not None else y2
     band_bottom = chin + NECK_BAND_HEIGHT * fh
     px0, px1 = max(0, int(cx - NECK_PROBE_HALF_WIDTH * fw)), min(w, int(cx + NECK_PROBE_HALF_WIDTH * fw) + 1)
     py0, py1 = max(0, int(band_bottom)), min(h, int(band_bottom + NECK_PROBE_HEIGHT * fh) + 1)

@@ -308,8 +308,8 @@ class CoreTest {
         val face = Box(70f, 40f, 130f, 110f) // 60 × 70 px
         fun body(cleavage: Boolean) = BooleanArray(w * h) { i ->
             val x = i % w; val y = i / w
-            // face + neck skin column, plus (optionally) chest skin continuing below
-            (x in 75..125 && y in 40..(if (cleavage) 250 else 151))
+            // face + neck skin column (to half a face below the chin), plus (optionally) chest skin continuing below
+            (x in 75..125 && y in 40..(if (cleavage) 250 else 144))
         }
         val plain = body(false)
         com.blueshield.core.pipeline.Neckline.apply(plain, w, h, face, spec.neckline)
@@ -319,6 +319,13 @@ class CoreTest {
         val start = (110 + spec.neckline.cleavageStart * 70).toInt()
         assertFalse(low[(start - 2) * w + 100], "just under the chin stays free")
         assertTrue(low[(start + 3) * w + 100] && low[200 * w + 100], "the neckline is censored from the end of the throat")
+        // the chin is where the facial skin ends, not the face box's bottom edge (here 10 px above it)
+        val faceProb = FloatArray(w * h) { i -> if (i % w in 70..130 && i / w in 40 until 100) 1f else 0f }
+        val tilted = body(true)
+        com.blueshield.core.pipeline.Neckline.apply(tilted, w, h, face, spec.neckline, faceProb)
+        val start2 = (100 + spec.neckline.cleavageStart * 70).toInt()
+        assertFalse(tilted[(start2 - 2) * w + 100], "the throat stays free")
+        assertTrue(tilted[(start2 + 3) * w + 100], "censored from the end of the throat below the real chin")
     }
 
     @Test fun armOutsideTheBoxFollowsItsOwner() {
