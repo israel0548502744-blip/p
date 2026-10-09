@@ -23,6 +23,9 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
     var runs = 0
         private set
 
+    /** The model's input: the image letterboxed (edge-replicated) to [side] px, scaled to SIZE, -1..1; [left]/[top] = padding. */
+    class Input(val data: FloatArray, val side: Int, val left: Int, val top: Int)
+
     /** Model output for one (letterboxed) input: SIZE × SIZE probability maps + where the input sits in them. */
     private class Raw(val skin: FloatArray, val person: FloatArray, val face: FloatArray, val clothes: FloatArray, val side: Int, val left: Int, val top: Int) {
         val k get() = SIZE.toFloat() / side
@@ -115,14 +118,12 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
 
     /** Runs the model on [img] letterboxed (edge-replicated) to a square, so portrait video keeps its proportions. */
     private fun run(img: RgbImage, includeFace: Boolean, session: ai.onnxruntime.OrtSession = models.session(ModelStore.SEGMENTER)): Raw {
-        val side = max(img.width, img.height)
-        val left = (side - img.width) / 2
-        val top = (side - img.height) / 2
-        val sq = if (side == img.width && side == img.height) img else img.crop(-left, -top, side, side)
-        val x = sq.resize(SIZE, SIZE)
+        val x = input(img)
         synchronized(this) { runs++ }
-        val input = FloatArray(SIZE * SIZE * 3) { (x.data[it].toInt() and 0xFF) / 127.5f - 1f }
-        val out = session.runFloat(models.env, input, longArrayOf(1, SIZE.toLong(), SIZE.toLong(), 3)).first().second
+        val out = session.runFloat(models.env, x.data, SHAPE).first().second
+        val side = x.side
+        val left = x.left
+        val top = x.top
         val skin = FloatArray(SIZE * SIZE)
         val person = FloatArray(SIZE * SIZE)
         val face = FloatArray(SIZE * SIZE)
@@ -149,6 +150,20 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
 
     companion object {
         const val SIZE = 256
+        val SHAPE = longArrayOf(1, SIZE.toLong(), SIZE.toLong(), 3)
+
+        /** The model's input for [img] (see [Input]). */
+        fun input(img: RgbImage): Input {
+            val side = max(img.width, img.height)
+            val left = (side - img.width) / 2
+            val top = (side - img.height) / 2
+            val sq = if (side == img.width && side == img.height) img else img.crop(-left, -top, side, side)
+            val x = sq.resize(SIZE, SIZE)
+            return Input(FloatArray(SIZE * SIZE * 3) { (x.data[it].toInt() and 0xFF) / 127.5f - 1f }, side, left, top)
+        }
+
+        /** Output classes per pixel: background, hair, body skin, face skin, clothes, other. */
+        const val CLASSES = 6
 
         /** Close-up crops run side by side on this many threads (one model thread each). */
         private val pool: java.util.concurrent.ExecutorService by lazy {
@@ -197,49 +212,60 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
  * the 8/16/32 grids.
  */
 class PersonDetector(private val models: ModelStore) {
-    private val grid: FloatArray = buildGrid()
-
     fun detect(img: RgbImage, minScore: Float): List<Detection> {
-        val r = min(INPUT.toFloat() / img.width, INPUT.toFloat() / img.height)
-        val nw = max(1, (img.width * r).toInt())
-        val nh = max(1, (img.height * r).toInt())
-        val x = img.resize(nw, nh)
-        val plane = INPUT * INPUT
-        val input = FloatArray(3 * plane) { 114f }
-        for (y in 0 until nh) for (xx in 0 until nw) {
-            val i = (y * nw + xx) * 3
-            val o = y * INPUT + xx
-            input[o] = (x.data[i + 2].toInt() and 0xFF).toFloat() // B
-            input[plane + o] = (x.data[i + 1].toInt() and 0xFF).toFloat() // G
-            input[2 * plane + o] = (x.data[i].toInt() and 0xFF).toFloat() // R
-        }
-        val out = models.session(ModelStore.PERSONS).runFloat(models.env, input, longArrayOf(1, 3, INPUT.toLong(), INPUT.toLong()))[0].second
-        val stride = out.size / (grid.size / 3)
-        val boxes = ArrayList<Box>()
-        val sc = ArrayList<Float>()
-        for (i in 0 until grid.size / 3) {
-            val o = i * stride
-            val s = out[o + 4] * out[o + 5] // objectness × person
-            if (s < minScore) continue
-            val st = grid[i * 3 + 2]
-            val cx = (out[o] + grid[i * 3]) * st / r
-            val cy = (out[o + 1] + grid[i * 3 + 1]) * st / r
-            val w = exp(out[o + 2]) * st / r
-            val h = exp(out[o + 3]) * st / r
-            val b = Box(
-                (cx - w / 2).coerceIn(0f, img.width.toFloat()), (cy - h / 2).coerceIn(0f, img.height.toFloat()),
-                (cx + w / 2).coerceIn(0f, img.width.toFloat()), (cy + h / 2).coerceIn(0f, img.height.toFloat()),
-            )
-            if (b.w > 4 && b.h > 8) {
-                boxes += b
-                sc += s
-            }
-        }
-        return suppressContained(nms(boxes, sc, 0.45f).map { Detection("person", sc[it], boxes[it]) })
+        val (input, r) = input(img)
+        val out = models.session(ModelStore.PERSONS).runFloat(models.env, input, SHAPE)[0].second
+        return decode(out, r, img.width, img.height, minScore)
     }
 
     companion object {
         const val INPUT = 416
+        val SHAPE = longArrayOf(1, 3, INPUT.toLong(), INPUT.toLong())
+        private val grid: FloatArray by lazy { buildGrid() }
+
+        /** The model's input for [img] (BGR 0..255, letterboxed top-left with 114) and the scale it was shrunk by. */
+        fun input(img: RgbImage): Pair<FloatArray, Float> {
+            val r = min(INPUT.toFloat() / img.width, INPUT.toFloat() / img.height)
+            val nw = max(1, (img.width * r).toInt())
+            val nh = max(1, (img.height * r).toInt())
+            val x = img.resize(nw, nh)
+            val plane = INPUT * INPUT
+            val input = FloatArray(3 * plane) { 114f }
+            for (y in 0 until nh) for (xx in 0 until nw) {
+                val i = (y * nw + xx) * 3
+                val o = y * INPUT + xx
+                input[o] = (x.data[i + 2].toInt() and 0xFF).toFloat() // B
+                input[plane + o] = (x.data[i + 1].toInt() and 0xFF).toFloat() // G
+                input[2 * plane + o] = (x.data[i].toInt() and 0xFF).toFloat() // R
+            }
+            return input to r
+        }
+
+        /** Person boxes (image pixels) from the raw output for an image of [w] × [h] shrunk by [r]. */
+        fun decode(out: FloatArray, r: Float, w: Int, h: Int, minScore: Float): List<Detection> {
+            val stride = out.size / (grid.size / 3)
+            val boxes = ArrayList<Box>()
+            val sc = ArrayList<Float>()
+            for (i in 0 until grid.size / 3) {
+                val o = i * stride
+                val s = out[o + 4] * out[o + 5] // objectness × person
+                if (s < minScore) continue
+                val st = grid[i * 3 + 2]
+                val cx = (out[o] + grid[i * 3]) * st / r
+                val cy = (out[o + 1] + grid[i * 3 + 1]) * st / r
+                val bw = exp(out[o + 2]) * st / r
+                val bh = exp(out[o + 3]) * st / r
+                val b = Box(
+                    (cx - bw / 2).coerceIn(0f, w.toFloat()), (cy - bh / 2).coerceIn(0f, h.toFloat()),
+                    (cx + bw / 2).coerceIn(0f, w.toFloat()), (cy + bh / 2).coerceIn(0f, h.toFloat()),
+                )
+                if (b.w > 4 && b.h > 8) {
+                    boxes += b
+                    sc += s
+                }
+            }
+            return suppressContained(nms(boxes, sc, 0.45f).map { Detection("person", sc[it], boxes[it]) })
+        }
 
         /** (grid x, grid y, stride) for every output row: strides 8, 16, 32. */
         fun buildGrid(): FloatArray {
@@ -274,47 +300,55 @@ class PersonDetector(private val models: ModelStore) {
 class FaceDetector(private val models: ModelStore) {
     class Face(val box: Box, val score: Float, val rightEye: Pair<Float, Float>, val leftEye: Pair<Float, Float>)
 
-    private val anchors: FloatArray = run {
-        val a = ArrayList<Float>()
-        for ((stride, perCell) in listOf(8 to 2, 16 to 6)) {
-            val g = INPUT / stride
-            for (y in 0 until g) for (x in 0 until g) repeat(perCell) {
-                a += (x + 0.5f) / g
-                a += (y + 0.5f) / g
-            }
-        }
-        a.toFloatArray()
-    }
-
-    fun detect(img: RgbImage, minScore: Float): List<Face> {
-        val x = img.resize(INPUT, INPUT)
-        val input = FloatArray(INPUT * INPUT * 3) { (x.data[it].toInt() and 0xFF) / 127.5f - 1f }
-        val outs = models.session(ModelStore.FACES).runFloat(models.env, input, longArrayOf(1, INPUT.toLong(), INPUT.toLong(), 3))
-        val reg = outs.first { it.first.last() == 16L }.second
-        val cls = outs.first { it.first.last() == 1L }.second
-        val faces = ArrayList<Face>()
-        val w = img.width.toFloat()
-        val h = img.height.toFloat()
-        for (i in cls.indices) {
-            val s = 1f / (1f + exp(-cls[i].coerceIn(-80f, 80f)))
-            if (s < minScore) continue
-            val ax = anchors[i * 2]
-            val ay = anchors[i * 2 + 1]
-            val r = { k: Int -> reg[i * 16 + k] / INPUT }
-            val cx = r(0) + ax
-            val cy = r(1) + ay
-            val bw = r(2)
-            val bh = r(3)
-            faces += Face(
-                Box((cx - bw / 2) * w, (cy - bh / 2) * h, (cx + bw / 2) * w, (cy + bh / 2) * h), s,
-                (r(4) + ax) * w to (r(5) + ay) * h, (r(6) + ax) * w to (r(7) + ay) * h,
-            )
-        }
-        return nms(faces.map { it.box }, faces.map { it.score }, 0.3f).map { faces[it] }
-    }
+    fun detect(img: RgbImage, minScore: Float): List<Face> =
+        decode(models.session(ModelStore.FACES).runFloat(models.env, input(img), SHAPE), img.width, img.height, minScore)
 
     companion object {
         const val INPUT = 128
+        val SHAPE = longArrayOf(1, INPUT.toLong(), INPUT.toLong(), 3)
+
+        private val anchors: FloatArray by lazy {
+            val a = ArrayList<Float>()
+            for ((stride, perCell) in listOf(8 to 2, 16 to 6)) {
+                val g = INPUT / stride
+                for (y in 0 until g) for (x in 0 until g) repeat(perCell) {
+                    a += (x + 0.5f) / g
+                    a += (y + 0.5f) / g
+                }
+            }
+            a.toFloatArray()
+        }
+
+        /** The model's input for [img]: scaled to 128 × 128, -1..1. */
+        fun input(img: RgbImage): FloatArray {
+            val x = img.resize(INPUT, INPUT)
+            return FloatArray(INPUT * INPUT * 3) { (x.data[it].toInt() and 0xFF) / 127.5f - 1f }
+        }
+
+        /** Faces (image pixels, for an input image of [width] × [height]) from the raw outputs. */
+        fun decode(outs: List<Pair<LongArray, FloatArray>>, width: Int, height: Int, minScore: Float): List<Face> {
+            val reg = outs.first { it.first.last() == 16L }.second
+            val cls = outs.first { it.first.last() == 1L }.second
+            val faces = ArrayList<Face>()
+            val w = width.toFloat()
+            val h = height.toFloat()
+            for (i in cls.indices) {
+                val s = 1f / (1f + exp(-cls[i].coerceIn(-80f, 80f)))
+                if (s < minScore) continue
+                val ax = anchors[i * 2]
+                val ay = anchors[i * 2 + 1]
+                val r = { k: Int -> reg[i * 16 + k] / INPUT }
+                val cx = r(0) + ax
+                val cy = r(1) + ay
+                val bw = r(2)
+                val bh = r(3)
+                faces += Face(
+                    Box((cx - bw / 2) * w, (cy - bh / 2) * h, (cx + bw / 2) * w, (cy + bh / 2) * h), s,
+                    (r(4) + ax) * w to (r(5) + ay) * h, (r(6) + ax) * w to (r(7) + ay) * h,
+                )
+            }
+            return nms(faces.map { it.box }, faces.map { it.score }, 0.3f).map { faces[it] }
+        }
     }
 }
 
@@ -326,56 +360,66 @@ class FaceDetector(private val models: ModelStore) {
 class AgeGenderModel(private val models: ModelStore) {
     class Result(val pMale: Float, val age: Float)
 
-    fun predict(aligned224: RgbImage): Result {
-        // the aligned crop is 1.4× the face box; this model was trained on tighter face crops
-        val m = Math.round(aligned224.width * (1 - TIGHT) / 2)
-        val face = aligned224.crop(m, m, aligned224.width - 2 * m, aligned224.height - 2 * m).resize(INPUT, INPUT)
-        val input = FloatArray(INPUT * INPUT * 3) { (face.data[it].toInt() and 0xFF).toFloat() }
-        val outs = models.session(ModelStore.AGE_GENDER).runFloat(models.env, input, longArrayOf(1, INPUT.toLong(), INPUT.toLong(), 3))
-        val age = outs.first { it.second.size == 1 }.second[0]
-        val gender = outs.first { it.second.size == 2 }.second
-        return Result(gender[0], age)
-    }
+    fun predict(aligned224: RgbImage): Result = decode(models.session(ModelStore.AGE_GENDER).runFloat(models.env, input(aligned224), SHAPE))
 
     companion object {
         const val INPUT = 112
         const val TIGHT = 0.85f
+        val SHAPE = longArrayOf(1, INPUT.toLong(), INPUT.toLong(), 3)
+
+        /** The model's input: the aligned crop is 1.4× the face box; this model was trained on tighter face crops. */
+        fun input(aligned224: RgbImage): FloatArray {
+            val m = Math.round(aligned224.width * (1 - TIGHT) / 2)
+            val face = aligned224.crop(m, m, aligned224.width - 2 * m, aligned224.height - 2 * m).resize(INPUT, INPUT)
+            return FloatArray(INPUT * INPUT * 3) { (face.data[it].toInt() and 0xFF).toFloat() }
+        }
+
+        fun decode(outs: List<Pair<LongArray, FloatArray>>): Result {
+            val age = outs.first { it.second.size == 1 }.second[0]
+            val gender = outs.first { it.second.size == 2 }.second
+            return Result(gender[0], age)
+        }
     }
 }
 
 class GenderModel(private val models: ModelStore) {
-    fun pMale(face: RgbImage): Float {
-        require(face.width == INPUT && face.height == INPUT)
-        val input = FloatArray(INPUT * INPUT * 3) { (face.data[it].toInt() and 0xFF).toFloat() }
-        return models.session(ModelStore.GENDER).runFloat(models.env, input, longArrayOf(1, INPUT.toLong(), INPUT.toLong(), 3)).first().second[0]
-    }
+    fun pMale(face: RgbImage): Float = models.session(ModelStore.GENDER).runFloat(models.env, input(face), SHAPE).first().second[0]
 
-    /** Rotate so the eyes are level, scale the face box (×1.4) to 224 px. Mirrors cv2.getRotationMatrix2D. */
-    fun align(img: RgbImage, face: FaceDetector.Face): RgbImage {
-        val (rx, ry) = face.rightEye
-        val (lx, ly) = face.leftEye
-        var angle = Math.toDegrees(kotlin.math.atan2((ly - ry).toDouble(), (lx - rx).toDouble()))
-        if (kotlin.math.abs(angle) > 90) angle -= 180 * kotlin.math.sign(angle)
-        val side = max(face.box.w, face.box.h) * 1.4f
-        val scale = INPUT / side
-        val a = Math.toRadians(angle)
-        val alpha = (scale * kotlin.math.cos(a)).toFloat()
-        val beta = (scale * kotlin.math.sin(a)).toFloat()
-        val cx = face.box.cx
-        val cy = face.box.cy
-        // forward M = [[alpha, beta, (1-alpha)cx - beta cy + (224/2 - cx)], [-beta, alpha, beta cx + (1-alpha) cy + (224/2 - cy)]]
-        val m02 = (1 - alpha) * cx - beta * cy + (INPUT / 2f - cx)
-        val m12 = beta * cx + (1 - alpha) * cy + (INPUT / 2f - cy)
-        val det = alpha * alpha + beta * beta
-        val inv = floatArrayOf(
-            alpha / det, -beta / det, -(alpha * m02 - beta * m12) / det,
-            beta / det, alpha / det, -(beta * m02 + alpha * m12) / det,
-        )
-        return img.warpAffineInverse(inv, INPUT, INPUT)
-    }
+    fun align(img: RgbImage, face: FaceDetector.Face): RgbImage = alignFace(img, face)
 
     companion object {
         const val INPUT = 224
+        val SHAPE = longArrayOf(1, INPUT.toLong(), INPUT.toLong(), 3)
+
+        /** The model's input: the aligned 224 px face, RGB 0..255. */
+        fun input(face: RgbImage): FloatArray {
+            require(face.width == INPUT && face.height == INPUT)
+            return FloatArray(INPUT * INPUT * 3) { (face.data[it].toInt() and 0xFF).toFloat() }
+        }
+
+        /** Rotate so the eyes are level, scale the face box (×1.4) to 224 px. Mirrors cv2.getRotationMatrix2D. */
+        fun alignFace(img: RgbImage, face: FaceDetector.Face): RgbImage {
+            val (rx, ry) = face.rightEye
+            val (lx, ly) = face.leftEye
+            var angle = Math.toDegrees(kotlin.math.atan2((ly - ry).toDouble(), (lx - rx).toDouble()))
+            if (kotlin.math.abs(angle) > 90) angle -= 180 * kotlin.math.sign(angle)
+            val side = max(face.box.w, face.box.h) * 1.4f
+            val scale = INPUT / side
+            val a = Math.toRadians(angle)
+            val alpha = (scale * kotlin.math.cos(a)).toFloat()
+            val beta = (scale * kotlin.math.sin(a)).toFloat()
+            val cx = face.box.cx
+            val cy = face.box.cy
+            // forward M = [[alpha, beta, (1-alpha)cx - beta cy + (224/2 - cx)], [-beta, alpha, beta cx + (1-alpha) cy + (224/2 - cy)]]
+            val m02 = (1 - alpha) * cx - beta * cy + (INPUT / 2f - cx)
+            val m12 = beta * cx + (1 - alpha) * cy + (INPUT / 2f - cy)
+            val det = alpha * alpha + beta * beta
+            val inv = floatArrayOf(
+                alpha / det, -beta / det, -(alpha * m02 - beta * m12) / det,
+                beta / det, alpha / det, -(beta * m02 + alpha * m12) / det,
+            )
+            return img.warpAffineInverse(inv, INPUT, INPUT)
+        }
     }
 }
 
@@ -383,54 +427,64 @@ class GenderModel(private val models: ModelStore) {
 class NudeNet(private val models: ModelStore) {
     fun detect(frames: List<RgbImage>, minScore: Float): List<List<Detection>> {
         if (frames.isEmpty()) return emptyList()
-        val b = frames.size
-        val plane = INPUT * INPUT
-        val input = FloatArray(b * 3 * plane)
-        val scales = FloatArray(b)
-        for ((k, f) in frames.withIndex()) {
-            val sq = f.padToSquare()
-            scales[k] = sq.width.toFloat() / INPUT
-            val r = sq.resize(INPUT, INPUT)
-            for (i in 0 until plane) for (c in 0 until 3) input[k * 3 * plane + c * plane + i] = (r.data[i * 3 + c].toInt() and 0xFF) / 255f
-        }
-        val (shape, out) = models.session(ModelStore.NUDENET).runFloat(models.env, input, longArrayOf(b.toLong(), 3, INPUT.toLong(), INPUT.toLong())).first()
-        val ch = shape[1].toInt()
-        val n = shape[2].toInt()
-        return frames.indices.map { k ->
-            val base = k * ch * n
-            val boxes = ArrayList<Box>()
-            val scores = ArrayList<Float>()
-            val labels = ArrayList<String>()
-            for (i in 0 until n) {
-                var best = -1
-                var bestS = minScore
-                for (c in 4 until ch) {
-                    val s = out[base + c * n + i]
-                    if (s >= bestS) {
-                        bestS = s
-                        best = c - 4
-                    }
-                }
-                if (best < 0) continue
-                val cx = out[base + i]
-                val cy = out[base + n + i]
-                val w = out[base + 2 * n + i]
-                val h = out[base + 3 * n + i]
-                val s = scales[k]
-                val f = frames[k]
-                boxes += Box(
-                    max(0f, (cx - w / 2) * s), max(0f, (cy - h / 2) * s),
-                    min(f.width.toFloat(), (cx + w / 2) * s), min(f.height.toFloat(), (cy + h / 2) * s),
-                )
-                scores += bestS
-                labels += LABELS[best]
-            }
-            nms(boxes, scores, 0.45f).map { Detection(labels[it], scores[it], boxes[it]) }
-        }
+        val (input, shape) = input(frames)
+        return decode(models.session(ModelStore.NUDENET).runFloat(models.env, input, shape).first(), frames, minScore)
     }
 
     companion object {
         const val INPUT = 320
+
+        /** The model's input for a batch of [frames] (each padded right/bottom to a square, 0..1 planes) and its shape. */
+        fun input(frames: List<RgbImage>): Pair<FloatArray, LongArray> {
+            val b = frames.size
+            val plane = INPUT * INPUT
+            val input = FloatArray(b * 3 * plane)
+            for ((k, f) in frames.withIndex()) {
+                val r = f.padToSquare().resize(INPUT, INPUT)
+                for (i in 0 until plane) for (c in 0 until 3) input[k * 3 * plane + c * plane + i] = (r.data[i * 3 + c].toInt() and 0xFF) / 255f
+            }
+            return input to longArrayOf(b.toLong(), 3, INPUT.toLong(), INPUT.toLong())
+        }
+
+        /** Labelled regions per frame (image pixels) from the raw output for [frames]. */
+        fun decode(output: Pair<LongArray, FloatArray>, frames: List<RgbImage>, minScore: Float): List<List<Detection>> {
+            val (shape, out) = output
+            val scales = FloatArray(frames.size) { max(frames[it].width, frames[it].height).toFloat() / INPUT }
+            val ch = shape[1].toInt()
+            val n = shape[2].toInt()
+            return frames.indices.map { k ->
+                val base = k * ch * n
+                val boxes = ArrayList<Box>()
+                val scores = ArrayList<Float>()
+                val labels = ArrayList<String>()
+                for (i in 0 until n) {
+                    var best = -1
+                    var bestS = minScore
+                    for (c in 4 until ch) {
+                        val s = out[base + c * n + i]
+                        if (s >= bestS) {
+                            bestS = s
+                            best = c - 4
+                        }
+                    }
+                    if (best < 0) continue
+                    val cx = out[base + i]
+                    val cy = out[base + n + i]
+                    val w = out[base + 2 * n + i]
+                    val h = out[base + 3 * n + i]
+                    val s = scales[k]
+                    val f = frames[k]
+                    boxes += Box(
+                        max(0f, (cx - w / 2) * s), max(0f, (cy - h / 2) * s),
+                        min(f.width.toFloat(), (cx + w / 2) * s), min(f.height.toFloat(), (cy + h / 2) * s),
+                    )
+                    scores += bestS
+                    labels += LABELS[best]
+                }
+                nms(boxes, scores, 0.45f).map { Detection(labels[it], scores[it], boxes[it]) }
+            }
+        }
+
         /** A box this much inside a bigger one is a partial (e.g. upper-body) duplicate. */
         const val CONTAINED_MIN = 0.8f
 

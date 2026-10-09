@@ -5,6 +5,10 @@ import android.os.Build
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import ai.onnxruntime.providers.NNAPIFlags
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import com.blueshield.core.image.RgbImage
+import com.blueshield.core.ml.EngineCheck
 import com.blueshield.core.ml.ModelStore
 import java.util.EnumSet
 
@@ -14,7 +18,8 @@ import java.util.EnumSet
  *  - cpu:  the processor only (plain or XNNPACK kernels, whichever is faster)
  *  - gpu:  the graphics processor (Qualcomm's Adreno driver on Snapdragon, WebGPU/Vulkan on any phone)
  *  - npu:  the AI chip (Qualcomm Hexagon on Snapdragon, the vendor's NNAPI driver elsewhere)
- * A model the chosen engine can't run, or runs with different results, stays on the plain CPU engine.
+ * A model the chosen engine can't run, or runs with different results on a real photo ([EngineCheck]), stays on
+ * the plain CPU engine. Photos always run on the plain CPU engine ([Processor.processPhoto]).
  */
 object Accelerators {
     data class Mode(val id: String, val label: String, val hint: String)
@@ -53,7 +58,9 @@ object Accelerators {
 
     /** Engines to try for [mode], and whether the fastest wins (otherwise the first that works). */
     fun engines(mode: String): Pair<List<ModelStore.Engine>, Boolean> {
-        val xnnpack = ModelStore.Engine("xnnpack") {
+        // XNNPACK computes in 32-bit floats like the plain engine; the GPU and AI-chip engines in 16 bits (the outline
+        // encoders overflow there, so they never run them: EngineCheck.FP32_ONLY)
+        val xnnpack = ModelStore.Engine("xnnpack", fp32 = true) {
             // XNNPACK brings its own thread pool: ONNX Runtime's stays at one thread and doesn't spin
             base().apply {
                 addConfigEntry("session.intra_op.allow_spinning", "0")
@@ -76,6 +83,14 @@ object Accelerators {
             "npu" -> (listOfNotNull(htp.takeIf { q }, nnapi)) to false
             else -> listOfNotNull(xnnpack, htp.takeIf { q }, adreno.takeIf { q }, webgpu, nnapi) to true
         }
+    }
+
+    /** The engine check's photo ([EngineCheck.PROBE]), decoded the way the app decodes photos. */
+    fun probeImage(): RgbImage? {
+        val jpeg = EngineCheck.probeJpeg() ?: return null
+        val bmp = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 })
+            ?: return null
+        return PhotoLoader.toRgb(bmp, bmp.width, bmp.height).also { bmp.recycle() }
     }
 
     /** The plain CPU engine's options (also the base of the others: their unsupported parts run here). */

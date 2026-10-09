@@ -1,11 +1,12 @@
 package com.blueshield.app.engine
 
 import android.content.Context
+import com.blueshield.core.ml.EngineCheck
 import com.blueshield.core.ml.ModelStore
 
 /**
  * The engine each model runs on for one setting ([Accelerators] mode), measured once on this phone and kept
- * until ONNX Runtime or a model changes ([signature]).
+ * until ONNX Runtime, a model or the engine check ([EngineCheck.VERSION]) changes.
  *
  * Crash guard: before an engine is tried on a model, that pair is written down synchronously and cleared once
  * the try is over. An accelerator driver that takes the whole app down leaves the note behind; on the next start
@@ -16,7 +17,10 @@ class EngineChoices(context: Context, mode: String, signature: String) : ModelSt
     private val guard = context.getSharedPreferences("engines_guard", Context.MODE_PRIVATE)
 
     init {
-        if (prefs.getString("signature", null) != signature) prefs.edit().clear().putString("signature", signature).commit()
+        // the choices are also measured again when the check deciding them changes; the crash guard is kept then
+        // (a driver that crashed is still that driver)
+        val choices = "$signature;check=${EngineCheck.VERSION}"
+        if (prefs.getString("signature", null) != choices) prefs.edit().clear().putString("signature", choices).commit()
         if (guard.getString("signature", null) != signature) guard.edit().clear().putString("signature", signature).commit()
         guard.getString("pending", null)?.let { crashed ->
             Breadcrumbs.mark("engines: $crashed crashed while being tried; not used again")

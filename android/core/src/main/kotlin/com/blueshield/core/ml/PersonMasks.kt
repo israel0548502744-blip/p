@@ -28,65 +28,79 @@ class PersonMasks(private val models: ModelStore, val size: Int) {
     private val encoder = if (size >= 1024) ModelStore.SAM_ENCODER_1024 else ModelStore.SAM_ENCODER_512
 
     fun encode(img: RgbImage): Embedding {
-        val s = size.toFloat() / max(img.width, img.height)
-        val nw = max(1, (img.width * s).roundToInt())
-        val nh = max(1, (img.height * s).roundToInt())
-        val small = img.resize(nw, nh)
-        val plane = size * size
-        // letterboxed at the top-left; the padding is SAM's pixel mean (= 0 after its normalisation)
-        val input = FloatArray(3 * plane)
-        java.util.Arrays.fill(input, 0, plane, 123.675f)
-        java.util.Arrays.fill(input, plane, 2 * plane, 116.28f)
-        java.util.Arrays.fill(input, 2 * plane, 3 * plane, 103.53f)
-        for (y in 0 until nh) for (x in 0 until nw) {
-            val i = (y * nw + x) * 3
-            val o = y * size + x
-            input[o] = (small.data[i].toInt() and 0xFF).toFloat()
-            input[plane + o] = (small.data[i + 1].toInt() and 0xFF).toFloat()
-            input[2 * plane + o] = (small.data[i + 2].toInt() and 0xFF).toFloat()
-        }
-        val outs = models.session(encoder).runFloat(models.env, input, longArrayOf(1, 3, size.toLong(), size.toLong()))
-        val (shape, emb) = outs[0]
-        return Embedding(emb, outs[1].second, shape[2].toInt(), shape[3].toInt(), s, img.width, img.height)
+        val (input, s) = input(img, size)
+        return embedding(models.session(encoder).runFloat(models.env, input, shape(size)), s, img.width, img.height)
     }
 
     /** Mask logits (image size) for each box (image coordinates), in the same order. */
-    fun masks(e: Embedding, boxes: List<Box>): List<FloatMask> {
-        if (boxes.isEmpty()) return emptyList()
-        val sess = models.session(ModelStore.SAM_DECODER)
-        val b = FloatArray(boxes.size * 4)
-        for ((i, box) in boxes.withIndex()) {
-            b[i * 4] = (box.x1 * e.scale / size).coerceIn(0f, 1f)
-            b[i * 4 + 1] = (box.y1 * e.scale / size).coerceIn(0f, 1f)
-            b[i * 4 + 2] = (box.x2 * e.scale / size).coerceIn(0f, 1f)
-            b[i * 4 + 3] = (box.y2 * e.scale / size).coerceIn(0f, 1f)
+    fun masks(e: Embedding, boxes: List<Box>): List<FloatMask> =
+        if (boxes.isEmpty()) emptyList() else decode(models.session(ModelStore.SAM_DECODER), models.env, e, boxes, size)
+
+    companion object {
+        fun shape(size: Int) = longArrayOf(1, 3, size.toLong(), size.toLong())
+
+        /** The encoder's input for [img] (letterboxed at the top-left into [size] × [size], RGB 0..255) and the scale. */
+        fun input(img: RgbImage, size: Int): Pair<FloatArray, Float> {
+            val s = size.toFloat() / max(img.width, img.height)
+            val nw = max(1, (img.width * s).roundToInt())
+            val nh = max(1, (img.height * s).roundToInt())
+            val small = img.resize(nw, nh)
+            val plane = size * size
+            // the padding is SAM's pixel mean (= 0 after its normalisation)
+            val input = FloatArray(3 * plane)
+            java.util.Arrays.fill(input, 0, plane, 123.675f)
+            java.util.Arrays.fill(input, plane, 2 * plane, 116.28f)
+            java.util.Arrays.fill(input, 2 * plane, 3 * plane, 103.53f)
+            for (y in 0 until nh) for (x in 0 until nw) {
+                val i = (y * nw + x) * 3
+                val o = y * size + x
+                input[o] = (small.data[i].toInt() and 0xFF).toFloat()
+                input[plane + o] = (small.data[i + 1].toInt() and 0xFF).toFloat()
+                input[2 * plane + o] = (small.data[i + 2].toInt() and 0xFF).toFloat()
+            }
+            return input to s
         }
-        val gridShape = longArrayOf(1, 256, e.gh.toLong(), e.gw.toLong())
-        val env = models.env
-        OnnxTensor.createTensor(env, FloatBuffer.wrap(e.emb), gridShape).use { emb ->
-            OnnxTensor.createTensor(env, FloatBuffer.wrap(e.pe), gridShape).use { pe ->
-                OnnxTensor.createTensor(env, FloatBuffer.wrap(b), longArrayOf(boxes.size.toLong(), 4)).use { bt ->
-                    sess.run(mapOf("embeddings" to emb, "image_pe" to pe, "boxes" to bt)).use { res ->
-                        val t = res.get("logits").get() as OnnxTensor
-                        val shp = t.info.shape // n, 1, mh, mw
-                        val mh = shp[2].toInt()
-                        val mw = shp[3].toInt()
-                        val all = FloatArray(boxes.size * mh * mw).also { t.floatBuffer.get(it) }
-                        // low-res logits cover the whole size × size input; the image is its top-left part
-                        val k = size.toFloat() / mw / e.scale // low-res cells per image pixel, inverted
-                        return boxes.indices.map { n ->
-                            val src = all.copyOfRange(n * mh * mw, (n + 1) * mh * mw)
-                            val out = FloatMask(e.width, e.height)
-                            Resample.bilinear(src, mw, mh, 1f / k, 1f / k, 0f, 0f, out.data, e.width, 0, 0, e.width, e.height, max = false)
-                            out
+
+        /** The encoder's outputs as an embedding for an image of [width] × [height] scaled by [scale]. */
+        fun embedding(outs: List<Pair<LongArray, FloatArray>>, scale: Float, width: Int, height: Int): Embedding {
+            val (shape, emb) = outs[0]
+            return Embedding(emb, outs[1].second, shape[2].toInt(), shape[3].toInt(), scale, width, height)
+        }
+
+        /** Mask logits (image size) for each box (image coordinates), decoded by [decoder] from an [size] px encoder's [e]. */
+        fun decode(decoder: ai.onnxruntime.OrtSession, env: ai.onnxruntime.OrtEnvironment, e: Embedding, boxes: List<Box>, size: Int): List<FloatMask> {
+            if (boxes.isEmpty()) return emptyList()
+            val b = FloatArray(boxes.size * 4)
+            for ((i, box) in boxes.withIndex()) {
+                b[i * 4] = (box.x1 * e.scale / size).coerceIn(0f, 1f)
+                b[i * 4 + 1] = (box.y1 * e.scale / size).coerceIn(0f, 1f)
+                b[i * 4 + 2] = (box.x2 * e.scale / size).coerceIn(0f, 1f)
+                b[i * 4 + 3] = (box.y2 * e.scale / size).coerceIn(0f, 1f)
+            }
+            val gridShape = longArrayOf(1, 256, e.gh.toLong(), e.gw.toLong())
+            OnnxTensor.createTensor(env, FloatBuffer.wrap(e.emb), gridShape).use { emb ->
+                OnnxTensor.createTensor(env, FloatBuffer.wrap(e.pe), gridShape).use { pe ->
+                    OnnxTensor.createTensor(env, FloatBuffer.wrap(b), longArrayOf(boxes.size.toLong(), 4)).use { bt ->
+                        decoder.run(mapOf("embeddings" to emb, "image_pe" to pe, "boxes" to bt)).use { res ->
+                            val t = res.get("logits").get() as OnnxTensor
+                            val shp = t.info.shape // n, 1, mh, mw
+                            val mh = shp[2].toInt()
+                            val mw = shp[3].toInt()
+                            val all = FloatArray(boxes.size * mh * mw).also { t.floatBuffer.get(it) }
+                            // low-res logits cover the whole size × size input; the image is its top-left part
+                            val k = size.toFloat() / mw / e.scale // low-res cells per image pixel, inverted
+                            return boxes.indices.map { n ->
+                                val src = all.copyOfRange(n * mh * mw, (n + 1) * mh * mw)
+                                val out = FloatMask(e.width, e.height)
+                                Resample.bilinear(src, mw, mh, 1f / k, 1f / k, 0f, 0f, out.data, e.width, 0, 0, e.width, e.height, max = false)
+                                out
+                            }
                         }
                     }
                 }
             }
         }
-    }
 
-    companion object {
         /**
          * Per-pixel owner from the people's mask logits: index into [logits] + 1, 0 = nobody clearly
          * ([minLogit]), and -1 = clearly outside every outline (all logits < [clipLogit]).

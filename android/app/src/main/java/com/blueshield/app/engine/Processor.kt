@@ -79,18 +79,37 @@ class Processor(private val context: Context) {
 
     /** The models, on the processor chosen in the settings ([Accelerators]); rebuilt when that setting changes. */
     private fun models(): ModelStore {
+        photoModels?.close()
+        photoModels = null
         val mode = Accelerators.mode(context)
         models?.let { if (modelsMode == mode) return it; it.close(); models = null }
         val (engines, fastest) = Accelerators.engines(mode)
         return ModelStore(
-            load = { name -> context.assets.open("models/$name").use { it.readBytes() } },
+            load = ::loadModel,
             options = { Accelerators.base() },
             onEvent = Breadcrumbs::mark,
             engines = engines,
             pickFastest = fastest,
             memory = EngineChoices(context, mode, Accelerators.signature(context)),
+            probeImage = Accelerators::probeImage,
         ).also { models = it; modelsMode = mode }
     }
+
+    private var photoModels: ModelStore? = null
+
+    /**
+     * The models for photos: always the plain CPU engine, whatever the processor setting — the path the photo tests
+     * measure, so a photo never depends on what an AI chip or GPU computes (a photo is one frame: they would save a
+     * second at most). Only one set of models is open at a time.
+     */
+    private fun photoModels(): ModelStore {
+        models?.close()
+        models = null
+        return photoModels ?: ModelStore(load = ::loadModel, options = { Accelerators.base() }, onEvent = Breadcrumbs::mark)
+            .also { photoModels = it }
+    }
+
+    private fun loadModel(name: String): ByteArray = context.assets.open("models/$name").use { it.readBytes() }
 
     fun releaseAnalysis() {
         analysis?.close()
@@ -306,19 +325,30 @@ class Processor(private val context: Context) {
     fun processPhoto(uri: android.net.Uri, settings: CensorSettings): PhotoResult {
         val s = settings.validated()
         Breadcrumbs.reset("photo: $uri")
-        val bmp = PhotoLoader.load(context, uri)
+        // what the diagnostics report needs to replay this photo on a computer (PhotoCheck): version, settings, sizes
+        Breadcrumbs.mark("photo: BlueShield ${com.blueshield.app.BuildInfo.version}, settings ${kotlinx.serialization.json.Json.encodeToString(CensorSettings.serializer(), s)}")
+        var fileSize = ""
+        val bmp = PhotoLoader.load(context, uri) { w, h -> fileSize = "${w}x$h" }
         val (aw, ah) = Analyzer.scaledSize(bmp.width, bmp.height, spec.analysisMaxSide)
         val (mw, mh) = Analyzer.scaledSize(bmp.width, bmp.height, spec.maskMaxSide)
+        Breadcrumbs.mark("photo: file $fileSize, upright ${bmp.width}x${bmp.height}, analysis ${aw}x$ah, masks ${mw}x$mh")
         photo?.close()
         val store = File(context.cacheDir, "photo_masks_${System.currentTimeMillis()}.bin")
-        val m = models()
-        photo = com.blueshield.core.pipeline.StillImage.analyze(m, s, spec, PhotoLoader.toRgb(bmp, aw, ah), mw, mh, store)
-        Accelerators.saveReport(context, m)
+        val m = photoModels()
+        val t0 = System.nanoTime()
+        val analysis = com.blueshield.core.pipeline.StillImage.analyze(m, s, spec, PhotoLoader.toRgb(bmp, aw, ah), mw, mh, store)
+        photo = analysis
         // the 1024 px outline encoder holds a few hundred MB while loaded; the photo still has to be painted
         m.release(ModelStore.SAM_ENCODER_1024)
         photoOriginal = bmp
         photoSettings = s
-        Breadcrumbs.mark("photo: analysed, ${photo?.people?.size ?: 0} people")
+        Breadcrumbs.mark("photo: analysed in ${"%.1f".format((System.nanoTime() - t0) / 1e9)} s, ${analysis.people.size} people; engines: " +
+            m.used.entries.joinToString { "${it.key.substringBefore('.')}=${it.value}" })
+        val decisions = analysis.decisions(s, emptyMap())
+        for (p in analysis.summaries(s, emptyMap())) {
+            Breadcrumbs.mark("photo: person #${p.id} ${p.gender} pFemale=${"%.2f".format(p.pFemale)} votes=${p.votes} age=${p.age?.let { "%.0f".format(it) }} " +
+                "child=${p.child} censored=${decisions[p.id]} box=${analysis.people[p.id]?.box}")
+        }
         return renderPhoto(emptyMap())
     }
 
@@ -396,6 +426,8 @@ class Processor(private val context: Context) {
         photo = null
         models?.close()
         models = null
+        photoModels?.close()
+        photoModels = null
     }
 
     companion object {

@@ -1,0 +1,9 @@
+engine_probe.jpg — the photo the app uses to check that an AI chip / GPU engine computes the same masks
+as the plain CPU engine (com.blueshield.core.ml.EngineCheck).
+
+One frame (at 1.0 s) of tests/fixtures/woman_and_man.mp4, itself cut from
+"head-pose-face-detection-female-and-male.mp4" in Intel's IoT DevKit sample videos
+(https://github.com/intel-iot-devkit/sample-videos), scaled to 384 x 216 (area average) and saved as JPEG.
+
+Licence: Creative Commons Attribution 4.0 International (CC-BY-4.0), © Intel Corporation.
+https://creativecommons.org/licenses/by/4.0/ — changes: resized, re-encoded.

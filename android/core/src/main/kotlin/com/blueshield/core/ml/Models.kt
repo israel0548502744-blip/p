@@ -3,6 +3,7 @@ package com.blueshield.core.ml
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
+import com.blueshield.core.image.RgbImage
 import java.nio.FloatBuffer
 
 /**
@@ -10,11 +11,14 @@ import java.nio.FloatBuffer
  * code runs on Android (onnxruntime-android) and on the JVM (tests).
  *
  * [engines] are the other processors this device may run a model on (fast CPU kernels, the GPU, an AI chip),
- * besides the plain CPU engine ([options]). Per single-input model they are tried once on this device: an
- * engine counts only when its session can be created and its outputs match the plain engine's; then either
- * the fastest one is kept ([pickFastest], the "automatic" setting) or the first one that works (the user chose
- * a kind of processor). Anything else stays on the plain engine. [memory] remembers the choice, and an engine
- * that crashed the app while being tried is never tried again for that model.
+ * besides the plain CPU engine ([options]). With none (photos, tests) every model runs on the plain engine and
+ * nothing is tried or remembered. Otherwise, per model, they are tried once on this device: an engine counts only
+ * when its session can be created and it computes the same masks, boxes and scores as the plain engine on a real
+ * photo ([EngineCheck]); then either the fastest one is kept ([pickFastest], the "automatic" setting) or the first
+ * one that works (the user chose a kind of processor). A model the check can't verify, or that needs full precision
+ * ([EngineCheck.FP32_ONLY]) from engines without it, stays on the plain engine, as does everything when there is no
+ * [probeImage]. [memory] remembers the choice, and an engine that crashed the app while being tried is never tried
+ * again for that model.
  */
 class ModelStore(
     private val load: (String) -> ByteArray,
@@ -24,9 +28,14 @@ class ModelStore(
     private val engines: List<Engine> = emptyList(),
     private val pickFastest: Boolean = true,
     private val memory: EngineMemory? = null,
+    /** The decoded [EngineCheck.PROBE] photo (decoding is platform code); null: engines can't be checked, none is used. */
+    private val probeImage: (() -> RgbImage?)? = null,
 ) : AutoCloseable {
-    /** An execution engine: [id] for memory and display, [options] builds its session options (may throw). */
-    class Engine(val id: String, val options: () -> OrtSession.SessionOptions)
+    /**
+     * An execution engine: [id] for memory and display, [options] builds its session options (may throw).
+     * [fp32]: it computes in full 32-bit floats (other CPU kernels), unlike an AI chip or GPU running in 16 bits.
+     */
+    class Engine(val id: String, val fp32: Boolean = false, val options: () -> OrtSession.SessionOptions)
 
     /** Remembered engine per model file ("cpu" = the plain engine), and the crash guard for trying engines. */
     interface EngineMemory {
@@ -42,12 +51,16 @@ class ModelStore(
     /** Engine in use per model, and the measured milliseconds per engine (for the settings screen). */
     val used = LinkedHashMap<String, String>()
     val measured = LinkedHashMap<String, Map<String, Double>>()
+    /** Whether any engine besides the plain CPU one may be used at all. */
+    val accelerated: Boolean get() = engines.isNotEmpty()
+
+    private val probePhoto: RgbImage? by lazy { probeImage?.let { f -> runCatching { f() }.getOrNull() } }
 
     @Synchronized
     fun session(file: String): OrtSession = sessions.getOrPut(file) {
         onEvent("model: loading $file")
         val bytes = load(file)
-        val s = if (engines.isEmpty()) env.createSession(bytes, options()).also { used[file] = CPU } else pick(file, bytes)
+        val s = if (engines.isEmpty()) plain(file, bytes) else pick(file, bytes)
         s.also { onEvent("model: loaded $file (${used[file]})") }
     }
 
@@ -78,42 +91,55 @@ class ModelStore(
     }
 
     private fun pick(file: String, bytes: ByteArray): OrtSession {
+        // not verifiable (several inputs), or no engine this model may run on: the plain engine, nothing to remember
+        val candidates = if (file in EngineCheck.CHECKED) engines.filter { allowed(file, it) } else emptyList()
+        if (candidates.isEmpty()) return plain(file, bytes)
         val remembered = memory?.get(file)
         if (remembered != null) {
-            val e = engines.find { it.id == remembered }
+            val e = candidates.find { it.id == remembered }
             if (e == null || memory?.broken(file, e.id) == true) return plain(file, bytes)
             return create(file, bytes, e)?.also { used[file] = e.id } ?: plain(file, bytes)
         }
         val base = plain(file, bytes)
-        val probe = probe(base)
-        if (probe == null) { // several inputs (the outline decoder): not verifiable this way, and cheap anyway
+        val probe = probePhoto ?: run {
+            onEvent("model: no probe photo, $file stays on the plain engine")
+            return base
+        }
+        val check = EngineCheck.forModel(file, probe, env) { session(SAM_DECODER) } ?: run {
             memory?.put(file, CPU)
             return base
         }
+        // the plain engine against itself: the probe must give this model something to compare (and the outline
+        // decoder is loaded here, not while an engine is being tried)
+        val baseOut = runCatching { check.run(base, env).also { o -> check.compare(o, o).let { v -> if (!v.same) error(v.detail) } } }
+            .onFailure { onEvent("model: no engine check for $file: ${it.message?.take(120)}") }.getOrNull() ?: return base
         val times = LinkedHashMap<String, Double>()
-        val baseOut = base.runFloat(env, probe.first, probe.second)
-        var bestTime = time(base, probe).also { times[CPU] = it }
+        var bestTime = time(base, check.inputs[0]).also { times[CPU] = it }
         // only one session of this model in memory at a time while trying (the photo outline model is large)
         base.close()
         var best: Pair<String, OrtSession>? = null
-        for (e in engines) {
+        for (e in candidates) {
             if (memory?.broken(file, e.id) == true) continue
             val s = create(file, bytes, e)
             memory?.trying(file, e.id) // still trying: its first runs
             val t = s?.let {
                 runCatching {
                     val t0 = System.nanoTime()
-                    val out = it.runFloat(env, probe.first, probe.second)
-                    val first = (System.nanoTime() - t0) / 1e6
+                    val first = check.inputs[0].let { (x, shape) -> it.runFloat(env, x, shape) }
+                    val firstMs = (System.nanoTime() - t0) / 1e6
+                    val out = listOf(first) + check.inputs.drop(1).map { (x, shape) -> it.runFloat(env, x, shape) }
+                    val v = check.compare(baseOut, out)
+                    onEvent("model: ${e.id} on $file: ${v.detail}" + if (v.same) "" else " -> different results")
                     // the first run includes the accelerator's one-off setup; ten times slower than the plain engine
                     // even so (a software GPU, an emulator) is not worth measuring further
-                    if (!same(baseOut, out) || (pickFastest && first > 10 * times.getValue(CPU))) null else time(it, probe, warm = false)
-                }.getOrNull()
+                    if (!v.same) null
+                    else if (pickFastest && firstMs > 10 * times.getValue(CPU)) null.also { onEvent("model: ${e.id} far too slow for $file") }
+                    else time(it, check.inputs[0], warm = false)
+                }.onFailure { x -> onEvent("model: ${e.id} failed on $file: ${x.message?.take(120)}") }.getOrNull()
             }
             memory?.trying(file, null)
             if (s == null || t == null) {
                 s?.close()
-                if (s != null) onEvent("model: ${e.id} not used for $file (different results, or far too slow)")
                 continue
             }
             times[e.id] = t
@@ -132,38 +158,10 @@ class ModelStore(
         return s
     }
 
-    /** A test input for a single-float-input model: pixel-like values in 0..1 (in range for every model here). */
-    private fun probe(s: OrtSession): Pair<FloatArray, LongArray>? {
-        if (s.inputInfo.size != 1) return null
-        val info = s.inputInfo.values.first().info as? ai.onnxruntime.TensorInfo ?: return null
-        if (info.type != ai.onnxruntime.OnnxJavaType.FLOAT) return null
-        val shape = LongArray(info.shape.size) { k -> info.shape[k].takeIf { it > 0 } ?: if (k == 0) 1L else 320L }
-        val rnd = java.util.Random(1)
-        return FloatArray(shape.fold(1L) { x, y -> x * y }.toInt()) { rnd.nextFloat() } to shape
-    }
-
-    /** Same outputs within 3 % of each output's range (an AI chip or a GPU computes in 16-bit floats). */
-    private fun same(a: List<Pair<LongArray, FloatArray>>, b: List<Pair<LongArray, FloatArray>>): Boolean {
-        if (a.size != b.size) return false
-        for ((x, y) in a.zip(b)) {
-            if (x.second.size != y.second.size) return false
-            var scale = 1e-6f
-            var diff = 0f
-            for (i in x.second.indices) {
-                scale = maxOf(scale, kotlin.math.abs(x.second[i]))
-                val d = kotlin.math.abs(x.second[i] - y.second[i])
-                if (d.isNaN()) return false
-                diff = maxOf(diff, d)
-            }
-            if (diff > 0.03f * scale) return false
-        }
-        return true
-    }
-
     /** Median of three runs, milliseconds (after one warm-up run unless the session has just run). */
-    private fun time(s: OrtSession, probe: Pair<FloatArray, LongArray>, warm: Boolean = true): Double {
-        if (warm) s.runFloat(env, probe.first, probe.second)
-        val t = DoubleArray(3) { val t0 = System.nanoTime(); s.runFloat(env, probe.first, probe.second); (System.nanoTime() - t0) / 1e6 }
+    private fun time(s: OrtSession, input: Pair<FloatArray, LongArray>, warm: Boolean = true): Double {
+        if (warm) s.runFloat(env, input.first, input.second)
+        val t = DoubleArray(3) { val t0 = System.nanoTime(); s.runFloat(env, input.first, input.second); (System.nanoTime() - t0) / 1e6 }
         return t.sorted()[1]
     }
 
@@ -181,6 +179,10 @@ class ModelStore(
 
     companion object {
         const val CPU = "cpu"
+
+        /** Whether [e] may run [file] at all: the outline encoders overflow 16-bit floats. */
+        fun allowed(file: String, e: Engine) = file !in EngineCheck.FP32_ONLY || e.fp32
+
         const val SEGMENTER = "selfie_multiclass_256x256.onnx"
         const val PERSONS = "yolox_tiny.onnx"
         const val FACES = "blaze_face_short_range.onnx"

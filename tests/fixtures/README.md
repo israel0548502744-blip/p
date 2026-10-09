@@ -11,5 +11,8 @@ Short clips cut and re-encoded from Intel's IoT DevKit sample videos
 | `woman_and_man.jpg` | woman_and_man.mp4 at 1.0 s, one frame | photo of the same woman and man | woman censored (photo + batch tests) |
 | `tiny_portrait.mp4` | woman_and_man.mp4 (0–1.2 s), portrait crop, 200×112 coded + 90° rotation, 17 fps, no audio | tiny phone clip (encoder minimum-size regression) | renders without a codec error |
 
+`android/core/src/main/resources/blueshield/engine_probe.jpg` is `woman_and_man.jpg` scaled to 384 × 216
+(same licence and attribution): the photo the Android app checks its AI-chip / GPU engines with.
+
 Used by the desktop tests (`desktop/backend/tests`) and intended for Android
 instrumented tests.
