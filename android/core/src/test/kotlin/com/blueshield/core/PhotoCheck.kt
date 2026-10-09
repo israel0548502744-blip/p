@@ -19,18 +19,21 @@ class PhotoCheck {
         val arg = System.getProperty("blueshield.photo")
         assumeTrue("no photo job", !arg.isNullOrBlank())
         // several jobs in one run: "in1:out1[:json][>alpha1];in2:out2..." (the alpha path after '>' overrides photoAlpha)
-        for (job in arg!!.split(";").map { it.trim() }.filter { it.isNotEmpty() }) {
-            val (spec, alpha) = job.split(">", limit = 2).let { it[0] to it.getOrNull(1) }
-            run(spec, alpha ?: System.getProperty("blueshield.photoAlpha"))
+        val repo = File(System.getProperty("blueshield.repo") ?: "../..")
+        // one model store for all jobs (a store per job kept every job's sessions alive: the test JVM ran out of memory)
+        ModelStore({ File(repo, "models/onnx/$it").readBytes() }).use { models ->
+            for (job in arg!!.split(";").map { it.trim() }.filter { it.isNotEmpty() }) {
+                val (spec, alpha) = job.split(">", limit = 2).let { it[0] to it.getOrNull(1) }
+                run(models, spec, alpha ?: System.getProperty("blueshield.photoAlpha"))
+            }
         }
     }
 
-    private fun run(arg: String, alphaPath: String?) {
+    private fun run(models: ModelStore, arg: String, alphaPath: String?) {
         val parts = arg.split(":", limit = 3)
         val settings = (if (parts.size > 2) kotlinx.serialization.json.Json.decodeFromString(CensorSettings.serializer(), parts[2]) else CensorSettings()).validated()
-        val repo = File(System.getProperty("blueshield.repo") ?: "../..")
-        val models = ModelStore({ File(repo, "models/onnx/$it").readBytes() })
-        val spec = PipelineSpec.bundled
+        // -Dblueshield.spec=file.json: a variant of shared/pipeline.json (ablations)
+        val spec = System.getProperty("blueshield.spec")?.takeIf { it.isNotBlank() }?.let { PipelineSpec.parse(File(it).readText()) } ?: PipelineSpec.bundled
         val (w, h, _) = PipelineIntegrationTest.probe(File(parts[0]))
         val (aw, ah) = Analyzer.scaledSize(w, h, spec.analysisMaxSide)
         val (mw, mh) = Analyzer.scaledSize(w, h, spec.maskMaxSide)
@@ -38,12 +41,8 @@ class PhotoCheck {
         val full = PipelineIntegrationTest.decode(File(parts[0]), w, h).first()
         for (d0 in com.blueshield.core.ml.PersonDetector(models).detect(img, 0.2f)) println("DET ${"%.2f".format(d0.score)} ${d0.box}")
         val t0 = System.nanoTime()
-        // Same as StillImage.analyze, keeping the analyzer to read its skin probability.
-        val still = spec.copy(gender = spec.gender.copy(voteFactor = 1.0, minVotes = 1, minWeight = 0.3, minAgeVotes = 1))
-        val analyzer = Analyzer(models, settings.copy(speed = "quality"), still, aw, ah, 1.0, mw, mh, File.createTempFile("photo", ".bin"), spec.personMasks.photoSize)
         var prob: com.blueshield.core.image.FloatMask? = null
-        analyzer.process(listOf(img)) { prob = analyzer.lastSkinProbability }
-        val a = analyzer.finish()
+        val a = StillImage.analyze(models, settings, spec, img, mw, mh, File.createTempFile("photo", ".bin")) { prob = it.lastSkinProbability }
         println("PHOTO ${w}x$h analysed at ${aw}x$ah in ${"%.1f".format((System.nanoTime() - t0) / 1e9)} s")
         val d = a.decisions(settings, emptyMap())
         for (p in a.summaries(settings, emptyMap())) {
@@ -52,7 +51,9 @@ class PhotoCheck {
         }
         val px = IntArray(w * h) { (0xFF shl 24) or ((full.data[it * 3].toInt() and 0xFF) shl 16) or ((full.data[it * 3 + 1].toInt() and 0xFF) shl 8) or (full.data[it * 3 + 2].toInt() and 0xFF) }
         val cloth = if (settings.fill == "clothing") a.clothFor(0) else null
+        val t1 = System.nanoTime()
         val alpha = StillImage.alpha(a, settings, d, w, h, px.copyOf())
+        println("ALPHA ${w}x$h in ${"%.2f".format((System.nanoTime() - t1) / 1e9)} s")
         alpha?.let { StillImage.paint(px, w, h, it, CensorSettings.parseColor(settings.color), cloth, a.clothWidth, a.clothHeight) }
         // -Dblueshield.photoAlpha=alpha.png: the final censor alpha (grey 0..255, photo size) for scoring against a ground truth
         alphaPath?.takeIf { it.isNotBlank() }?.let { path ->

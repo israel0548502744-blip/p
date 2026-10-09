@@ -34,7 +34,7 @@ tasks.named("processResources") { dependsOn(copySpec) }
 tasks.test {
     useJUnit()
     systemProperty("blueshield.repo", repoRoot.absolutePath)
-    for (p in listOf("blueshield.longVideos", "blueshield.render", "blueshield.quality", "blueshield.nearest", "blueshield.photo", "blueshield.photoAlpha", "blueshield.spec", "blueshield.dumpMasks")) System.getProperty(p)?.let { systemProperty(p, it) }
+    for ((k, v) in System.getProperties()) if (k.toString().startsWith("blueshield.")) systemProperty(k.toString(), v.toString())
     maxHeapSize = "2g"
     testLogging { events("passed", "failed", "skipped"); exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL; showStandardStreams = true }
 }
