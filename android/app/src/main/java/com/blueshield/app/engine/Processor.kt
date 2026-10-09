@@ -77,6 +77,12 @@ class Processor(private val context: Context) {
 
     private var modelsMode: String? = null
 
+    /**
+     * Held while a video or a photo is analysed: the two use separate model stores and opening one closes the other,
+     * so a video started while a photo is still being analysed waits instead of closing the photo's models under it.
+     */
+    private val modelLock = java.util.concurrent.locks.ReentrantLock()
+
     /** The models, on the processor chosen in the settings ([Accelerators]); rebuilt when that setting changes. */
     private fun models(): ModelStore {
         photoModels?.close()
@@ -126,6 +132,8 @@ class Processor(private val context: Context) {
         this.settings = settings.validated()
         var state = JobState(stage = JobState.Stage.ANALYZING, totalFrames = meta.frameCount)
         update(state)
+        modelLock.lock()
+        var locked = true
         try {
             val (aw, ah) = Analyzer.scaledSize(meta.width, meta.height, spec.analysisMaxSide)
             val (mw, mh) = Analyzer.scaledSize(meta.width, meta.height, spec.maskMaxSide)
@@ -207,12 +215,16 @@ class Processor(private val context: Context) {
             Breadcrumbs.mark("timings: " + analyzer.timings.entries.sortedByDescending { it.value }.joinToString { "${it.key}=${"%.1f".format(it.value / 1e9)}s" } +
                 "; engines: " + store0.used.entries.joinToString { "${it.key.substringBefore('.')}=${it.value}" })
             Accelerators.saveReport(context, store0)
+            modelLock.unlock()
+            locked = false
             return renderInternal(emptyMap(), state, ANALYSIS_SHARE, update)
         } catch (e: Renderer.CancelledException) {
             return JobState(stage = JobState.Stage.CANCELLED).also(update)
         } catch (e: Throwable) {
             Breadcrumbs.mark("run failed: ${Errors.describe(e)}")
             return JobState(stage = JobState.Stage.ERROR, error = Errors.describe(e)).also(update)
+        } finally {
+            if (locked) modelLock.unlock()
         }
     }
 
@@ -334,14 +346,20 @@ class Processor(private val context: Context) {
         Breadcrumbs.mark("photo: file $fileSize, upright ${bmp.width}x${bmp.height}, analysis ${aw}x$ah, masks ${mw}x$mh")
         photo?.close()
         val store = File(context.cacheDir, "photo_masks_${System.currentTimeMillis()}.bin")
-        val m = photoModels()
         val t0 = System.nanoTime()
-        val analysis = com.blueshield.core.pipeline.StillImage.analyze(m, s, spec, PhotoLoader.toRgb(bmp, aw, ah), mw, mh, store)
+        modelLock.lock()
+        val m: ModelStore
+        val analysis = try {
+            m = photoModels()
+            // (no Accelerators.saveReport: photos always run on the plain CPU; the settings screen keeps the video's engines)
+            com.blueshield.core.pipeline.StillImage.analyze(m, s, spec, PhotoLoader.toRgb(bmp, aw, ah), mw, mh, store)
+        } finally {
+            // the 1024 px outline encoder holds a few hundred MB while loaded; the photo still has to be painted
+            photoModels?.release(ModelStore.SAM_ENCODER_1024)
+            photoModels?.release(ModelStore.CLOTHES)
+            modelLock.unlock()
+        }
         photo = analysis
-        // the 1024 px outline encoder holds a few hundred MB while loaded; the photo still has to be painted
-        m.release(ModelStore.SAM_ENCODER_1024)
-        // so does the clothes model after running on several crops side by side (its buffers stay allocated)
-        m.release(ModelStore.CLOTHES)
         photoOriginal = bmp
         photoSettings = s
         Breadcrumbs.mark("photo: analysed in ${"%.1f".format((System.nanoTime() - t0) / 1e9)} s, ${analysis.people.size} people; engines: " +

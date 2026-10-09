@@ -24,7 +24,10 @@ class PersonMasks:
         so.log_severity_level = 3
         enc = SAM_DIR / f"mobilesam_encoder_{1024 if size >= 1024 else 512}.onnx"
         self.size = 1024 if size >= 1024 else 512
-        self.enc = ort.InferenceSession(str(enc), sess_options=so, providers=models.onnx_providers())
+        # never in 16-bit floats (CoreML, as the Android app's fp16 engines): the encoder's neck squares values up to
+        # ~3.5e5, past the fp16 maximum, and the outline vanishes (EngineCheck.FP32_ONLY on Android)
+        enc_providers = [p for p in models.onnx_providers() if p != "CoreMLExecutionProvider"] or ["CPUExecutionProvider"]
+        self.enc = ort.InferenceSession(str(enc), sess_options=so, providers=enc_providers)
         self.dec = ort.InferenceSession(str(SAM_DIR / "mobilesam_decoder.onnx"), sess_options=so, providers=models.onnx_providers())
 
     def masks(self, bgr: np.ndarray, boxes: list) -> list[np.ndarray]:

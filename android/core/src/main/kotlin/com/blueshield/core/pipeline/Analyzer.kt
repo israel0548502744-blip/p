@@ -334,6 +334,8 @@ class Analyzer(
                 if (roiBoxes.isNotEmpty()) seg = timed("seg_rois") { segmenter.segmentRois(frame, roiBoxes, seg, settings.includeFace, spec.roi, baseIsFresh = fullDue, orphanSkin = skinOn) }
                 var skin = seg.skin
                 val clothesMaps = clothesModel?.let { m -> timed("clothes") { clothesMaps(m, frame, roiTracks, cut) } }
+                // a photo runs the clothes model once: free its session (and arena) before the 1024 px outline encoder loads
+                if (still && clothesMaps != null) models.release(ModelStore.CLOTHES)
                 if (settings.aggressive) {
                     val color = ColorSkin.probability(frame)
                     val personPx = MaskOps.dilate(ByteMask(width, height, ByteArray(width * height) { if (seg.person.data[it] > 0.4f) -1 else 0 }), 4)

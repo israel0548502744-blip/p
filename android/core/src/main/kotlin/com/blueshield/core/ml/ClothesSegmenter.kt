@@ -29,13 +29,9 @@ class ClothesSegmenter(private val models: ModelStore) {
         val h = img.height
         val out = Result(FloatMask(w, h), BooleanArray(w * h))
         if (crops.isEmpty()) return out
-        // side by side on single-threaded sessions on the plain CPU engine (as the skin crops); one at a time otherwise
-        val outs = if (crops.size < 2 || models.engineOf(ModelStore.CLOTHES) != ModelStore.CPU) crops.map { run(img, it) }
-        else {
-            val single = models.singleThreaded(ModelStore.CLOTHES)
-            crops.map { c -> SkinSegmenter.pool.submit<FloatArray> { run(img, c, single) } }.map { it.get() }
-        }
-        val plane = SIZE * SIZE
+        // one crop at a time on one session: side by side, every concurrent run grew ONNX Runtime's arena by ~80 MB that
+        // stayed held through the photo's 1024 px outline encoder (group photos on a phone that kills apps for memory)
+        val outs = crops.map { run(img, it) }
         for ((c, o) in crops.zip(outs)) {
             val (a, b, side) = c
             val x0 = max(0, a)
@@ -45,13 +41,13 @@ class ClothesSegmenter(private val models: ModelStore) {
             if (x1 <= x0 || y1 <= y0) continue
             val k = SIZE.toFloat() / side
             // destination pixel X ↔ crop pixel X − a ↔ model position ((X − a + 0.5) k − 0.5)
-            Resample.bilinear(o.copyOfRange(plane, 2 * plane), SIZE, SIZE, k, k, -a.toFloat(), -b.toFloat(), out.clothes.data, w, x0, y0, x1, y1, max = true)
+            Resample.bilinear(o, SIZE, SIZE, k, k, -a.toFloat(), -b.toFloat(), out.clothes.data, w, x0, y0, x1, y1, max = true)
             for (y in y0 until y1) java.util.Arrays.fill(out.covered, y * w + x0, y * w + x1, true)
         }
         return out
     }
 
-    /** The model on one square crop: [3, SIZE, SIZE] probabilities (skin, clothes, hair; only clothes is used). */
+    /** The model on one square crop: its clothes probability plane, [SIZE, SIZE] (the skin and hair planes are dropped). */
     private fun run(img: RgbImage, c: Triple<Int, Int, Int>, session: ai.onnxruntime.OrtSession = models.session(ModelStore.CLOTHES)): FloatArray {
         val (a, b, side) = c
         val x = img.crop(a, b, side, side).resize(SIZE, SIZE)
@@ -61,7 +57,7 @@ class ClothesSegmenter(private val models: ModelStore) {
         for (i in 0 until plane) for (ch in 0 until 3) {
             input[ch * plane + i] = ((x.data[i * 3 + ch].toInt() and 0xFF) / 255f - MEAN[ch]) / STD[ch]
         }
-        return session.runFloat(models.env, input, longArrayOf(1, 3, SIZE.toLong(), SIZE.toLong())).first().second
+        return session.runFloat(models.env, input, longArrayOf(1, 3, SIZE.toLong(), SIZE.toLong())).first().second.copyOfRange(plane, 2 * plane)
     }
 
     companion object {

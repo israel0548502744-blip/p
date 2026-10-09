@@ -39,8 +39,8 @@ object StillImage {
      * the mask is first fitted to the photo's own edges ([EdgeSnap]) and only lightly feathered, so the censor
      * follows the outline of an arm instead of a blob around it. The safety margin grows only along smooth colour
      * ([EdgeSnap.growAlongColour]): it takes back a shaded rim of skin, but stops at the arm's outline — a blind
-     * dilation was half of all the paint off the skin (a 2–3 px halo around every arm and finger). The feather is
-     * centred on the grown edge: alpha is at least 0.5 everywhere on it, the softness setting sets its width.
+     * dilation was half of all the paint off the skin (a 2–3 px halo around every arm and finger). Every grown skin
+     * pixel is fully painted; the feather fades outward from the edge, the softness setting sets its width.
      */
     fun alpha(a: Analysis, settings: CensorSettings, decisions: Map<Int, Boolean>, outW: Int, outH: Int, pixels: IntArray? = null): ByteMask? {
         val raw = a.maskFor(0, decisions, settings, 0)
@@ -57,7 +57,12 @@ object StillImage {
         val bin = ByteMask(w, h, ByteArray(w * h) { if ((snapped.data[it].toInt() and 0xFF) > 127) -1 else 0 })
         val px = if (w == outW && h == outH) pixels else EdgeSnap.downscale(pixels, outW, outH, w, h)
         val grown = EdgeSnap.growAlongColour(bin, px, grow)
-        return (if (featherPx < 0.5f) grown else MaskOps.gaussianApprox(grown, featherPx)).resize(outW, outH)
+        if (featherPx < 0.5f) return grown.resize(outW, outH)
+        // the feather only fades outward: every fitted skin pixel stays fully painted (centred on the edge, a finger
+        // a few pixels wide came out at a third of the colour and the skin showed through)
+        val soft = MaskOps.gaussianApprox(grown, featherPx)
+        for (i in soft.data.indices) if (grown.data[i].toInt() != 0) soft.data[i] = -1
+        return soft.resize(outW, outH)
     }
 
     /**

@@ -194,7 +194,11 @@ class ModelStore(
         const val SAM_DECODER = "mobilesam_decoder.onnx"
         /** Skin / clothes / hair segmenter: the clothes veto ([ClothesSegmenter]). */
         const val CLOTHES = "skin_clothes_hair_mnv3s_512.onnx"
-        val ALL = listOf(SEGMENTER, PERSONS, FACES, GENDER, NUDENET, AGE_GENDER, SAM_ENCODER_512, SAM_ENCODER_1024, SAM_DECODER, CLOTHES)
+        /**
+         * The models that can run on an engine. The app's engine memory and crash guard are keyed on their sizes, so a model
+         * that never leaves the CPU ([CLOTHES]) stays out: adding it would wipe the list of drivers known to crash.
+         */
+        val ALL = listOf(SEGMENTER, PERSONS, FACES, GENDER, NUDENET, AGE_GENDER, SAM_ENCODER_512, SAM_ENCODER_1024, SAM_DECODER)
     }
 }
 
