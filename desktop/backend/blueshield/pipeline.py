@@ -810,8 +810,9 @@ NECK_PROBE_HALF_WIDTH = 0.35
 NECK_PROBE_HEIGHT = 0.6
 CLEAVAGE_MIN_FILL = 0.12
 CLEAVAGE_START = 0.45  # the end of the throat (~half a face below the chin): the throat itself stays visible
-SPECK_PERSON_FRAC = 0.006
-SPECK_FRAME_FRAC = 0.0006
+# (a third of the earlier 0.006 / 0.0006: those removed a small hand far from the camera, measured)
+SPECK_PERSON_FRAC = 0.002
+SPECK_FRAME_FRAC = 0.0002
 CLEAVAGE_STICKY_FRAMES = 3  # a low neckline seen in this many frames counts for the rest of the shot
 _FACE_INNER = 0.75
 _FACE_EDGE_PROB = 0.2
