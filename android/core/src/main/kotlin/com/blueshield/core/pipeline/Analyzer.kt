@@ -315,7 +315,7 @@ class Analyzer(
                 // the close-up per-person pass only for people who are (still) to be censored, or not decided yet: a
                 // man already recognised, or a small child, is never covered, so his skin needn't be found in detail
                 val roiBoxes = people.visible().filter { roiWanted(it) }.map { it.box }
-                if (roiBoxes.isNotEmpty()) seg = timed("seg_rois") { segmenter.segmentRois(frame, roiBoxes, seg, settings.includeFace, spec.roi, baseIsFresh = fullDue) }
+                if (roiBoxes.isNotEmpty()) seg = timed("seg_rois") { segmenter.segmentRois(frame, roiBoxes, seg, settings.includeFace, spec.roi, baseIsFresh = fullDue, orphanSkin = skinOn) }
                 var skin = seg.skin
                 if (settings.aggressive) {
                     val color = ColorSkin.probability(frame)

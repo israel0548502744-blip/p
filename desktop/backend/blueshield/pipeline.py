@@ -368,7 +368,7 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
                 roi_boxes = [tuple(t.box) for t in people.visible() if _roi_wanted(t, settings, th)]
                 if roi_boxes:
                     seg = seg_model.segment_rois(frame, roi_boxes, seg, include_face=settings.include_face,
-                                                 base_is_fresh=full_due)
+                                                 base_is_fresh=full_due, orphan_skin=skin_threshold)
                 skin = seg.skin
                 if settings.aggressive:
                     person_px = cv2.dilate((seg.person > 0.4).astype(np.uint8), np.ones((9, 9), np.uint8))

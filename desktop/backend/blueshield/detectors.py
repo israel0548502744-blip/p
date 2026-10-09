@@ -53,6 +53,11 @@ def roi_crops(box, side_scale: float = 1.15) -> list[tuple[int, int, int]]:
 
 # per-person crops: skipped when they'd be (almost) the whole frame anyway; whole-frame pass every Nth detection round
 ROI_MAX_FRAME_RATIO = 0.9
+# close-ups of skin found away from every person (SkinSegmenter._close_up_orphans): at most ORPHAN_MAX per frame,
+# of blobs covering at least ORPHAN_MIN_AREA of the frame, each seen in a square ORPHAN_SCALE times its size
+ORPHAN_MAX = 4
+ORPHAN_MIN_AREA = 0.0005
+ORPHAN_SCALE = 2.0
 ROI_FULL_EVERY_DET = 2
 
 
@@ -124,12 +129,13 @@ class SkinSegmenter:
     def segment_rois(self, bgr: np.ndarray, boxes: list[tuple[float, float, float, float]], base: SegResult,
                      include_face: bool = False, side_scale: float = 1.15, paste_pad: float = 0.08,
                      min_side: int = 24, base_is_fresh: bool = False,
-                     max_frame_ratio: float = ROI_MAX_FRAME_RATIO) -> SegResult:
+                     max_frame_ratio: float = ROI_MAX_FRAME_RATIO, orphan_skin: float = 0.0) -> SegResult:
         """Re-segment each person at much higher effective resolution.
 
         The model only sees 256x256 pixels, so on a whole frame an arm is a handful of pixels. Here every
         person gets their own square crop (``side_scale`` x the longer box side, no distortion), and the
-        result replaces ``base`` inside that person's (slightly padded) box.
+        result replaces ``base`` inside that person's (slightly padded) box. With ``orphan_skin`` > 0 (and a
+        fresh base), skin of the base outside every crop gets a close-up of its own (``_close_up_orphans``).
         """
         h, w = bgr.shape[:2]
         skin, person, face = base.skin.copy(), base.person.copy(), base.face.copy()
@@ -164,8 +170,37 @@ class SkinSegmenter:
                 np.maximum(roi_person[dst], p_[src], out=roi_person[dst])
                 np.maximum(roi_face[dst], f_[src], out=roi_face[dst])
                 cover[dst] = True
+        if orphan_skin > 0 and base_is_fresh and cover.any():
+            self._close_up_orphans(bgr, base.skin, (roi_skin, roi_person, roi_face), cover, orphan_skin, include_face, min_side)
         skin[cover], person[cover], face[cover] = roi_skin[cover], roi_person[cover], roi_face[cover]
         return SegResult(skin=skin, person=person, face=face)
+
+    def _close_up_orphans(self, bgr: np.ndarray, base_skin: np.ndarray, out: tuple, cover: np.ndarray, thr: float,
+                          include_face: bool, min_side: int) -> None:
+        """Skin the whole-frame pass found away from every person's crop was seen at a few pixels per finger —
+        and that is where it calls a car's red paint or a wooden door skin. Each such blob (the ORPHAN_MAX largest
+        of at least ORPHAN_MIN_AREA of the frame) gets a close-up of its own, a square ORPHAN_SCALE times its size,
+        whose result replaces the coarse one around it: real skin (a person the detector missed, an arm reaching
+        far out) stays skin, the false ones go. Same as the Android ``SkinSegmenter.closeUpOrphans``."""
+        h, w = bgr.shape[:2]
+        on = (~cover) & (base_skin >= thr)
+        n, _, st, _ = cv2.connectedComponentsWithStats(on.astype(np.uint8), connectivity=8)
+        blobs = [i for i in (np.argsort(-st[1:, 4], kind="stable") + 1) if st[i, 4] >= ORPHAN_MIN_AREA * w * h][:ORPHAN_MAX]
+        for i in blobs:
+            x0, y0, bw, bh = (int(v) for v in st[i, :4])
+            side = max(min_side, int(np.floor(max(bw, bh) * ORPHAN_SCALE + 0.5)))
+            a = int(np.floor(x0 + bw / 2 - side / 2 + 0.5))
+            b = int(np.floor(y0 + bh / 2 - side / 2 + 0.5))
+            m = max(2, max(bw, bh) // 4)
+            rx1, ry1, rx2, ry2 = max(0, x0 - m), max(0, y0 - m), min(w, x0 + bw + m), min(h, y0 + bh + m)
+            pad = (max(0, -b), max(0, b + side - h), max(0, -a), max(0, a + side - w))
+            crop = cv2.copyMakeBorder(bgr[max(0, b):min(h, b + side), max(0, a):min(w, a + side)], *pad, cv2.BORDER_REPLICATE)
+            maps = self._masks(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB), include_face)
+            dst = (slice(ry1, ry2), slice(rx1, rx2))
+            free = ~cover[dst]
+            for o, m_ in zip(out, maps):
+                o[dst][free] = m_[ry1 - b:ry2 - b, rx1 - a:rx2 - a][free]
+            cover[dst] = True
 
     def segment(self, bgr: np.ndarray, include_face: bool = False, tiled: bool = False) -> SegResult:
         """Segment a BGR frame.

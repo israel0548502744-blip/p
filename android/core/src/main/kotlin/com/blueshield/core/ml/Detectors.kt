@@ -64,7 +64,11 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
      * so on a whole frame an arm is a handful of pixels. Each person gets a square crop (no distortion) and
      * the result replaces [base] inside their slightly padded box. Only that box is resampled.
      */
-    fun segmentRois(img: RgbImage, boxes: List<Box>, base: Result, includeFace: Boolean, roi: PipelineSpec.Roi, baseIsFresh: Boolean = false): Result {
+    fun segmentRois(
+        img: RgbImage, boxes: List<Box>, base: Result, includeFace: Boolean, roi: PipelineSpec.Roi, baseIsFresh: Boolean = false,
+        /** Skin probability from which a blob of the (fresh) base outside every crop gets a close-up of its own (0 = never). */
+        orphanSkin: Float = 0f,
+    ): Result {
         val w = img.width
         val h = img.height
         val roiOut = Result(FloatMask(w, h), FloatMask(w, h), FloatMask(w, h), FloatMask(w, h))
@@ -98,8 +102,8 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
             raw.into(roiOut, c.a, c.b, c.rx1, c.ry1, c.rx2, c.ry2, max = true)
             for (y in c.ry1 until c.ry2) java.util.Arrays.fill(cover, y * w + c.rx1, y * w + c.rx2, true)
         }
-        val any = crops.isNotEmpty()
-        if (!any) return base
+        if (crops.isEmpty()) return base
+        if (orphanSkin > 0f && baseIsFresh) closeUpOrphans(img, base, roiOut, cover, orphanSkin, includeFace, roi)
         val skin = base.skin.copy()
         val person = base.person.copy()
         val face = base.face.copy()
@@ -111,6 +115,62 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
             clothes.data[i] = roiOut.clothes.data[i]
         }
         return Result(skin, person, face, clothes)
+    }
+
+    /**
+     * Skin the whole-frame pass found away from every person's crop was seen at a few pixels per finger — and that is
+     * where it calls a car's red paint or a wooden door skin. Each such blob (the [ORPHAN_MAX] largest of at least
+     * [ORPHAN_MIN_AREA] of the frame) gets a close-up of its own, a square [ORPHAN_SCALE] times its size, whose result
+     * replaces the coarse one around it ([out], marked in [cover]): real skin (a person the detector missed, an arm
+     * reaching far out) stays skin, the false ones go.
+     */
+    private fun closeUpOrphans(img: RgbImage, base: Result, out: Result, cover: BooleanArray, thr: Float, includeFace: Boolean, roi: PipelineSpec.Roi) {
+        val w = img.width
+        val h = img.height
+        val on = BooleanArray(w * h) { !cover[it] && base.skin.data[it] >= thr }
+        val (labels, count) = com.blueshield.core.image.MaskOps.connectedComponents(on, w, h)
+        if (count <= 1) return
+        val area = IntArray(count)
+        val bx0 = IntArray(count) { Int.MAX_VALUE }
+        val by0 = IntArray(count) { Int.MAX_VALUE }
+        val bx1 = IntArray(count) { -1 }
+        val by1 = IntArray(count) { -1 }
+        for (i in labels.indices) {
+            val l = labels[i]
+            if (l == 0) continue
+            area[l]++
+            val x = i % w
+            val y = i / w
+            if (x < bx0[l]) bx0[l] = x
+            if (x > bx1[l]) bx1[l] = x
+            if (y < by0[l]) by0[l] = y
+            if (y > by1[l]) by1[l] = y
+        }
+        val minArea = ORPHAN_MIN_AREA * w * h
+        val tmp = Result(FloatMask(w, h), FloatMask(w, h), FloatMask(w, h), FloatMask(w, h))
+        for (l in (1 until count).filter { area[it] >= minArea }.sortedByDescending { area[it] }.take(ORPHAN_MAX)) {
+            val bw = bx1[l] - bx0[l] + 1
+            val bh = by1[l] - by0[l] + 1
+            val side = max(roi.minSidePx, Math.round(max(bw, bh) * ORPHAN_SCALE))
+            val a = Math.round((bx0[l] + bx1[l] + 1) / 2f - side / 2f)
+            val b = Math.round((by0[l] + by1[l] + 1) / 2f - side / 2f)
+            // replaced: the blob's box with a margin — never what a person's crop has already decided
+            val m = max(2, max(bw, bh) / 4)
+            val rx1 = max(0, bx0[l] - m)
+            val ry1 = max(0, by0[l] - m)
+            val rx2 = min(w, bx1[l] + m + 1)
+            val ry2 = min(h, by1[l] + m + 1)
+            run(img.crop(a, b, side, side), includeFace).into(tmp, a, b, rx1, ry1, rx2, ry2, max = false)
+            for (y in ry1 until ry2) for (x in rx1 until rx2) {
+                val i = y * w + x
+                if (cover[i]) continue
+                out.skin.data[i] = tmp.skin.data[i]
+                out.person.data[i] = tmp.person.data[i]
+                out.face.data[i] = tmp.face.data[i]
+                out.clothes.data[i] = tmp.clothes.data[i]
+                cover[i] = true
+            }
+        }
     }
 
     /** Runs the model on [img] letterboxed (edge-replicated) to a square, so portrait video keeps its proportions. */
@@ -155,6 +215,12 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
             val n = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
             java.util.concurrent.Executors.newFixedThreadPool(n) { r -> Thread(r, "blueshield-seg").apply { isDaemon = true } }
         }
+        /** Close-ups of skin found away from every person ([closeUpOrphans]): at most this many per frame… */
+        const val ORPHAN_MAX = 4
+        /** …of blobs covering at least this fraction of the frame, each seen in a square this many times its size. */
+        const val ORPHAN_MIN_AREA = 0.0005f
+        const val ORPHAN_SCALE = 2f
+
         /** Extra crops along a tall (standing) or wide (lying / arms out) person. */
         const val MAX_TILES = 3
         /**
