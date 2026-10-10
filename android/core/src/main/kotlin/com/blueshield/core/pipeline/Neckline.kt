@@ -81,10 +81,133 @@ object Neckline {
         val hand = handInBand(skin, w, h, bx0, by0, bx1, by1, (chin + HAND_ROWS * fh).toInt(), fw * fh)
         val neck = hand?.let { neckInBand(skin, w, h, bx0, by0, bx1, by1, cx, THROAT_HALF * fw) }
         // a hand reaching into the band from the side keeps its fingers censored there (a hand held in front of the
-        // face had its fingertips cut off) — unless that skin joins the throat inside the band: the sides of a neck
-        fill(skin, w, h, bx0, by0, bx1, by1) { x, y -> hand == null || !hand[y * w + x] || neck!![y * w + x] }
+        // face had its fingertips cut off) — unless that skin joins the throat inside the band: the sides of a neck.
+        // That is the jaw, above the chin; below it only the neck itself is cleared, row by row ([clearNeck])
+        val chinRow = max(by0, min(by1, chin.toInt()))
+        // skin joined to the throat in the band is the neck, even when a hand touches it
+        val notNeck = hand?.let { BooleanArray(w * h) { i -> hand[i] && !neck!![i] } }
+        val top = clearNeck(skin, w, h, bx0, bx1, chinRow, by1, cx, fw, fh, notNeck) { x, y ->
+            val dx = (x + 0.5f - cx) / ax
+            val dy = (y + 0.5f - cy) / ay
+            dx * dx + dy * dy <= 1f
+        }
+        // the jaw rows: the face's own skin (the corners of the jaw) and the neck going on up — not a shoulder
+        // that rises next to the jaw (a head tilted onto it)
+        fill(skin, w, h, bx0, by0, bx1, chinRow) { x, y ->
+            val i = y * w + x
+            (hand == null || !hand[i] || neck!![i]) &&
+                (top == null || faceProb == null || faceProb[i] >= JAW_FACE_PROB ||
+                    (x + 0.5f >= top[0] - NECK_SLOPE * (chinRow - y) && x + 0.5f <= top[1] + NECK_SLOPE * (chinRow - y)))
+        }
         return seen
     }
+
+    /**
+     * The neck below the chin, row by row: in each row the stretch of skin (gaps up to [NECK_GAP] face widths
+     * bridged: a necklace) that overlaps most with the previous row's — starting from the face's centre — down to
+     * where it widens past [NECK_WIDEN] times its narrowest (the chest or the shoulders begin) or to [y1]. Then back
+     * up from there: a row may reach at most [NECK_SLOPE] of a pixel per row further out than the one below it, so
+     * a shoulder that joins the neck just under the jaw (above the end of a strap) is cut off; and the bottom is
+     * rounded, a circle as wide as the neck, like the neckline of a top. Skin beside the neck, past a strap or hair,
+     * and the chest below it stay censored. (A band of a fixed width and depth used to be cleared: with the head
+     * tilted onto a shoulder, the shoulder showed, and so did the chest above a high neckline.) Hands ([hand]) are
+     * never part of the neck; the face's ellipse ([inFace], cleared already, it reaches a little below the chin) is.
+     */
+    private fun clearNeck(
+        skin: BooleanArray, w: Int, h: Int, x0: Int, x1: Int, y0: Int, y1: Int, cx: Float, fw: Float, fh: Float, hand: BooleanArray?,
+        inFace: (Int, Int) -> Boolean,
+    ): FloatArray? {
+        val xa = max(0, x0)
+        val xb = min(w, x1)
+        if (xb <= xa) return null
+        val gap = max(1, (NECK_GAP * fw).toInt())
+        var spanA = cx - NECK_SEED * fw
+        var spanB = cx + NECK_SEED * fw
+        var narrowest = Float.MAX_VALUE
+        var missing = 0
+        // down from the chin: the neck's stretch in each row (y, from, to)
+        val rows = ArrayList<IntArray>()
+        var cut = false // the neck goes on below where it stops being cleared (not a collar): round the bottom
+        for (y in max(0, y0) until min(h, y1)) {
+            val row = y * w
+            fun on(x: Int) = skin[row + x] && (hand == null || !hand[row + x]) || inFace(x, y)
+            var bestA = -1
+            var bestB = -1
+            var bestOverlap = 0f
+            var x = xa
+            while (x < xb) {
+                if (!on(x)) { x++; continue }
+                val a = x
+                var b = x + 1
+                var e = x + 1
+                var g = 0
+                while (e < xb) {
+                    if (on(e)) { b = e + 1; g = 0 } else if (++g > gap) break
+                    e++
+                }
+                val overlap = min(b.toFloat(), spanB) - max(a.toFloat(), spanA)
+                if (overlap > bestOverlap) { bestOverlap = overlap; bestA = a; bestB = b }
+                x = b
+            }
+            if (bestA < 0) {
+                // the throat hidden in this row (hair, a collar): look a little further down before giving up
+                if (++missing > NECK_MISS * fh) break
+                continue
+            }
+            missing = 0
+            val width = (bestB - bestA).toFloat()
+            val depth = y - y0
+            if (depth >= NECK_MIN_DEPTH * fh && width > NECK_WIDEN * narrowest) { cut = true; break }
+            if (depth >= NECK_SETTLE * fh) narrowest = min(narrowest, width)
+            rows += intArrayOf(y, bestA, bestB)
+            spanA = bestA.toFloat()
+            spanB = bestB.toFloat()
+        }
+        if (rows.isEmpty()) return null
+        if (missing == 0 && rows.last()[0] == min(h, y1) - 1) cut = true
+        // back up: no sudden widening; the bottom rounded
+        val bottom = rows.last()[0]
+        var prevA = rows.last()[1].toFloat()
+        var prevB = rows.last()[2].toFloat()
+        val r = (prevB - prevA) / 2f
+        for (k in rows.indices.reversed()) {
+            val (y, ra, rb) = rows[k]
+            val dy = (bottom - y).toFloat()
+            val step = if (k == rows.size - 1) 0f else NECK_SLOPE * (rows[k + 1][0] - y)
+            var a = max(ra.toFloat(), prevA - step)
+            var b = min(rb.toFloat(), prevB + step)
+            if (b <= a) { a = ra.toFloat(); b = rb.toFloat() }
+            prevA = a
+            prevB = b
+            // the rounded bottom: within a neck's half width of the end, the stretch narrows like a circle
+            var ca = a
+            var cb = b
+            if (cut && dy < r) {
+                val half = (b - a) / 2f
+                val c = (a + b) / 2f
+                val t = (r - dy) / r
+                val keep = half * kotlin.math.sqrt(max(0f, 1f - t * t))
+                ca = c - keep
+                cb = c + keep
+            }
+            val row = y * w
+            for (xx in max(xa, ca.toInt()) until min(xb, kotlin.math.ceil(cb).toInt()))
+                if (skin[row + xx] && (hand == null || !hand[row + xx])) skin[row + xx] = false
+        }
+        // the top row's stretch (the jaw rows above go on from it)
+        return floatArrayOf(prevA, prevB)
+    }
+
+    /** Neck tracking ([clearNeck]), in face widths / heights; [NECK_SLOPE] in pixels per row. */
+    private const val NECK_SEED = 0.3f
+    private const val NECK_GAP = 0.03f
+    private const val NECK_MISS = 0.08f
+    private const val NECK_SETTLE = 0.04f
+    private const val NECK_MIN_DEPTH = 0.12f
+    private const val NECK_WIDEN = 1.35f
+    private const val NECK_SLOPE = 0.6f
+    /** Facial-skin probability that makes skin in the jaw rows the face's own. */
+    private const val JAW_FACE_PROB = 0.3f
 
     /**
      * Skin of regions that reach into the throat band (x0..x1, y0..y1) from the side: level with the chin (rows y0 until

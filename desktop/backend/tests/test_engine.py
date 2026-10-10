@@ -178,7 +178,7 @@ def test_neck_is_free_but_a_low_neckline_is_censored():
 
     def body(cleavage):
         m = np.zeros((300, 200), bool)
-        m[40:(251 if cleavage else 145), 75:126] = True  # the neck: to half a face below the chin
+        m[40:(251 if cleavage else 127), 75:126] = True  # the neck: to a quarter of a face below the chin (a collar)
         return m
     plain = body(False)
     apply_neckline(plain, face)
@@ -187,6 +187,8 @@ def test_neck_is_free_but_a_low_neckline_is_censored():
     apply_neckline(low, face)
     start = int(110 + CLEAVAGE_START * 70)
     assert not low[start - 2, 100] and low[start + 3, 100] and low[200, 100]
+    # the bottom of the cleared throat is rounded like a neckline: its corners stay censored
+    assert low[start - 2, 77] and low[start - 2, 123] and not low[112, 77]
     # the chin is where the facial skin ends, not the face box's bottom edge (here 10 px above it)
     face_prob = np.zeros((300, 200), np.float32)
     face_prob[40:100, 70:131] = 1
@@ -194,6 +196,18 @@ def test_neck_is_free_but_a_low_neckline_is_censored():
     apply_neckline(tilted, face, face_prob)
     start2 = int(100 + CLEAVAGE_START * 70)
     assert not tilted[start2 - 2, 100] and tilted[start2 + 3, 100]
+
+
+def test_a_shoulder_beside_the_neck_stays_censored():
+    from blueshield.pipeline import apply_neckline
+    face = (70, 40, 130, 110)  # chin at y 110
+    m = np.zeros((300, 200), bool)
+    m[40:251, 75:121] = True  # neck and chest
+    m[115:251, 121:125] = False  # a strap
+    m[105:251, 125:150] = True  # the shoulder beyond it, rising to the jaw (head tilted onto it)
+    apply_neckline(m, face)
+    assert not m[120, 100]  # the throat is free
+    assert m[120, 130] and m[112, 132]  # the shoulder is not: beside the strap, nor where it meets the neck
 
 
 def test_fingers_in_front_of_the_neck_stay_censored():
@@ -213,7 +227,8 @@ def test_fingers_in_front_of_the_neck_stay_censored():
     assert not apart[120, 150]  # the throat stays free
     touching = scene(True)
     apply_neckline(touching, face)
-    assert not touching[111, 168] and not touching[120, 150]  # skin joined to the throat in the band is the neck
+    # a hand touching the neck: the neck is still free, the finger still censored
+    assert not touching[120, 150] and touching[111, 180]
 
 
 def test_own_face_check_reads_the_inner_half_of_the_box():

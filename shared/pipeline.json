@@ -28,8 +28,8 @@
   "roi": { "side_scale": 1.15, "paste_pad": 0.08, "min_side_px": 24, "max_frame_ratio": 0.9, "full_every_det": 2 },
   "refine": { "radius": 0.004, "eps": 0.004, "color_band": 0.008, "color_keep": 0.85 },
   "neckline": {
-    "band_half_width": 0.6, "band_height": 0.55, "probe_half_width": 0.35, "probe_height": 0.6,
-    "cleavage_min_fill": 0.12, "cleavage_start": 0.55,
+    "band_half_width": 0.6, "band_height": 0.3, "probe_half_width": 0.35, "probe_height": 0.6,
+    "cleavage_min_fill": 0.12, "cleavage_start": 0.3,
     "speck_person_frac": 0.002, "speck_frame_frac": 0.0002
   },
   "gender": {

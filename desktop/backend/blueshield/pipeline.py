@@ -896,11 +896,11 @@ def _roi_wanted(t, settings: CensorSettings, th: float) -> bool:
 
 # face / neck / neckline rules (sizes relative to the face box) — mirror shared/pipeline.json "neckline"
 NECK_BAND_HALF_WIDTH = 0.6
-NECK_BAND_HEIGHT = 0.55  # = CLEAVAGE_START: the throat ends at the same depth whether or not a neckline is seen
+NECK_BAND_HEIGHT = 0.3  # = CLEAVAGE_START: the throat ends at the same depth whether or not a neckline is seen
 NECK_PROBE_HALF_WIDTH = 0.35
 NECK_PROBE_HEIGHT = 0.6
 CLEAVAGE_MIN_FILL = 0.12
-CLEAVAGE_START = 0.55  # the end of the throat (a little over half a face below the chin): the throat stays visible
+CLEAVAGE_START = 0.3  # the end of the throat (under a third of a face below the chin): the throat stays visible
 # (a third of the earlier 0.006 / 0.0006: those removed a small hand far from the camera, measured)
 SPECK_PERSON_FRAC = 0.002
 SPECK_FRAME_FRAC = 0.0002
@@ -999,8 +999,118 @@ def apply_neckline(skin: np.ndarray, face: tuple[float, float, float, float],
                 joined[0] = False
                 neck = joined[blab] | throat
                 clear = ~hand[labels[by0:by1, bx0:bx1]] | neck
-        skin[by0:by1, bx0:bx1][clear] = False
+                hand_px = hand[labels]
+                hand_px[by0:by1, bx0:bx1] &= ~neck  # skin joined to the throat in the band is the neck
+            else:
+                hand_px = None
+        else:
+            hand_px = None
+        # that is the jaw, above the chin; below it only the neck itself is cleared, row by row (_clear_neck)
+        chin_row = max(by0, min(by1, int(chin)))
+        top = _clear_neck(skin, bx0, bx1, chin_row, by1, cx, fw, fh, hand_px, (cx, cy, ax, ay))
+        jaw = clear[:chin_row - by0]
+        if top is not None and face_prob is not None and chin_row > by0:
+            # the jaw rows: the face's own skin (the corners of the jaw) and the neck going on up, not a shoulder
+            # rising next to the jaw (a head tilted onto it)
+            ys = np.arange(by0, chin_row)[:, None]
+            xs = np.arange(bx0, bx1)[None, :] + 0.5
+            reach = _NECK_SLOPE * (chin_row - ys)
+            jaw = jaw & ((face_prob[by0:chin_row, bx0:bx1] >= _JAW_FACE_PROB) | ((xs >= top[0] - reach) & (xs <= top[1] + reach)))
+        skin[by0:chin_row, bx0:bx1][jaw] = False
     return seen
+
+
+# neck tracking (_clear_neck), in face widths / heights (_NECK_SLOPE: pixels per row); same as Android's Neckline
+_NECK_SEED, _NECK_GAP, _NECK_MISS, _NECK_SETTLE, _NECK_MIN_DEPTH, _NECK_WIDEN = 0.3, 0.03, 0.08, 0.04, 0.12, 1.35
+_NECK_SLOPE = 0.6
+_JAW_FACE_PROB = 0.3  # facial-skin probability that makes skin in the jaw rows the face's own
+
+
+def _clear_neck(skin: np.ndarray, x0: int, x1: int, y0: int, y1: int, cx: float, fw: float, fh: float,
+                hand: Optional[np.ndarray], face_ellipse: tuple[float, float, float, float]) -> Optional[tuple[float, float]]:
+    """The neck below the chin, row by row: in each row the stretch of skin (gaps up to _NECK_GAP face widths
+    bridged: a necklace) that overlaps most with the previous row's, starting from the face's centre, down to
+    where it widens past _NECK_WIDEN times its narrowest (the chest or the shoulders begin) or to y1. Then back up
+    from there: a row may reach at most _NECK_SLOPE of a pixel per row further out than the one below it (a
+    shoulder joining the neck just under the jaw is cut off), and the bottom is rounded, a circle as wide as the
+    neck, like the neckline of a top. Skin beside the neck, past a strap or hair, and the chest below it stay
+    censored. Hands are never part of it; the face's ellipse (cleared already, it reaches a little below the chin)
+    is. Returns the top row's stretch (the jaw rows go on from it), or None. Same as Android's Neckline.clearNeck."""
+    h, w = skin.shape
+    xa, xb = max(0, x0), min(w, x1)
+    if xb <= xa:
+        return None
+    gap = max(1, int(_NECK_GAP * fw))
+    span_a, span_b = cx - _NECK_SEED * fw, cx + _NECK_SEED * fw
+    narrowest = float("inf")
+    missing = 0
+    ecx, ecy, eax, eay = face_ellipse
+    rows = []
+    cut = False  # the neck goes on below where it stops being cleared (not a collar): round the bottom
+    for y in range(max(0, y0), min(h, y1)):
+        bare = skin[y, xa:xb].copy()
+        if hand is not None:
+            bare &= ~hand[y, xa:xb]
+        on = bare | ((((np.arange(xa, xb) + 0.5 - ecx) / eax) ** 2 + ((y + 0.5 - ecy) / eay) ** 2) <= 1)
+        best_a = best_b = -1
+        best_overlap = 0.0
+        x = 0
+        n = xb - xa
+        while x < n:
+            if not on[x]:
+                x += 1
+                continue
+            a, b, e, g = x, x + 1, x + 1, 0
+            while e < n:
+                if on[e]:
+                    b, g = e + 1, 0
+                else:
+                    g += 1
+                    if g > gap:
+                        break
+                e += 1
+            overlap = min(b + xa, span_b) - max(a + xa, span_a)
+            if overlap > best_overlap:
+                best_overlap, best_a, best_b = overlap, a + xa, b + xa
+            x = b
+        if best_a < 0:
+            missing += 1  # the throat hidden in this row (hair, a collar): look a little further down
+            if missing > _NECK_MISS * fh:
+                break
+            continue
+        missing = 0
+        width = best_b - best_a
+        depth = y - y0
+        if depth >= _NECK_MIN_DEPTH * fh and width > _NECK_WIDEN * narrowest:
+            cut = True
+            break
+        if depth >= _NECK_SETTLE * fh:
+            narrowest = min(narrowest, width)
+        rows.append((y, best_a, best_b, bare))
+        span_a, span_b = float(best_a), float(best_b)
+    if not rows:
+        return None
+    cut = cut or (missing == 0 and rows[-1][0] == min(h, y1) - 1)
+    bottom = rows[-1][0]
+    prev_a, prev_b = float(rows[-1][1]), float(rows[-1][2])
+    r = (prev_b - prev_a) / 2
+    for k in range(len(rows) - 1, -1, -1):
+        y, ra, rb, bare = rows[k]
+        step = 0.0 if k == len(rows) - 1 else _NECK_SLOPE * (rows[k + 1][0] - y)
+        a, b = max(float(ra), prev_a - step), min(float(rb), prev_b + step)
+        if b <= a:
+            a, b = float(ra), float(rb)
+        prev_a, prev_b = a, b
+        ca, cb = a, b
+        dy = bottom - y
+        if cut and dy < r:  # the rounded bottom
+            half, c, t = (b - a) / 2, (a + b) / 2, (r - dy) / r
+            keep = half * np.sqrt(max(0.0, 1 - t * t))
+            ca, cb = c - keep, c + keep
+        lo, hi = max(xa, int(ca)), min(xb, int(np.ceil(cb)))
+        if hi > lo:
+            skin[y, lo:hi] &= ~bare[lo - xa:hi - xa]
+    return prev_a, prev_b
 
 
 def remove_specks(skin: np.ndarray, boxes: list[tuple[float, float, float, float]]) -> None:
