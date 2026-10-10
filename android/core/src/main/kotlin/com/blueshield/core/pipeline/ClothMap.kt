@@ -13,15 +13,18 @@ import kotlin.math.roundToInt
  * (the segmenter's clothes class), spread over the skin from its edge inwards (push–pull), plus the local mean
  * brightness so the renderer can keep the body's shading — an arm becomes a sleeve of the shirt, a neckline
  * becomes a high collar. Computed per analysed frame on a coarse grid ([SCALE] analysis pixels per cell);
- * the result is RGBA: fill colour + mean luminance (A ≥ 1), and A = 0 where no garment is near.
+ * the result is RGBA: fill colour + mean luminance (A ≥ [MIN_A]) on and around the skin, the nearest garments'
+ * colour however far the skin reaches from them; A = 0 elsewhere, and everywhere when the frame has no garment
+ * (the renderer then falls back to the solid colour). (A colour used to travel only 2^5 cells from its garment,
+ * so an arm far from its top kept a square of the solid colour, cut along the grid's blocks.)
  */
 object ClothMap {
     const val SCALE = 4
     /** Clothes within this many cells of skin count as its garment. */
     private const val NEAR = 8
-    /** Push–pull levels: how far (2^LEVELS cells) a garment colour may travel into a bare area. */
-    private const val LEVELS = 5
     private const val CLOTHES_MIN = 0.6f
+    /** Smallest mean-luminance channel written: the renderers take A ≤ 0.02 (5) for "no garment known". */
+    const val MIN_A = 8
 
     fun size(w: Int, h: Int) = (w + SCALE - 1) / SCALE to (h + SCALE - 1) / SCALE
 
@@ -63,22 +66,27 @@ object ClothMap {
         val region = MaskOps.dilate(skinCells, 3)
         // garment cells next to the skin are the sources
         val wt = FloatArray(n) { if (cloth[it] >= CLOTHES_MIN && skinShare[it] < 0.05f && near.data[it].toInt() != 0) 1f else 0f }
+        if (wt.none { it > 0f }) return out
         val fill = pushPull(col, wt, cw, ch)
         val lum = FloatArray(n) { 0.299f * col[it * 3] + 0.587f * col[it * 3 + 1] + 0.114f * col[it * 3 + 2] }
         val lm = blur(lum, cw, ch, 3)
         for (c in 0 until n) {
             if (region.data[c].toInt() == 0) continue
             val fw = fill[c * 4 + 3]
-            if (fw < 1e-3f) continue
+            if (fw <= 0f) continue
             out[c * 4] = (fill[c * 4] / fw).roundToInt().coerceIn(0, 255).toByte()
             out[c * 4 + 1] = (fill[c * 4 + 1] / fw).roundToInt().coerceIn(0, 255).toByte()
             out[c * 4 + 2] = (fill[c * 4 + 2] / fw).roundToInt().coerceIn(0, 255).toByte()
-            out[c * 4 + 3] = lm[c].roundToInt().coerceIn(1, 255).toByte()
+            out[c * 4 + 3] = lm[c].roundToInt().coerceIn(MIN_A, 255).toByte()
         }
         return out
     }
 
-    /** Pull–push hole filling: colours (weighted by [wt]) carried over the cells without, coarse levels filling gaps. */
+    /**
+     * Pull–push hole filling: colours (weighted by [wt]) carried over the cells without, coarse levels filling gaps,
+     * down to a single cell so that every cell gets the colour of its nearest sources. The coarse levels are read
+     * back bilinearly: read cell by cell (nearest), a filled gap showed the blocks of the coarse grid as hard steps.
+     */
     private fun pushPull(col: FloatArray, wt: FloatArray, w: Int, h: Int): FloatArray {
         // level 0: premultiplied colour + weight, 4 floats per cell
         val levels = ArrayList<Triple<FloatArray, Int, Int>>()
@@ -86,16 +94,16 @@ object ClothMap {
         var cw = w
         var ch = h
         levels += Triple(cur, cw, ch)
-        repeat(LEVELS) {
-            if (cw < 2 && ch < 2) return@repeat
+        while (cw > 1 || ch > 1) {
             val nw = max(1, (cw + 1) / 2)
             val nh = max(1, (ch + 1) / 2)
             val next = FloatArray(nw * nh * 4)
             for (y in 0 until nh) for (x in 0 until nw) {
                 var m = 0
                 for (dy in 0..1) for (dx in 0..1) {
-                    val sx = min(cw - 1, 2 * x + dx)
-                    val sy = min(ch - 1, 2 * y + dy)
+                    val sx = 2 * x + dx
+                    val sy = 2 * y + dy
+                    if (sx >= cw || sy >= ch) continue
                     for (k in 0..3) next[(y * nw + x) * 4 + k] += cur[(sy * cw + sx) * 4 + k]
                     m++
                 }
@@ -108,11 +116,21 @@ object ClothMap {
         for (li in levels.size - 2 downTo 0) {
             val (fine, fw, fh) = levels[li]
             val res = FloatArray(fw * fh * 4)
-            for (y in 0 until fh) for (x in 0 until fw) {
-                val o = (y * fw + x) * 4
-                val u = (min(lh - 1, y / 2) * lw + min(lw - 1, x / 2)) * 4
-                val a = min(1f, fine[o + 3] * 4f) // where the finer level has data, trust it
-                for (k in 0..3) res[o + k] = fine[o + k] + (1f - a) * c[u + k]
+            for (y in 0 until fh) {
+                // the fine cell's centre in the coarse grid
+                val gy = ((y + 0.5f) / 2f - 0.5f).coerceIn(0f, lh - 1f)
+                val y0 = gy.toInt(); val y1 = min(lh - 1, y0 + 1); val ty = gy - y0
+                for (x in 0 until fw) {
+                    val gx = ((x + 0.5f) / 2f - 0.5f).coerceIn(0f, lw - 1f)
+                    val x0 = gx.toInt(); val x1 = min(lw - 1, x0 + 1); val tx = gx - x0
+                    val o = (y * fw + x) * 4
+                    val a = min(1f, fine[o + 3] * 4f) // where the finer level has data, trust it
+                    for (k in 0..3) {
+                        val top = c[(y0 * lw + x0) * 4 + k] * (1f - tx) + c[(y0 * lw + x1) * 4 + k] * tx
+                        val bot = c[(y1 * lw + x0) * 4 + k] * (1f - tx) + c[(y1 * lw + x1) * 4 + k] * tx
+                        res[o + k] = fine[o + k] + (1f - a) * (top * (1f - ty) + bot * ty)
+                    }
+                }
             }
             c = res; lw = fw; lh = fh
         }

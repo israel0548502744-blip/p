@@ -526,6 +526,39 @@ class CoreTest {
         assertTrue((0 until none.size / 4).all { none[it * 4 + 3].toInt() == 0 })
     }
 
+    @Test fun clothMapReachesSkinFarFromTheGarmentWithoutBlocks() {
+        // a bare arm 60 cells long with its top at one end only (a blue strip) and a red top at the far end: every
+        // skin cell gets a garment colour (an arm far from its top kept a square of the solid colour, cut along the
+        // coarse grid), and the colour changes smoothly from cell to cell (no steps along the grid's blocks)
+        val w = 256; val h = 160
+        val img = RgbImage(w, h)
+        val skin = BooleanArray(w * h)
+        val clothes = FloatMask(w, h)
+        for (y in 0 until h) for (x in 0 until w) {
+            val i = y * w + x
+            val (r, g, b) = when {
+                x < 12 && y < 40 -> { clothes.data[i] = 0.9f; Triple(30, 60, 200) }
+                x >= 244 && y >= 120 -> { clothes.data[i] = 0.9f; Triple(200, 40, 30) }
+                else -> { skin[i] = true; Triple(220, 170, 140) }
+            }
+            img.data[i * 3] = r.toByte(); img.data[i * 3 + 1] = g.toByte(); img.data[i * 3 + 2] = b.toByte()
+        }
+        val c = com.blueshield.core.pipeline.ClothMap.compute(img, skin, clothes)
+        val (cw, ch) = com.blueshield.core.pipeline.ClothMap.size(w, h)
+        fun v(x: Int, y: Int, k: Int) = c[(y * cw + x) * 4 + k].toInt() and 0xFF
+        fun bare(x: Int, y: Int) = skin[minOf(h - 1, y * 4 + 2) * w + minOf(w - 1, x * 4 + 2)]
+        for (y in 0 until ch) for (x in 0 until cw) if (bare(x, y)) assertTrue(v(x, y, 3) > 5, "no garment colour at cell $x,$y")
+        var step = 0
+        for (y in 0 until ch) for (x in 0 until cw) for (k in 0..2) {
+            if (x + 1 < cw && bare(x, y) && bare(x + 1, y)) step = maxOf(step, abs(v(x + 1, y, k) - v(x, y, k)))
+            if (y + 1 < ch && bare(x, y) && bare(x, y + 1)) step = maxOf(step, abs(v(x, y + 1, k) - v(x, y, k)))
+        }
+        assertTrue(step <= 40, "largest colour step between neighbouring cells: $step")
+        // next to each garment, its own colour
+        assertTrue(v(4, 2, 2) > 150 && v(4, 2, 0) < 80, "blue by the blue top")
+        assertTrue(v(cw - 5, ch - 3, 0) > 150 && v(cw - 5, ch - 3, 2) < 80, "red by the red top")
+    }
+
     @Test fun clothesVetoDropsSkinOnlyOnClothes() {
         val skin = floatArrayOf(0.9f, 0.9f, 0.6f, 0.95f, 0.7f)
         val selfie = floatArrayOf(0.9f, 0.6f, 0.6f, 0.95f, 0.7f)
