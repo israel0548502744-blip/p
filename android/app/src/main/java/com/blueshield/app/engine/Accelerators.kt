@@ -101,6 +101,9 @@ object Accelerators {
         setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
         setIntraOpNumThreads(threads)
         setInterOpNumThreads(1)
+        // idle threads sleep instead of spinning: the sessions and the close-up crops' threads share the cores
+        addConfigEntry("session.intra_op.allow_spinning", "0")
+        addConfigEntry("session.inter_op.allow_spinning", "0")
     }
 
     /** Engine choices are measured again when ONNX Runtime or a model changes (not on every app update). */

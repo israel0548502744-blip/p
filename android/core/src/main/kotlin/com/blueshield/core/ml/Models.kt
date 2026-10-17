@@ -22,7 +22,7 @@ import java.nio.FloatBuffer
  */
 class ModelStore(
     private val load: (String) -> ByteArray,
-    private val options: () -> OrtSession.SessionOptions = { OrtSession.SessionOptions() },
+    private val options: () -> OrtSession.SessionOptions = { defaultOptions() },
     /** Progress breadcrumbs ("loading x", "loaded x"): lets the app tell where a native crash happened. */
     private val onEvent: (String) -> Unit = {},
     private val engines: List<Engine> = emptyList(),
@@ -178,6 +178,18 @@ class ModelStore(
     }
 
     companion object {
+        /**
+         * Sessions whose threads sleep when they have no work instead of spinning: several sessions (and the
+         * close-up crops' own threads) share the cores, and spinning threads took them from each other.
+         * -Dblueshield.spin=true restores ONNX Runtime's default (for measuring).
+         */
+        fun defaultOptions(): OrtSession.SessionOptions = OrtSession.SessionOptions().apply {
+            if (System.getProperty("blueshield.spin") != "true") {
+                addConfigEntry("session.intra_op.allow_spinning", "0")
+                addConfigEntry("session.inter_op.allow_spinning", "0")
+            }
+        }
+
         const val CPU = "cpu"
 
         /** Whether [e] may run [file] at all: the outline encoders overflow 16-bit floats. */
