@@ -3,18 +3,25 @@ package com.blueshield.app
 import android.app.Application
 import android.content.Context
 import android.content.Intent
+import android.content.IntentSender
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Build
+import android.provider.MediaStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.blueshield.app.engine.BrushStroke
 import com.blueshield.app.engine.Exporter
 import com.blueshield.app.engine.History
 import com.blueshield.app.engine.JobState
 import com.blueshield.app.engine.PhotoLoader
 import com.blueshield.app.engine.Processor
+import com.blueshield.app.engine.Results
 import com.blueshield.app.engine.VideoMeta
 import com.blueshield.app.service.ProcessingRepository
 import com.blueshield.app.service.ProcessingService
+import com.blueshield.app.ui.I18n
+import com.blueshield.app.ui.tr
 import com.blueshield.core.CensorSettings
 import com.blueshield.core.gender.Override
 import kotlinx.coroutines.Dispatchers
@@ -24,6 +31,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import java.io.File
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = app.getSharedPreferences("blueshield", Context.MODE_PRIVATE)
@@ -37,13 +45,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
+    /** A short confirmation shown at the bottom of the screen ("saved"). */
+    private val _toast = MutableStateFlow<String?>(null)
+    val toast: StateFlow<String?> = _toast.asStateFlow()
     private val _showResult = MutableStateFlow(false)
     val showResult: StateFlow<Boolean> = _showResult.asStateFlow()
     private val _draft = MutableStateFlow<Map<Int, Override>>(emptyMap())
     val draftOverrides: StateFlow<Map<Int, Override>> = _draft.asStateFlow()
+    /** Video: people censored only within a time span (seconds), from the people list. */
+    private val _ranges = MutableStateFlow<Map<Int, ClosedFloatingPointRange<Double>>>(emptyMap())
+    val ranges: StateFlow<Map<Int, ClosedFloatingPointRange<Double>>> = _ranges.asStateFlow()
     private val _saved = MutableStateFlow(false)
     val saved: StateFlow<Boolean> = _saved.asStateFlow()
     val job: StateFlow<JobState> = ProcessingRepository.state
+
+    private val _ui = MutableStateFlow(UiPrefs.load(prefs))
+    val ui: StateFlow<UiPrefs> = _ui.asStateFlow()
+    private val _presets = MutableStateFlow(Presets.load(prefs))
+    val presets: StateFlow<List<Preset>> = _presets.asStateFlow()
 
     /** A picked photo (processed in-app: one frame takes seconds, no background service needed). */
     data class PhotoItem(val uri: Uri, val name: String, val preview: Bitmap)
@@ -53,9 +72,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val photoResult: StateFlow<Processor.PhotoResult?> = _photoResult.asStateFlow()
     private val _photoBusy = MutableStateFlow(false)
     val photoBusy: StateFlow<Boolean> = _photoBusy.asStateFlow()
+    /** "Ask whom to censor" is on: the photo is analysed and waits for the choice before it is kept. */
+    private val _choosingPhoto = MutableStateFlow(false)
+    val choosingPhoto: StateFlow<Boolean> = _choosingPhoto.asStateFlow()
+    /** Strokes painted by hand on the censored photo (kept across re-renders of the same photo). */
+    private val _strokes = MutableStateFlow<List<BrushStroke>>(emptyList())
+    val strokes: StateFlow<List<BrushStroke>> = _strokes.asStateFlow()
     private val thumbs = HashMap<Int, Bitmap?>()
 
-    /** Several photos at once: each is censored with the current settings and saved to the gallery. */
+    /** The part of the picked video to censor (seconds); null = all of it. */
+    private val _trim = MutableStateFlow<Pair<Double, Double>?>(null)
+    val trim: StateFlow<Pair<Double, Double>?> = _trim.asStateFlow()
+    /** Several videos picked at once, waiting to be censored one after another. */
+    private val _queue = MutableStateFlow<List<VideoMeta>>(emptyList())
+    val queue: StateFlow<List<VideoMeta>> = _queue.asStateFlow()
+
+    /** Several photos at once: each is censored with the current settings and kept (and saved with auto-save on). */
     data class BatchState(
         val total: Int, val done: Int = 0, val saved: Int = 0, val failed: List<String> = emptyList(),
         val current: String? = null, val last: Bitmap? = null, val finished: Boolean = false,
@@ -69,9 +101,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Recent results kept in the app (last 20 photos, last 5 videos), newest first. */
     private val _history = MutableStateFlow<List<History.Entry>>(emptyList())
     val history: StateFlow<List<History.Entry>> = _history.asStateFlow()
-    /** Every finished photo and video goes straight to the phone's gallery (on by default). */
-    private val _autoSave = MutableStateFlow(prefs.getBoolean("autoSave", true))
-    val autoSave: StateFlow<Boolean> = _autoSave.asStateFlow()
     /** The swipeable viewer over recent results: which ones, and where it opens. */
     data class Viewer(val ids: List<Long>, val start: Int)
     private val _viewer = MutableStateFlow<Viewer?>(null)
@@ -79,6 +108,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** The recent-results entry of the photo / video on screen: a re-render with changes takes its place. */
     private var photoEntry: Long? = null
     private var videoEntry: Long? = null
+    /** The last video job whose finish was handled (the state outlives this view model). */
+    private var handledOutput: String? = prefs.getString("handledOutput", null)
 
     init {
         viewModelScope.launch {
@@ -91,12 +122,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     JobState.Stage.COMPLETE -> {
                         _showResult.value = true
                         _draft.value = s.overrides
-                        _saved.value = false
                         thumbs.clear()
-                        s.output?.let { keepVideo(it) }
+                        videoEntry = s.entryId
+                        refreshHistory()
+                        _saved.value = _history.value.firstOrNull { it.id == s.entryId }?.gallery != null
+                        val key = s.output?.path
+                        if (key != null && key != handledOutput) {
+                            handledOutput = key
+                            prefs.edit().putString("handledOutput", key).apply()
+                            s.saveError?.let { _error.value = tr("השמירה בגלריה נכשלה: {0}", it) }
+                            if (s.queueIds.size > 1) {
+                                if (s.queueFailed.isNotEmpty()) _error.value = tr("לא הצליחו ({0}): {1}", s.queueFailed.size, s.queueFailed.joinToString(", "))
+                                _queue.value = emptyList()
+                                _viewer.value = Viewer(s.queueIds, 0)
+                            } else if (_saved.value) {
+                                _toast.value = tr("נשמר בגלריה").also { Growth.recordSuccess(getApplication()) }
+                            }
+                        }
                     }
-                    JobState.Stage.ERROR -> _error.value = "העיבוד נכשל: ${s.error?.lines()?.take(4)?.joinToString("\n")}"
-                    JobState.Stage.CANCELLED -> _error.value = "העיבוד בוטל."
+                    JobState.Stage.CHOOSING -> thumbs.clear()
+                    JobState.Stage.ERROR -> _error.value = tr("העיבוד נכשל: {0}", s.error?.lines()?.take(4)?.joinToString("\n"))
+                    JobState.Stage.CANCELLED -> _error.value = tr("העיבוד בוטל.")
                     else -> Unit
                 }
             }
@@ -107,43 +153,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _history.value = withContext(Dispatchers.IO) { History.list(getApplication()) }
     }
 
-    fun setAutoSave(on: Boolean) {
-        _autoSave.value = on
-        prefs.edit().putBoolean("autoSave", on).apply()
-    }
+    // ── preferences ─────────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Keeps a finished result in the recent results and, with auto-save on, in the phone's gallery (an earlier
-     * version of the same result is replaced in both). Returns the entry.
-     */
-    private suspend fun keep(file: java.io.File, video: Boolean, name: String, source: String?, replace: Long?, protect: Set<Long> = emptySet()): History.Entry {
-        val app = getApplication<Application>()
-        var e = withContext(Dispatchers.IO) { History.add(app, file, video, name, source, replace, protect) }
-        if (_autoSave.value) {
-            try {
-                val uri = withContext(Dispatchers.IO) { Exporter.saveOrReplace(app, java.io.File(e.file), galleryName(e), video, e.gallery) }
-                withContext(Dispatchers.IO) { History.setGallery(app, e.id, uri.toString()) }
-                e = e.copy(gallery = uri.toString())
-            } catch (t: Throwable) {
-                _error.value = "השמירה בגלריה נכשלה: ${t.message}"
-            }
-        }
-        refreshHistory()
-        return e
-    }
-
-    private fun galleryName(e: History.Entry) = e.name.substringBeforeLast('.') + if (e.video) "_blueshield.mp4" else "_blueshield.jpg"
-
-    private fun keepVideo(output: java.io.File) {
-        // the state survives this view model (it lives in the service's repository): keep each output once
-        if (prefs.getString("keptOutput", null) == output.path) return
-        prefs.edit().putString("keptOutput", output.path).apply()
-        val v = _video.value
-        viewModelScope.launch {
-            val e = keep(output, true, v?.name ?: "video.mp4", v?.uri?.toString(), videoEntry)
-            videoEntry = e.id
-            _saved.value = e.gallery != null
-        }
+    fun updateUi(change: (UiPrefs) -> UiPrefs) {
+        val old = _ui.value
+        val u = change(old)
+        _ui.value = u
+        u.save(prefs)
+        if (u.language != old.language) I18n.load(getApplication(), u.language)
     }
 
     private fun loadSettings(): CensorSettings = prefs.getString("settings", null)
@@ -154,36 +171,120 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         prefs.edit().putString("settings", json.encodeToString(CensorSettings.serializer(), s)).apply()
     }
 
+    fun applyPreset(p: Preset) {
+        updateSettings(p.settings.copy(color = if (p.name in Presets.BUILT_IN.map { it.name } && p.settings.fill != "clothing") _settings.value.color else p.settings.color))
+        _toast.value = tr("התבנית \"{0}\" הופעלה", tr(p.name))
+    }
+
+    fun savePreset(name: String) {
+        val n = name.trim().ifEmpty { return }
+        _presets.value = _presets.value.filter { it.name != n } + Preset(n, _settings.value)
+        Presets.save(prefs, _presets.value)
+        _toast.value = tr("התבנית נשמרה")
+    }
+
+    fun deletePreset(p: Preset) {
+        _presets.value = _presets.value - p
+        Presets.save(prefs, _presets.value)
+    }
+
+    fun dismissToast() {
+        _toast.value = null
+    }
+
+    // ── picking ─────────────────────────────────────────────────────────────────────────────────
+
     fun onPicked(uri: Uri?) {
         if (uri == null) return
         _error.value = null
-        val mime = runCatching { getApplication<Application>().contentResolver.getType(uri) }.getOrNull()
-        if (mime?.startsWith("image/") == true) {
+        if (isImage(uri)) {
             loadPhoto(uri)
             return
         }
         clearPhoto()
         videoEntry = null
+        _queue.value = emptyList()
         _loading.value = true
         viewModelScope.launch {
             try {
                 _video.value = withContext(Dispatchers.IO) { VideoMeta.probe(getApplication(), uri) }
+                _trim.value = null
+                _ranges.value = emptyMap()
                 _showResult.value = false
                 ProcessingRepository.reset()
             } catch (e: Throwable) {
-                _error.value = e.message ?: "לא ניתן לקרוא את הסרטון."
+                _error.value = e.message ?: tr("לא ניתן לקרוא את הסרטון.")
             } finally {
                 _loading.value = false
             }
         }
     }
 
+    private fun isImage(uri: Uri) = runCatching { getApplication<Application>().contentResolver.getType(uri) }.getOrNull()?.startsWith("image/") == true
+
+    /** One file opens as picked; several photos run as a batch; several videos wait in a queue. */
+    fun onPickedMany(uris: List<Uri>) {
+        if (uris.size <= 1) return onPicked(uris.firstOrNull())
+        val (images, videos) = uris.partition(::isImage)
+        when {
+            images.isNotEmpty() -> startBatch(images)
+            videos.size == 1 -> onPicked(videos[0])
+            else -> loadQueue(videos)
+        }
+    }
+
+    private fun loadQueue(uris: List<Uri>) {
+        clearPhoto()
+        clearVideo()
+        _loading.value = true
+        viewModelScope.launch {
+            val metas = withContext(Dispatchers.IO) { uris.mapNotNull { runCatching { VideoMeta.probe(getApplication(), it) }.getOrNull() } }
+            if (metas.size < uris.size) _error.value = tr("{0} מהקבצים לא נקראו כסרטון.", uris.size - metas.size)
+            _queue.value = metas
+            _loading.value = false
+        }
+    }
+
+    fun removeFromQueue(m: VideoMeta) {
+        _queue.value = _queue.value - m
+    }
+
+    fun clearQueue() {
+        _queue.value = emptyList()
+    }
+
+    fun startQueue() {
+        val q = _queue.value.ifEmpty { return }
+        if (!allowed(Entitlements.Feature.VIDEO_QUEUE)) return
+        _error.value = null
+        ProcessingService.start(getApplication(), ProcessingService.Job.Queue(q, _settings.value.validated()))
+    }
+
     private fun processor(): Processor =
         ProcessingRepository.processor ?: Processor(getApplication()).also { ProcessingRepository.processor = it }
 
+    /** The format and JPEG quality censored photos are written in (the settings' quality: high / normal / small). */
+    private fun preparePhotoOutput(uri: Uri) {
+        val p = processor()
+        val sourcePng = runCatching { getApplication<Application>().contentResolver.getType(uri) }.getOrNull() == "image/png"
+        p.photoFormat = when (_ui.value.photoFormat) {
+            "png" -> "png"
+            "jpg" -> "jpg"
+            else -> if (sourcePng) "png" else "jpg"
+        }
+        p.photoQuality = when (_settings.value.quality) {
+            "high" -> 97
+            "small" -> 85
+            else -> 93
+        }
+    }
+
     private fun loadPhoto(uri: Uri, replace: Long? = null, autoStart: Boolean = false) {
         clearVideo()
+        _queue.value = emptyList()
         photoEntry = replace
+        _strokes.value = emptyList()
+        _choosingPhoto.value = false
         _loading.value = true
         viewModelScope.launch {
             try {
@@ -193,7 +294,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _draft.value = emptyMap()
                 if (autoStart) startPhoto()
             } catch (e: Throwable) {
-                _error.value = e.message ?: "לא ניתן לקרוא את התמונה."
+                _error.value = e.message ?: tr("לא ניתן לקרוא את התמונה.")
             } finally {
                 _loading.value = false
             }
@@ -205,17 +306,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
     }.getOrNull()
 
-    fun onPickedMany(uris: List<Uri>) {
-        when {
-            uris.isEmpty() -> Unit
-            uris.size == 1 -> onPicked(uris[0])
-            else -> startBatch(uris)
-        }
-    }
+    // ── batches of photos ───────────────────────────────────────────────────────────────────────
 
     private fun startBatch(uris: List<Uri>) {
+        if (uris.size > Entitlements.FREE_BATCH && !allowed(Entitlements.Feature.BIG_BATCH)) return
         clearVideo()
         clearPhoto()
+        _queue.value = emptyList()
         _error.value = null
         val settings = _settings.value.validated()
         _batch.value = BatchState(uris.size)
@@ -224,6 +321,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val name = displayName(uri) ?: "photo_${i + 1}.jpg"
                 _batch.value = _batch.value?.copy(current = name)
                 try {
+                    preparePhotoOutput(uri)
                     val r = withContext(Dispatchers.Default) { processor().processPhoto(uri, settings) }
                     val e = keep(r.file, false, name, uri.toString(), null, protect = _batch.value?.ids.orEmpty().toSet())
                     // keep only a small preview: a batch of large photos must not fill the memory
@@ -241,6 +339,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             _batch.value = _batch.value?.copy(current = null, finished = true)
+            val b = _batch.value
+            if (b != null && !MainActivity.visible && b.ids.isNotEmpty()) {
+                withContext(Dispatchers.IO) {
+                    ProcessingService.notifyResults(getApplication(), b.ids.toLongArray(), tr("{0} תמונות צונזרו", b.ids.size), tr("הקישו כדי לדפדף ביניהן."))
+                }
+            }
         }
     }
 
@@ -255,6 +359,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Keeps a finished photo in the recent results and, with auto-save on, in the phone's gallery (an earlier
+     * version of the same result is replaced in both).
+     */
+    private suspend fun keep(file: File, video: Boolean, name: String, source: String?, replace: Long?, protect: Set<Long> = emptySet()): History.Entry {
+        val k = withContext(Dispatchers.IO) { Results.keep(getApplication(), file, video, name, source, replace, protect) }
+        k.saveError?.let { _error.value = tr("השמירה בגלריה נכשלה: {0}", it) }
+        refreshHistory()
+        return k.entry
+    }
+
+    // ── the viewer over recent results ──────────────────────────────────────────────────────────
+
     fun openViewer(ids: List<Long>, start: Int) {
         _viewer.value = Viewer(ids, start)
     }
@@ -263,27 +380,66 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _viewer.value = null
     }
 
+    /** From the "done" notification: open (or share) the results it names. */
+    fun openFromNotification(ids: LongArray, share: Boolean): Intent? {
+        if (ids.isEmpty()) return null
+        viewModelScope.launch {
+            refreshHistory()
+            _viewer.value = Viewer(ids.toList(), 0)
+        }
+        if (!share) return null
+        val files = History.list(getApplication()).filter { it.id in ids }.map { File(it.file) }
+        return when (files.size) {
+            0 -> null
+            1 -> Exporter.shareIntent(getApplication(), files[0])
+            else -> Exporter.shareManyIntent(getApplication(), files)
+        }
+    }
+
     /** Saves a recent result (full size, every change included) to the phone's gallery. */
     fun saveEntry(e: History.Entry) {
         viewModelScope.launch {
             try {
                 val app = getApplication<Application>()
-                val uri = withContext(Dispatchers.IO) { Exporter.saveOrReplace(app, java.io.File(e.file), galleryName(e), e.video, e.gallery) }
+                val uri = withContext(Dispatchers.IO) { Exporter.saveOrReplace(app, File(e.file), Results.galleryName(e), e.video, e.gallery) }
                 withContext(Dispatchers.IO) { History.setGallery(app, e.id, uri.toString()) }
                 refreshHistory()
                 _batch.value = _batch.value?.let { b -> if (e.id in b.ids && e.gallery == null) b.copy(saved = b.saved + 1) else b }
+                if (e.id == photoEntry || e.id == videoEntry) _saved.value = true
+                _toast.value = tr("נשמר בגלריה").also { Growth.recordSuccess(getApplication()) }
             } catch (t: Throwable) {
-                _error.value = "השמירה נכשלה: ${t.message}"
+                _error.value = tr("השמירה נכשלה: {0}", t.message)
             }
         }
     }
 
     fun saveEntries(ids: List<Long>) = _history.value.filter { it.id in ids && it.gallery == null }.forEach(::saveEntry)
 
-    fun shareEntryIntent(e: History.Entry): Intent = Exporter.shareIntent(getApplication(), java.io.File(e.file))
+    fun shareEntryIntent(e: History.Entry): Intent = Exporter.shareIntent(getApplication(), File(e.file))
 
     fun shareEntriesIntent(ids: List<Long>): Intent? =
-        _history.value.filter { it.id in ids }.map { java.io.File(it.file) }.takeIf { it.isNotEmpty() }?.let { Exporter.shareManyIntent(getApplication(), it) }
+        _history.value.filter { it.id in ids }.map { File(it.file) }.takeIf { it.isNotEmpty() }?.let { Exporter.shareManyIntent(getApplication(), it) }
+
+    /** Straight to WhatsApp (or WhatsApp Business); null when neither is installed. */
+    fun whatsAppIntent(file: File): Intent? {
+        val pm = getApplication<Application>().packageManager
+        val pkg = listOf("com.whatsapp", "com.whatsapp.w4b").firstOrNull { p ->
+            runCatching { pm.getPackageInfo(p, 0); true }.getOrDefault(false)
+        } ?: return null
+        val uri = androidx.core.content.FileProvider.getUriForFile(getApplication(), getApplication<Application>().packageName + ".files", file)
+        return Intent(Intent.ACTION_SEND).apply {
+            type = Exporter.mime(file)
+            putExtra(Intent.EXTRA_STREAM, uri)
+            setPackage(pkg)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+    }
+
+    fun whatsAppFile(f: File): Intent? = whatsAppIntent(f).also {
+        if (it == null) _error.value = tr("וואטסאפ לא מותקן בטלפון הזה.")
+    }
+
+    fun whatsAppEntry(e: History.Entry): Intent? = whatsAppFile(File(e.file))
 
     /** Removes a result from the app's recent results (a copy saved in the gallery stays there). */
     fun deleteEntry(e: History.Entry) {
@@ -295,12 +451,43 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * The system's "allow BlueShield to delete this photo?" request for the original of a result (Android 11+), or
+     * null (with a message) when the original can't be deleted from here.
+     */
+    fun deleteOriginalRequest(e: History.Entry): IntentSender? {
+        val src = e.source?.let(Uri::parse)
+        if (src == null || Build.VERSION.SDK_INT < 30) {
+            _error.value = tr("כאן אי אפשר למחוק את המקור. אפשר למחוק אותו בגלריה של הטלפון.")
+            return null
+        }
+        val cr = getApplication<Application>().contentResolver
+        // the photo picker hands out its own links; the gallery item behind it has the same number
+        val candidates = buildList {
+            add(src)
+            src.lastPathSegment?.toLongOrNull()?.let { id ->
+                add(android.content.ContentUris.withAppendedId(
+                    if (e.video) MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL) else MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL), id,
+                ))
+            }
+        }
+        for (u in candidates) {
+            runCatching { return MediaStore.createDeleteRequest(cr, listOf(u)).intentSender }
+        }
+        _error.value = tr("כאן אי אפשר למחוק את המקור. אפשר למחוק אותו בגלריה של הטלפון.")
+        return null
+    }
+
+    fun originalDeleted() {
+        _toast.value = tr("המקור נמחק")
+    }
+
     /** Opens a recent photo again from its original, for per-person changes; the new version replaces it. */
     fun editEntry(e: History.Entry) {
         val src = e.source?.let(Uri::parse) ?: return
         val readable = runCatching { getApplication<Application>().contentResolver.openInputStream(src)?.close() != null }.getOrDefault(false)
         if (!readable) {
-            _error.value = "התמונה המקורית כבר לא זמינה (אולי נמחקה, או שהגיעה בשיתוף מאפליקציה אחרת). אפשר לבחור אותה שוב."
+            _error.value = tr("התמונה המקורית כבר לא זמינה (אולי נמחקה, או שהגיעה בשיתוף מאפליקציה אחרת). אפשר לבחור אותה שוב.")
             return
         }
         closeViewer()
@@ -308,45 +495,72 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         loadPhoto(src, replace = e.id, autoStart = true)
     }
 
-    /** Censor the picked photo. */
+    // ── one photo ───────────────────────────────────────────────────────────────────────────────
+
+    /** Censor the picked photo; with "ask whom to censor" on, the result waits for the choice. */
     fun startPhoto() {
         val p = _photo.value ?: return
         _error.value = null
         _photoBusy.value = true
         viewModelScope.launch {
             try {
+                preparePhotoOutput(p.uri)
                 val r = withContext(Dispatchers.Default) { processor().processPhoto(p.uri, _settings.value.validated()) }
-                _photoResult.value = r
                 _draft.value = emptyMap()
-                val e = keep(r.file, false, p.name, p.uri.toString(), photoEntry)
-                photoEntry = e.id
-                _saved.value = e.gallery != null
+                thumbs.clear()
+                if (_ui.value.askWho && r.people.isNotEmpty()) {
+                    _photoResult.value = r
+                    _choosingPhoto.value = true
+                } else {
+                    val rr = if (_strokes.value.isNotEmpty()) withContext(Dispatchers.Default) { processor().renderPhoto(emptyMap(), _strokes.value) } else r
+                    _photoResult.value = rr
+                    keepPhoto(rr)
+                }
             } catch (e: Throwable) {
-                _error.value = "העיבוד נכשל: ${e.message ?: e.javaClass.simpleName}"
+                _error.value = tr("העיבוד נכשל: {0}", e.message ?: e.javaClass.simpleName)
             } finally {
                 _photoBusy.value = false
             }
         }
     }
 
-    /** Re-paint the photo with the manual per-person choices. */
+    private suspend fun keepPhoto(r: Processor.PhotoResult) {
+        val p = _photo.value
+        val e = keep(r.file, false, p?.name ?: "photo.jpg", p?.uri?.toString(), photoEntry)
+        photoEntry = e.id
+        _saved.value = e.gallery != null
+        if (_saved.value) _toast.value = tr("נשמר בגלריה").also { Growth.recordSuccess(getApplication()) }
+    }
+
+    /** Re-paint the photo with the manual per-person choices and the hand-painted strokes. */
     fun applyPhotoOverrides() {
         val overrides = _draft.value.filterValues { it != Override.AUTO }
         _photoBusy.value = true
         viewModelScope.launch {
             try {
-                val r = withContext(Dispatchers.Default) { processor().renderPhoto(overrides) }
+                val r = withContext(Dispatchers.Default) { processor().renderPhoto(overrides, _strokes.value) }
                 _photoResult.value = r
-                val p = _photo.value
-                val e = keep(r.file, false, p?.name ?: "photo.jpg", p?.uri?.toString(), photoEntry)
-                photoEntry = e.id
-                _saved.value = e.gallery != null
+                _choosingPhoto.value = false
+                keepPhoto(r)
             } catch (e: Throwable) {
-                _error.value = "לא ניתן להחיל את השינויים: ${e.message}"
+                _error.value = tr("לא ניתן להחיל את השינויים: {0}", e.message)
             } finally {
                 _photoBusy.value = false
             }
         }
+    }
+
+    /** The brush editor's strokes, applied at once. */
+    fun setStrokes(list: List<BrushStroke>) {
+        if (!allowed(Entitlements.Feature.BRUSH)) return
+        _strokes.value = list
+        applyPhotoOverrides()
+    }
+
+    /** Before anything is drawn: censor exactly the people ticked ([censor]), the others not. */
+    fun confirmWho(censor: Map<Int, Boolean>) {
+        _draft.value = censor.mapValues { if (it.value) Override.CENSOR else Override.KEEP }
+        if (_choosingPhoto.value) applyPhotoOverrides() else applyOverrides()
     }
 
     fun savePhoto() = saveCurrent(photoEntry)
@@ -354,33 +568,47 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun saveCurrent(id: Long?) {
         val e = _history.value.firstOrNull { it.id == id } ?: return
         saveEntry(e)
-        _saved.value = true
     }
+
+    fun currentPhotoEntry(): History.Entry? = _history.value.firstOrNull { it.id == photoEntry }
+    fun currentVideoEntry(): History.Entry? = _history.value.firstOrNull { it.id == videoEntry }
 
     fun sharePhotoIntent(): Intent? = _photoResult.value?.file?.let { Exporter.shareIntent(getApplication(), it) }
 
     /** Back from the photo result to the photo + settings. */
     fun adjustPhoto() {
         _photoResult.value = null
+        _choosingPhoto.value = false
     }
 
     fun clearPhoto() {
         _photo.value = null
         _photoResult.value = null
+        _choosingPhoto.value = false
+        _strokes.value = emptyList()
     }
+
+    // ── one video ───────────────────────────────────────────────────────────────────────────────
 
     fun clearVideo() {
         _video.value = null
         _showResult.value = false
+        _trim.value = null
+        _ranges.value = emptyMap()
         ProcessingRepository.processor?.releaseAnalysis()
         ProcessingRepository.reset()
+    }
+
+    fun setTrim(t: Pair<Double, Double>?) {
+        _trim.value = t
     }
 
     fun start() {
         val v = _video.value ?: return
         _error.value = null
         _showResult.value = false
-        ProcessingService.start(getApplication(), ProcessingService.Job.Full(v, _settings.value.validated()))
+        _ranges.value = emptyMap()
+        ProcessingService.start(getApplication(), ProcessingService.Job.Full(v, _settings.value.validated(), analyseOnly = _ui.value.askWho, trim = _trim.value))
     }
 
     fun pause() = ProcessingRepository.processor?.pause()
@@ -391,9 +619,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _draft.value = _draft.value + (id to o)
     }
 
+    /** Censor person [id] only between two moments of the video (null: the whole time, as decided). */
+    fun setRange(id: Int, r: ClosedFloatingPointRange<Double>?) {
+        _ranges.value = if (r == null) _ranges.value - id else _ranges.value + (id to r)
+    }
+
     fun applyOverrides() {
         val overrides = _draft.value.filterValues { it != Override.AUTO }
-        ProcessingService.start(getApplication(), ProcessingService.Job.Rerender(overrides))
+        val v = _video.value
+        ProcessingService.start(
+            getApplication(),
+            ProcessingService.Job.Rerender(overrides, _ranges.value, v?.name ?: "video.mp4", v?.uri?.toString()),
+        )
     }
 
     fun adjust() {
@@ -406,7 +643,70 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun shareIntent(): Intent? = job.value.output?.let { Exporter.shareIntent(getApplication(), it) }
 
+    // ── telling others ──────────────────────────────────────────────────────────────────────────
+
+    /** "Share BlueShield": a message with the download link. */
+    fun appShareIntent(): Intent = Intent.createChooser(
+        Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, tr("BlueShield: צנזור אוטומטי ופרטי לתמונות ולסרטונים, הכול במכשיר.") + "\n" + BuildInfo.LATEST_APK)
+        },
+        null,
+    )
+
+    /**
+     * "Report a mistake": only what the user ticked goes into the message, which they send themselves (e-mail,
+     * WhatsApp…). The app itself has no internet access.
+     */
+    fun reportIntent(note: String, withCensored: Boolean, withOriginal: Boolean, withDetails: Boolean): Intent {
+        val app = getApplication<Application>()
+        val r = _photoResult.value
+        val files = ArrayList<Uri>()
+        fun provide(f: File) = androidx.core.content.FileProvider.getUriForFile(app, app.packageName + ".files", f)
+        if (withCensored) (r?.file ?: job.value.output)?.let { files += provide(it) }
+        if (withOriginal) _photo.value?.uri?.let { files += it } ?: _video.value?.uri?.let { files += it }
+        val text = buildString {
+            append(tr("דיווח על טעות ב-BlueShield")).append("\n\n")
+            if (note.isNotBlank()) append(note.trim()).append("\n\n")
+            if (withDetails) {
+                append("BlueShield ${BuildInfo.version} · ${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE}\n")
+                append(json.encodeToString(CensorSettings.serializer(), _settings.value)).append('\n')
+                val people = r?.people ?: job.value.people
+                for (p in people) append("#${p.id} ${p.gender} ${(p.confidence * 100).toInt()}% age=${p.age?.toInt()} censored=${p.censored}\n")
+            }
+        }
+        val send = if (files.size > 1) Intent(Intent.ACTION_SEND_MULTIPLE).apply { putParcelableArrayListExtra(Intent.EXTRA_STREAM, files); type = "*/*" }
+        else Intent(Intent.ACTION_SEND).apply { type = if (files.isEmpty()) "text/plain" else "*/*"; files.firstOrNull()?.let { putExtra(Intent.EXTRA_STREAM, it) } }
+        send.putExtra(Intent.EXTRA_SUBJECT, tr("דיווח על טעות ב-BlueShield"))
+        send.putExtra(Intent.EXTRA_TEXT, text)
+        if (SUPPORT_EMAIL.isNotEmpty()) send.putExtra(Intent.EXTRA_EMAIL, arrayOf(SUPPORT_EMAIL))
+        send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        return Intent.createChooser(send, tr("שליחת הדיווח"))
+    }
+
+    /** "Contact us": an e-mail to the developer when an address is set, otherwise any app the user picks. */
+    fun contactIntent(): Intent {
+        val body = "\n\n—\nBlueShield ${BuildInfo.version} · ${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE}"
+        val i = if (SUPPORT_EMAIL.isNotEmpty()) Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:$SUPPORT_EMAIL"))
+        else Intent(Intent.ACTION_SEND).apply { type = "text/plain" }
+        i.putExtra(Intent.EXTRA_SUBJECT, "BlueShield")
+        i.putExtra(Intent.EXTRA_TEXT, body)
+        return Intent.createChooser(i, tr("יצירת קשר"))
+    }
+
+    /** A feature of the (future) paid plan: everything is open for now, see [Entitlements]. */
+    private fun allowed(f: Entitlements.Feature): Boolean {
+        if (Entitlements.has(f)) return true
+        _error.value = tr("זו תכונה של BlueShield Pro.")
+        return false
+    }
+
     fun dismissError() {
         _error.value = null
+    }
+
+    companion object {
+        /** The developer's address for "contact us" and mistake reports; empty = the user picks where to send. */
+        const val SUPPORT_EMAIL = ""
     }
 }

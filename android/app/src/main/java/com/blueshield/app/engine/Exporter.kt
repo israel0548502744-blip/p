@@ -1,5 +1,7 @@
 package com.blueshield.app.engine
 
+import com.blueshield.app.ui.tr
+
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -24,9 +26,9 @@ object Exporter {
         }
         val collection = if (Build.VERSION.SDK_INT >= 29) MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
         else MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-        val uri = resolver.insert(collection, values) ?: error("לא ניתן ליצור קובץ בגלריה")
+        val uri = resolver.insert(collection, values) ?: error(tr("לא ניתן ליצור קובץ בגלריה"))
         try {
-            resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out, 1 shl 20) } } ?: error("לא ניתן לפתוח את הקובץ בגלריה")
+            resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out, 1 shl 20) } } ?: error(tr("לא ניתן לפתוח את הקובץ בגלריה"))
             if (Build.VERSION.SDK_INT >= 29) {
                 values.clear()
                 values.put(MediaStore.Video.Media.IS_PENDING, 0)
@@ -44,7 +46,7 @@ object Exporter {
         val resolver = context.contentResolver
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
-            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            put(MediaStore.Images.Media.MIME_TYPE, mime(file))
             if (Build.VERSION.SDK_INT >= 29) {
                 put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/BlueShield")
                 put(MediaStore.Images.Media.IS_PENDING, 1)
@@ -52,9 +54,9 @@ object Exporter {
         }
         val collection = if (Build.VERSION.SDK_INT >= 29) MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
         else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-        val uri = resolver.insert(collection, values) ?: error("לא ניתן ליצור קובץ בגלריה")
+        val uri = resolver.insert(collection, values) ?: error(tr("לא ניתן ליצור קובץ בגלריה"))
         try {
-            resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out, 1 shl 20) } } ?: error("לא ניתן לפתוח את הקובץ בגלריה")
+            resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out, 1 shl 20) } } ?: error(tr("לא ניתן לפתוח את הקובץ בגלריה"))
             if (Build.VERSION.SDK_INT >= 29) {
                 values.clear()
                 values.put(MediaStore.Images.Media.IS_PENDING, 0)
@@ -86,7 +88,7 @@ object Exporter {
     fun viewIntent(context: Context, file: File): Intent {
         val uri = FileProvider.getUriForFile(context, context.packageName + ".files", file)
         return Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, if (file.extension.equals("jpg", true)) "image/jpeg" else "video/mp4")
+            setDataAndType(uri, mime(file))
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
     }
@@ -95,16 +97,22 @@ object Exporter {
     fun shareManyIntent(context: Context, files: List<File>): Intent {
         val uris = ArrayList(files.map { FileProvider.getUriForFile(context, context.packageName + ".files", it) })
         return Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-            type = if (files.all { it.extension.equals("jpg", true) }) "image/jpeg" else "*/*"
+            type = files.map(::mime).distinct().singleOrNull() ?: if (files.all { mime(it).startsWith("image/") }) "image/*" else "*/*"
             putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }.let { Intent.createChooser(it, null) }
     }
 
+    fun mime(file: File) = when (file.extension.lowercase()) {
+        "jpg", "jpeg" -> "image/jpeg"
+        "png" -> "image/png"
+        else -> "video/mp4"
+    }
+
     fun shareIntent(context: Context, file: File): Intent {
         val uri = FileProvider.getUriForFile(context, context.packageName + ".files", file)
         return Intent(Intent.ACTION_SEND).apply {
-            type = if (file.extension.equals("jpg", true)) "image/jpeg" else "video/mp4"
+            type = mime(file)
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }.let { Intent.createChooser(it, null) }

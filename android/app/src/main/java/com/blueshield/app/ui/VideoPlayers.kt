@@ -147,8 +147,8 @@ fun ComparePlayer(original: Uri, censored: Uri, aspect: Float, mode: CompareMode
                 Box(Modifier.fillMaxHeight().width(full * wipe).clipToBounds()) {
                     VideoSurface(follower, Modifier.wrapContentWidth(Alignment.Start, unbounded = true).requiredWidth(full).fillMaxHeight())
                 }
-                Label("מקור", false, Modifier.align(Alignment.TopStart).padding(10.dp))
-                Label("מצונזר", true, Modifier.align(Alignment.TopEnd).padding(10.dp))
+                Label(tr("מקור"), false, Modifier.align(Alignment.TopStart).padding(10.dp))
+                Label(tr("מצונזר"), true, Modifier.align(Alignment.TopEnd).padding(10.dp))
                 val density = LocalDensity.current
                 // the original is revealed from the start edge (the right in RTL), so a drag toward the end grows it
                 val towardEnd = if (LocalLayoutDirection.current == LayoutDirection.Rtl) -1f else 1f
@@ -170,18 +170,18 @@ fun ComparePlayer(original: Uri, censored: Uri, aspect: Float, mode: CompareMode
             CompareMode.SPLIT -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(Modifier.fillMaxWidth().aspectRatio(aspect).clip(RoundedCornerShape(14.dp)).background(Color.Black)) {
                     VideoSurface(follower, Modifier.fillMaxSize())
-                    Label("מקור", false, Modifier.align(Alignment.TopStart).padding(10.dp))
+                    Label(tr("מקור"), false, Modifier.align(Alignment.TopStart).padding(10.dp))
                 }
                 Box(Modifier.fillMaxWidth().aspectRatio(aspect).clip(RoundedCornerShape(14.dp)).background(Color.Black)) {
                     VideoSurface(master, Modifier.fillMaxSize())
-                    Label("מצונזר", true, Modifier.align(Alignment.TopEnd).padding(10.dp))
+                    Label(tr("מצונזר"), true, Modifier.align(Alignment.TopEnd).padding(10.dp))
                 }
             }
             CompareMode.CENSORED -> Box(Modifier.fillMaxWidth().aspectRatio(aspect).clip(RoundedCornerShape(14.dp)).background(Color.Black)) {
                 VideoSurface(master, Modifier.fillMaxSize())
                 // keep the follower attached (and paused in sync) without showing it
                 Box(Modifier.size(1.dp)) { VideoSurface(follower, Modifier.size(1.dp)) }
-                Label("מצונזר", true, Modifier.align(Alignment.TopEnd).padding(10.dp))
+                Label(tr("מצונזר"), true, Modifier.align(Alignment.TopEnd).padding(10.dp))
             }
         }
         Transport(master, timeline)

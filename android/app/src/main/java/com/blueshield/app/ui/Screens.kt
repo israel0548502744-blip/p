@@ -34,6 +34,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material.icons.filled.Movie
@@ -83,7 +85,7 @@ fun PrimaryButton(text: String, icon: androidx.compose.ui.graphics.vector.ImageV
     val shape = RoundedCornerShape(18.dp)
     Box(
         Modifier.fillMaxWidth().height(56.dp).clip(shape)
-            .background(if (enabled) Glass.Accent else Brush.linearGradient(listOf(Color(0x33FFFFFF), Color(0x26FFFFFF))))
+            .background(if (enabled) Glass.Accent else Brush.linearGradient(listOf(Palette.VeilStrong, Palette.Veil)))
             .background(Brush.verticalGradient(listOf(Color(0x2EFFFFFF), Color.Transparent)))
             .border(1.dp, Brush.verticalGradient(listOf(Color(0x66FFFFFF), Color(0x0FFFFFFF))), shape)
             .clickable(enabled = enabled, onClick = onClick),
@@ -124,60 +126,58 @@ fun BottomBar(content: @Composable androidx.compose.foundation.layout.BoxScope.(
 
 // ───────────────────────────────── Home ─────────────────────────────────
 
+/** A picked video: preview, details, the part to censor, a settings summary and the start button. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(
-    video: VideoMeta?, settings: CensorSettings, loading: Boolean, error: String?,
-    onPick: () -> Unit, onClear: () -> Unit, onEditSettings: () -> Unit, onStart: () -> Unit,
-    onPickMany: () -> Unit = {},
-    recent: @Composable () -> Unit = {},
+fun VideoHome(
+    video: VideoMeta, settings: CensorSettings, trim: Pair<Double, Double>?, onTrim: (Pair<Double, Double>?) -> Unit,
+    onClear: () -> Unit, onEditSettings: () -> Unit, onStart: () -> Unit, askWho: Boolean,
 ) {
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            if (video == null) {
-                EmptyState(loading, error, onPick, onPickMany)
-                recent()
-            } else {
-                SinglePlayer(video.uri, video.width.toFloat() / video.height, Modifier.fillMaxWidth())
-                VideoInfo(video, onClear)
-                SettingsSummary(settings, onEditSettings)
-            }
+            SinglePlayer(video.uri, video.width.toFloat() / video.height, Modifier.fillMaxWidth())
+            VideoInfo(video, onClear)
+            TrimPanel(video, trim, onTrim)
+            SettingsSummary(settings, onEditSettings)
         }
-        if (video != null) BottomBar { PrimaryButton("התחלת צנזור", Icons.Filled.PlayArrow, onClick = onStart) }
+        BottomBar {
+            PrimaryButton(if (askWho) tr("איתור האנשים") else tr("התחלת צנזור"), Icons.Filled.PlayArrow, onClick = onStart)
+        }
     }
 }
 
+/** "Censor only part of the video": a two-handled slider over its length. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun EmptyState(loading: Boolean, error: String?, onPick: () -> Unit, onPickMany: () -> Unit) {
+private fun TrimPanel(video: VideoMeta, trim: Pair<Double, Double>?, onTrim: (Pair<Double, Double>?) -> Unit) {
+    val dur = video.durationSec.coerceAtLeast(0.1)
     Panel(Modifier.fillMaxWidth()) {
-        Column(Modifier.fillMaxWidth().padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            val pulse = rememberInfiniteTransition(label = "pulse")
-            val scale by pulse.animateFloat(0.92f, 1.08f, infiniteRepeatable(tween(1600), RepeatMode.Reverse), label = "scale")
-            Box(contentAlignment = Alignment.Center) {
-                Box(Modifier.size((96 * scale).dp).clip(RoundedCornerShape(30.dp)).background(Palette.Shield400.copy(alpha = 0.16f)))
-                Box(
-                    Modifier.size(76.dp).clip(RoundedCornerShape(24.dp)).background(Glass.Accent)
-                        .border(1.dp, Brush.verticalGradient(listOf(Color(0x80FFFFFF), Color(0x00FFFFFF))), RoundedCornerShape(24.dp)),
-                    contentAlignment = Alignment.Center,
-                ) { Icon(Icons.Filled.VideoLibrary, null, tint = Color.White, modifier = Modifier.size(34.dp)) }
+        Column(Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.ContentCut, null, tint = Palette.Shield400, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(tr("חיתוך: רק חלק מהסרטון"), color = Palette.Text, fontSize = 14.5.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                androidx.compose.material3.Switch(
+                    checked = trim != null, onCheckedChange = { onTrim(if (it) 0.0 to dur else null) },
+                    colors = androidx.compose.material3.SwitchDefaults.colors(checkedTrackColor = Palette.Shield500),
+                )
             }
-            Spacer(Modifier.height(20.dp))
-            Text("בחרו סרטון או תמונה", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.3).sp)
-            Spacer(Modifier.height(8.dp))
-            Text(
-                // RLM first so the paragraph is right-to-left even though it starts with the Latin brand name
-                "\u200FBlueShield מאתרת עור חשוף של נשים בוגרות — פריים אחר פריים בסרטון, או בתמונה בודדת — ומכסה אותו במסכה נקייה בצבע שתבחרו. פנים, צוואר וטקסט שעל המסך נשארים גלויים.",
-                color = Palette.Ink300, fontSize = 14.sp, lineHeight = 20.sp,
-            )
-            Spacer(Modifier.height(20.dp))
-            if (loading) CircularProgressIndicator(color = Palette.Shield400)
-            else {
-                PrimaryButton("בחירת סרטון או תמונה", Icons.Filled.Movie, onClick = onPick)
-                Spacer(Modifier.height(10.dp))
-                GlassButton("כמה תמונות בבת אחת", Icons.Filled.Collections, onClick = onPickMany)
+            if (trim != null) {
+                androidx.compose.material3.RangeSlider(
+                    value = trim.first.toFloat()..trim.second.toFloat(),
+                    onValueChange = { r -> if (r.endInclusive - r.start >= 0.5f) onTrim(r.start.toDouble() to r.endInclusive.toDouble()) },
+                    valueRange = 0f..dur.toFloat(),
+                    colors = androidx.compose.material3.SliderDefaults.colors(activeTrackColor = Palette.Shield400, thumbColor = Palette.Shield300),
+                )
+                Row {
+                    Text(tr("מ-{0}", ltr(formatDuration(trim.first))), color = Palette.Ink200, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                    Text(tr("עד {0}", ltr(formatDuration(trim.second))), color = Palette.Ink200, fontSize = 13.sp)
+                }
+                Text(
+                    tr("רק הקטע הזה יעובד ויישמר, וכך זה מהיר יותר. ההתחלה עשויה לזוז מעט אחורה, לפריים המפתח הקרוב."),
+                    color = Palette.Ink400, fontSize = 11.5.sp, lineHeight = 15.sp, modifier = Modifier.padding(top = 6.dp),
+                )
             }
-            if (error != null) Text(error, color = Palette.Danger, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp))
-            Spacer(Modifier.height(16.dp))
-            PrivacyPill()
         }
     }
 }
@@ -191,18 +191,18 @@ private fun VideoInfo(v: VideoMeta, onClear: () -> Unit) {
                 Icon(Icons.Filled.Movie, null, tint = Palette.Shield300, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(v.name, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    Text(v.name, color = Palette.Text, fontWeight = FontWeight.SemiBold, maxLines = 1)
                     Text(v.videoMime.removePrefix("video/").uppercase(), color = Palette.Ink400, fontSize = 11.sp)
                 }
-                IconButton(onClick = onClear) { Icon(Icons.Filled.Close, "הסרה", tint = Palette.Ink300) }
+                IconButton(onClick = onClear) { Icon(Icons.Filled.Close, tr("הסרה"), tint = Palette.Ink300) }
             }
             Spacer(Modifier.height(8.dp))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Chip("משך", formatDuration(v.durationSec))
-                Chip("רזולוציה", ltr("${v.width}×${v.height}"))
-                Chip("קצב פריימים", "%.2f fps".format(v.fps).replace(".00", ""))
-                Chip("גודל", formatBytes(v.sizeBytes))
-                Chip("שמע", v.audioMime?.removePrefix("audio/")?.uppercase() ?: "אין")
+                Chip(tr("משך"), formatDuration(v.durationSec))
+                Chip(tr("רזולוציה"), ltr("${v.width}×${v.height}"))
+                Chip(tr("קצב פריימים"), "%.2f fps".format(v.fps).replace(".00", ""))
+                Chip(tr("גודל"), formatBytes(v.sizeBytes))
+                Chip(tr("שמע"), v.audioMime?.removePrefix("audio/")?.uppercase() ?: tr("אין"))
             }
         }
     }
@@ -210,11 +210,11 @@ private fun VideoInfo(v: VideoMeta, onClear: () -> Unit) {
 
 // ─────────────────────────────── Processing ───────────────────────────────
 
-private val STEPS = listOf(
-    Triple(JobState.Stage.ANALYZING, "מנתח את הסרטון…", "קריאת פריימים וטעינת מודלים"),
-    Triple(JobState.Stage.DETECTING, "מאתר אזורים רגישים…", "אנשים · מגדר · עור · מעקב"),
-    Triple(JobState.Stage.APPLYING, "מחיל את הצנזור…", "מסכות עם שוליים רכים"),
-    Triple(JobState.Stage.ENCODING, "מקודד את הסרטון הסופי…", "קידוד H.264 · קצב פריימים מקורי · שמע"),
+private val STEPS get() = listOf(
+    Triple(JobState.Stage.ANALYZING, tr("מנתח את הסרטון…"), tr("קריאת פריימים וטעינת מודלים")),
+    Triple(JobState.Stage.DETECTING, tr("מאתר אזורים רגישים…"), tr("אנשים · מגדר · עור · מעקב")),
+    Triple(JobState.Stage.APPLYING, tr("מחיל את הצנזור…"), tr("מסכות עם שוליים רכים")),
+    Triple(JobState.Stage.ENCODING, tr("מקודד את הסרטון הסופי…"), tr("קידוד H.264 · קצב פריימים מקורי · שמע")),
 )
 
 @Composable
@@ -241,7 +241,7 @@ fun ProcessingScreen(job: JobState, onPause: () -> Unit, onResume: () -> Unit, o
             ) {
                 StatusDot(if (job.paused) Palette.Amber else Color(0xFFEF4444))
                 Spacer(Modifier.width(6.dp))
-                Text(if (job.paused) "מושהה" else if (job.passIndex == 2) "תצוגה חיה של התוצאה" else "תצוגה חיה של הזיהוי", color = Palette.Ink100, fontSize = 11.5.sp)
+                Text(if (job.paused) tr("מושהה") else if (job.passIndex == 2) tr("תצוגה חיה של התוצאה") else tr("תצוגה חיה של הזיהוי"), color = Palette.Ink100, fontSize = 11.5.sp)
             }
         }
         Panel(Modifier.fillMaxWidth()) {
@@ -250,7 +250,7 @@ fun ProcessingScreen(job: JobState, onPause: () -> Unit, onResume: () -> Unit, o
                     Ring(job.percent)
                     Spacer(Modifier.width(16.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(if (job.paused) "מושהה" else STEPS[active].second, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                        Text(if (job.paused) tr("מושהה") else STEPS[active].second, color = Palette.Text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.height(8.dp))
                         LinearProgressIndicator(
                             progress = { job.percent / 100f }, modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(50)),
@@ -260,13 +260,13 @@ fun ProcessingScreen(job: JobState, onPause: () -> Unit, onResume: () -> Unit, o
                 }
                 Spacer(Modifier.height(14.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Chip(if (job.passIndex == 2) "רינדור פריים" else "ניתוח פריים", ltr("${job.frame} / ${job.totalFrames}"), Modifier.weight(1f))
-                    Chip("זמן שנותר", if (job.paused) "מושהה" else formatEta(job.etaSeconds), Modifier.weight(1f))
+                    Chip(if (job.passIndex == 2) tr("רינדור פריים") else tr("ניתוח פריים"), ltr("${job.frame} / ${job.totalFrames}"), Modifier.weight(1f))
+                    Chip(tr("זמן שנותר"), if (job.paused) tr("מושהה") else formatEta(job.etaSeconds), Modifier.weight(1f))
                 }
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Chip("מהירות", if (job.fps > 0) "%.1f fps".format(job.fps) else "—", Modifier.weight(1f))
-                    Chip("זמן שעבר", formatDuration(job.elapsed), Modifier.weight(1f))
+                    Chip(tr("מהירות"), if (job.fps > 0) "%.1f fps".format(job.fps) else "—", Modifier.weight(1f))
+                    Chip(tr("זמן שעבר"), formatDuration(job.elapsed), Modifier.weight(1f))
                 }
                 Spacer(Modifier.height(14.dp))
                 for ((i, step) in STEPS.withIndex()) StepRow(i, step.second, step.third, done = i < active, now = i == active, paused = job.paused)
@@ -275,12 +275,12 @@ fun ProcessingScreen(job: JobState, onPause: () -> Unit, onResume: () -> Unit, o
                     GlassOutlined(onClick = if (job.paused) onResume else onPause, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) {
                         Icon(if (job.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, null)
                         Spacer(Modifier.width(6.dp))
-                        Text(if (job.paused) "המשך" else "השהיה")
+                        Text(if (job.paused) tr("המשך") else tr("השהיה"))
                     }
                     GlassOutlined(onClick = onCancel, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) {
                         Icon(Icons.Filled.Stop, null, tint = Palette.Danger)
                         Spacer(Modifier.width(6.dp))
-                        Text("ביטול", color = Color(0xFFFECACA))
+                        Text(tr("ביטול"), color = Palette.DangerText)
                     }
                 }
             }
@@ -297,7 +297,7 @@ private fun Ring(percent: Float) {
             drawArc(Palette.Ink700, 0f, 360f, false, style = Stroke(9.dp.toPx()))
             drawArc(Brush.sweepGradient(listOf(Palette.Shield300, Palette.Shield600, Palette.Shield300)), -90f, 360f * animated, false, style = Stroke(9.dp.toPx(), cap = StrokeCap.Round))
         }
-        Text("${percent.toInt()}%", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+        Text("${percent.toInt()}%", color = Palette.Text, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -305,7 +305,7 @@ private fun Ring(percent: Float) {
 private fun StepRow(i: Int, label: String, sub: String, done: Boolean, now: Boolean, paused: Boolean) {
     Row(
         Modifier.fillMaxWidth().padding(vertical = 3.dp).clip(RoundedCornerShape(12.dp))
-            .background(if (now) Palette.Shield500.copy(alpha = 0.10f) else Color(0x05FFFFFF)).padding(10.dp),
+            .background(if (now) Palette.Shield500.copy(alpha = 0.10f) else Palette.Veil).padding(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
@@ -320,7 +320,7 @@ private fun StepRow(i: Int, label: String, sub: String, done: Boolean, now: Bool
         }
         Spacer(Modifier.width(10.dp))
         Column {
-            Text(label, color = if (done || now) Color.White else Palette.Ink400, fontSize = 13.5.sp, fontWeight = FontWeight.Medium)
+            Text(label, color = if (done || now) Palette.Text else Palette.Ink400, fontSize = 13.5.sp, fontWeight = FontWeight.Medium)
             Text(sub, color = Palette.Ink400, fontSize = 11.sp)
         }
     }
@@ -333,6 +333,8 @@ fun ResultScreen(
     video: VideoMeta, job: JobState, censoredUri: android.net.Uri, draftOverrides: Map<Int, Override>, thumbnail: (Int) -> Bitmap?,
     onOverride: (Int, Override) -> Unit, onApply: () -> Unit, onSave: () -> Unit, onShare: () -> Unit, onAdjust: () -> Unit, onNew: () -> Unit,
     saved: Boolean, settings: CensorSettings,
+    ranges: Map<Int, ClosedFloatingPointRange<Double>> = emptyMap(), onRange: ((Int, ClosedFloatingPointRange<Double>?) -> Unit)? = null,
+    rangesChanged: Boolean = false, extra: ExtraActions? = null,
 ) {
     var mode by remember { mutableStateOf(CompareMode.WIPE) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -342,33 +344,34 @@ fun ResultScreen(
             }
             Spacer(Modifier.width(12.dp))
             Column {
-                Text("הצנזור הושלם.", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
-                Text("בדקו את התוצאה, ואז שמרו או שתפו.", color = Palette.Ink300, fontSize = 12.5.sp)
+                Text(tr("הצנזור הושלם."), color = Palette.Text, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
+                Text(tr("בדקו את התוצאה, ואז שמרו או שתפו."), color = Palette.Ink300, fontSize = 12.5.sp)
             }
         }
-        Segmented(listOf(CompareMode.WIPE to "השוואה", CompareMode.SPLIT to "מקור / מצונזר", CompareMode.CENSORED to "מצונזר"), mode, { mode = it })
+        Segmented(listOf(CompareMode.WIPE to tr("השוואה"), CompareMode.SPLIT to tr("מקור / מצונזר"), CompareMode.CENSORED to tr("מצונזר")), mode, { mode = it })
         key(job.version) {
             ComparePlayer(video.uri, censoredUri, video.width.toFloat() / video.height, mode, null, Modifier.fillMaxWidth())
         }
-        PrimaryButton(if (saved) "נשמר בגלריה" else "שמירה בגלריה", Icons.Filled.Download, enabled = !saved, onClick = onSave)
+        PrimaryButton(if (saved) tr("נשמר בגלריה") else tr("שמירה בגלריה"), Icons.Filled.Download, enabled = !saved, onClick = onSave)
         GlassOutlined(onClick = onShare, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(16.dp)) {
             Icon(Icons.Filled.Share, null)
             Spacer(Modifier.width(8.dp))
-            Text("שיתוף")
+            Text(tr("שיתוף"))
         }
-        PeoplePanel(job.people, draftOverrides, thumbnail, onOverride, onApply, settings)
+        extra?.let { MoreActionsRow(it) }
+        PeoplePanel(job.people, draftOverrides, thumbnail, onOverride, onApply, settings, ranges, onRange, rangesChanged)
         Panel(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp)) {
-                InfoRow("פורמט", "MP4 · H.264")
-                InfoRow("רזולוציה", ltr("${video.width}×${video.height}"))
-                InfoRow("קצב פריימים", ltr("%.2f fps".format(video.fps)) + " (תזמון מקורי)")
-                InfoRow("שמע", if (!video.hasAudio) "אין במקור" else if (settings.keepAudio) "נשמר" else "הוסר")
-                InfoRow("פריימים שצונזרו", ltr("${job.censoredFrames} / ${job.totalFrames}"))
+                InfoRow(tr("פורמט"), "MP4 · H.264")
+                InfoRow(tr("רזולוציה"), ltr("${video.width}×${video.height}"))
+                InfoRow(tr("קצב פריימים"), ltr("%.2f fps".format(video.fps)) + tr(" (תזמון מקורי)"))
+                InfoRow(tr("שמע"), if (!video.hasAudio) tr("אין במקור") else if (settings.keepAudio) tr("נשמר") else tr("הוסר"))
+                InfoRow(tr("פריימים שצונזרו"), ltr("${job.censoredFrames} / ${job.totalFrames}"))
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            GlassOutlined(onClick = onAdjust, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) { Icon(Icons.Filled.Refresh, null); Spacer(Modifier.width(6.dp)); Text("כוונון") }
-            GlassOutlined(onClick = onNew, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) { Icon(Icons.Filled.Movie, null); Spacer(Modifier.width(6.dp)); Text("סרטון חדש") }
+            GlassOutlined(onClick = onAdjust, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) { Icon(Icons.Filled.Refresh, null); Spacer(Modifier.width(6.dp)); Text(tr("כוונון")) }
+            GlassOutlined(onClick = onNew, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) { Icon(Icons.Filled.Movie, null); Spacer(Modifier.width(6.dp)); Text(tr("סרטון חדש")) }
         }
         PrivacyPill()
     }
@@ -386,14 +389,16 @@ internal fun InfoRow(k: String, v: String) {
 internal fun PeoplePanel(
     people: List<PersonSummary>, draft: Map<Int, Override>, thumbnail: (Int) -> Bitmap?,
     onOverride: (Int, Override) -> Unit, onApply: () -> Unit, settings: CensorSettings,
+    ranges: Map<Int, ClosedFloatingPointRange<Double>>? = null, onRange: ((Int, ClosedFloatingPointRange<Double>?) -> Unit)? = null,
+    rangesChanged: Boolean = false,
 ) {
     Panel(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("אנשים (${people.size})", color = Color.White, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                Text(if (settings.target == "female") "נשים בלבד · " + ltr("≥${settings.genderThreshold}%") else "כולם", color = Palette.Ink400, fontSize = 11.5.sp)
+                Text(tr("אנשים ({0})", people.size), color = Palette.Text, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text(if (settings.target == "female") tr("נשים בלבד · ") + ltr("≥${settings.genderThreshold}%") else tr("כולם"), color = Palette.Ink400, fontSize = 11.5.sp)
             }
-            if (people.isEmpty()) Text("לא זוהו אנשים.", color = Palette.Ink300, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
+            if (people.isEmpty()) Text(tr("לא זוהו אנשים."), color = Palette.Ink300, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
             for (p in people) {
                 val ov = draft[p.id] ?: p.override
                 val willCensor = when (ov) {
@@ -405,7 +410,7 @@ internal fun PeoplePanel(
                     )
                 }
                 Row(
-                    Modifier.fillMaxWidth().padding(top = 8.dp).clip(RoundedCornerShape(12.dp)).background(Color(0x08FFFFFF)).padding(8.dp),
+                    Modifier.fillMaxWidth().padding(top = 8.dp).clip(RoundedCornerShape(12.dp)).background(Palette.Veil).padding(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Box(Modifier.size(48.dp).clip(RoundedCornerShape(10.dp)).background(Palette.Ink700), contentAlignment = Alignment.Center) {
@@ -420,42 +425,68 @@ internal fun PeoplePanel(
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
                         val gender = when {
-                            p.child && p.gender == "female" -> "ילדה"
-                            p.child -> "ילד"
-                            p.gender == "female" -> "אישה"
-                            p.gender == "male" -> "גבר"
-                            else -> "לא בטוח"
+                            p.child && p.gender == "female" -> tr("ילדה")
+                            p.child -> tr("ילד")
+                            p.gender == "female" -> tr("אישה")
+                            p.gender == "male" -> tr("גבר")
+                            else -> tr("לא בטוח")
                         }
                         Text(
                             "#${p.id}  $gender" + (if (p.gender != "uncertain") " ${(p.confidence * 100).toInt()}%" else "") +
-                                (p.age?.let { " · גיל כ-${it.toInt()}" } ?: ""),
-                            color = if (p.gender == "uncertain") Palette.Amber else Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold,
+                                (p.age?.let { " · " + tr("גיל כ-{0}", it.toInt()) } ?: ""),
+                            color = if (p.gender == "uncertain") Palette.Amber else Palette.Text, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold,
                         )
-                        Text(ltr("${formatDuration(p.startSec)}–${formatDuration(p.endSec)}") + " · ${p.votes} זיהויי פנים", color = Palette.Ink400, fontSize = 11.sp)
+                        Text(ltr("${formatDuration(p.startSec)}–${formatDuration(p.endSec)}") + " · " + tr("{0} זיהויי פנים", p.votes), color = Palette.Ink400, fontSize = 11.sp)
                         // no model tells a 13-17 year old from an adult reliably: an estimated age in between is flagged
                         // for a look (the automatic choice stays the safe one, covered)
-                        if (!p.child && (p.age ?: 99.0) < 18.0) Text("הגיל לא ודאי, כדאי לבדוק ולבחור ידנית", color = Palette.Amber, fontSize = 11.sp)
+                        if (!p.child && (p.age ?: 99.0) < 18.0) Text(tr("הגיל לא ודאי, כדאי לבדוק ולבחור ידנית"), color = Palette.Amber, fontSize = 11.sp)
                         Spacer(Modifier.height(4.dp))
-                        Row(Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0x33000000)).padding(2.dp)) {
-                            for ((o, label) in listOf(Override.AUTO to "אוטומטי", Override.CENSOR to "צנזר", Override.KEEP to "אל תצנזר")) {
+                        Row(Modifier.clip(RoundedCornerShape(8.dp)).background(Palette.VeilStrong).padding(2.dp)) {
+                            for ((o, label) in listOf(Override.AUTO to tr("אוטומטי"), Override.CENSOR to tr("צנזר"), Override.KEEP to tr("אל תצנזר"))) {
                                 Text(
-                                    label, color = if (ov == o) Color.White else Palette.Ink400, fontSize = 11.5.sp, fontWeight = FontWeight.Medium,
-                                    modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(if (ov == o) Palette.Ink600 else Color.Transparent)
+                                    label, color = if (ov == o) Color.White else Palette.Ink300, fontSize = 11.5.sp, fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(if (ov == o) Palette.Shield500 else Color.Transparent)
                                         .clickable { onOverride(p.id, o) }.padding(horizontal = 10.dp, vertical = 4.dp),
                                 )
                             }
                         }
+                        if (onRange != null && willCensor && p.endSec - p.startSec > 1.0) PersonRange(p, ranges?.get(p.id), onRange)
                     }
                 }
             }
-            val dirty = people.any { (draft[it.id] ?: it.override) != it.override }
+            val dirty = rangesChanged || people.any { (draft[it.id] ?: it.override) != it.override }
             if (dirty) {
                 Spacer(Modifier.height(10.dp))
                 Button(
                     onClick = onApply, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Palette.Amber.copy(alpha = 0.18f), contentColor = Color(0xFFFEF3C7)),
-                ) { Icon(Icons.Filled.Refresh, null); Spacer(Modifier.width(6.dp)); Text("החלת השינויים ועיבוד מחדש") }
+                    colors = ButtonDefaults.buttonColors(containerColor = Palette.Amber.copy(alpha = 0.18f), contentColor = Palette.Amber),
+                ) { Icon(Icons.Filled.Refresh, null); Spacer(Modifier.width(6.dp)); Text(tr("החלת השינויים ועיבוד מחדש")) }
             }
+        }
+    }
+}
+
+/** "Censor only part of the time": a two-handled slider over the time the person is on screen. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PersonRange(p: PersonSummary, r: ClosedFloatingPointRange<Double>?, onRange: (Int, ClosedFloatingPointRange<Double>?) -> Unit) {
+    Column(Modifier.padding(top = 6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(tr("רק בחלק מהזמן"), color = Palette.Ink200, fontSize = 12.sp, modifier = Modifier.weight(1f))
+            androidx.compose.material3.Switch(
+                checked = r != null, onCheckedChange = { onRange(p.id, if (it) p.startSec..p.endSec else null) },
+                modifier = Modifier.height(28.dp),
+                colors = androidx.compose.material3.SwitchDefaults.colors(checkedTrackColor = Palette.Shield500),
+            )
+        }
+        if (r != null) {
+            androidx.compose.material3.RangeSlider(
+                value = r.start.toFloat()..r.endInclusive.toFloat(),
+                onValueChange = { v -> onRange(p.id, v.start.toDouble()..v.endInclusive.toDouble()) },
+                valueRange = p.startSec.toFloat()..p.endSec.toFloat(),
+                colors = androidx.compose.material3.SliderDefaults.colors(activeTrackColor = Palette.Shield400, thumbColor = Palette.Shield300),
+            )
+            Text(tr("מצונזרת רק בין {0} ל-{1}", ltr(formatDuration(r.start)), ltr(formatDuration(r.endInclusive))), color = Palette.Ink400, fontSize = 11.sp)
         }
     }
 }
@@ -467,7 +498,7 @@ fun ErrorBanner(text: String, onDismiss: () -> Unit) {
             .border(1.dp, Palette.Danger.copy(alpha = 0.3f), RoundedCornerShape(12.dp)).padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(text, color = Color(0xFFFECACA), fontSize = 13.sp, modifier = Modifier.weight(1f))
+        Text(text, color = Palette.DangerText, fontSize = 13.sp, modifier = Modifier.weight(1f))
         IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, null, tint = Palette.Ink300) }
     }
 }

@@ -1,5 +1,7 @@
 package com.blueshield.app.engine
 
+import com.blueshield.app.ui.tr
+
 import android.content.Context
 import android.os.Build
 import ai.onnxruntime.OrtEnvironment
@@ -111,8 +113,8 @@ object Accelerators {
     fun saveReport(c: Context, m: ModelStore) {
         if (m.used.isEmpty()) return
         val lines = m.used.entries.joinToString("\n") { (file, engine) ->
-            val times = m.measured[file]?.entries?.joinToString(" · ") { (e, ms) -> "${ENGINE_NAMES[e] ?: e} ${"%.0f".format(ms)}ms" }
-            "${MODEL_NAMES[file] ?: file}: ${ENGINE_NAMES[engine] ?: engine}" + (times?.let { "  ($it)" } ?: "")
+            val times = m.measured[file]?.entries?.joinToString(" · ") { (e, ms) -> "${ENGINE_NAMES[e]?.let { tr(it) } ?: e} ${"%.0f".format(ms)}ms" }
+            "${MODEL_NAMES[file]?.let { tr(it) } ?: file}: ${ENGINE_NAMES[engine]?.let { tr(it) } ?: engine}" + (times?.let { "  ($it)" } ?: "")
         }
         prefs(c).edit().putString("report", lines).apply()
     }

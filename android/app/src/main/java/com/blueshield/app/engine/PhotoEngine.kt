@@ -1,5 +1,7 @@
 package com.blueshield.app.engine
 
+import com.blueshield.app.ui.tr
+
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -36,7 +38,7 @@ object PhotoLoader {
         while (max(bounds.outWidth, bounds.outHeight) / sample > maxSide) sample *= 2
         val bmp = cr.openInputStream(uri)?.use {
             BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample; inPreferredConfig = Bitmap.Config.ARGB_8888 })
-        } ?: error("לא ניתן לקרוא את התמונה.")
+        } ?: error(tr("לא ניתן לקרוא את התמונה."))
         val rotation = runCatching {
             cr.openInputStream(uri)?.use { ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL) }
         }.getOrNull()

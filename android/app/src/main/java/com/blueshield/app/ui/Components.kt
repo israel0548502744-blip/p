@@ -59,8 +59,8 @@ fun Logo() {
         ) { Icon(Icons.Filled.Shield, null, tint = Color.White, modifier = Modifier.size(21.dp)) }
         Spacer(Modifier.width(11.dp))
         Column {
-            Text("BlueShield", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp, letterSpacing = (-0.2).sp)
-            Text("צנזור אוטומטי לסרטונים ולתמונות", color = Palette.Ink300, fontSize = 11.5.sp)
+            Text("BlueShield", color = Palette.Text, fontWeight = FontWeight.Bold, fontSize = 17.sp, letterSpacing = (-0.2).sp)
+            Text(tr("צנזור אוטומטי לסרטונים ולתמונות"), color = Palette.Ink300, fontSize = 11.5.sp)
         }
     }
 }
@@ -73,7 +73,7 @@ fun PrivacyPill(modifier: Modifier = Modifier) {
     ) {
         Icon(Icons.Filled.Lock, null, tint = Palette.Emerald, modifier = Modifier.size(13.dp))
         Spacer(Modifier.width(6.dp))
-        Text("הסרטונים והתמונות מעובדים במכשיר הזה ולא מועלים לשום מקום.", color = Color(0xFFA7F3D0), fontSize = 11.5.sp)
+        Text(tr("הסרטונים והתמונות מעובדים במכשיר הזה ולא מועלים לשום מקום."), color = Palette.EmeraldText, fontSize = 11.5.sp)
     }
 }
 
@@ -93,7 +93,7 @@ fun LabeledSlider(
         Slider(
             value = value.toFloat(), onValueChange = { onChange(it.toInt()) }, enabled = enabled,
             valueRange = range.first.toFloat()..range.last.toFloat(),
-            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Palette.Shield400, inactiveTrackColor = Color(0x26FFFFFF)),
+            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Palette.Shield400, inactiveTrackColor = Palette.VeilStrong),
         )
         Row {
             Text(left, color = Palette.Ink400, fontSize = 11.sp, modifier = Modifier.weight(1f))
@@ -105,7 +105,7 @@ fun LabeledSlider(
 
 @Composable
 fun ToggleRow(icon: ImageVector, label: String, description: String, checked: Boolean, onChange: (Boolean) -> Unit, accent: Color = Palette.Shield500, enabled: Boolean = true) {
-    val bg by animateColorAsState(if (checked) accent.copy(alpha = 0.12f) else Color(0x0AFFFFFF), label = "toggleBg")
+    val bg by animateColorAsState(if (checked) accent.copy(alpha = 0.12f) else Palette.Veil, label = "toggleBg")
     Row(
         Modifier.fillMaxWidth().padding(vertical = 4.dp).clip(RoundedCornerShape(18.dp)).background(bg)
             .border(1.dp, if (checked) accent.copy(alpha = 0.35f) else Palette.Border, RoundedCornerShape(18.dp))
@@ -123,7 +123,7 @@ fun ToggleRow(icon: ImageVector, label: String, description: String, checked: Bo
         }
         Switch(
             checked = checked, onCheckedChange = onChange, enabled = enabled,
-            colors = SwitchDefaults.colors(checkedTrackColor = accent, checkedThumbColor = Color.White, uncheckedTrackColor = Color(0x33FFFFFF), uncheckedThumbColor = Color.White, uncheckedBorderColor = Color.Transparent),
+            colors = SwitchDefaults.colors(checkedTrackColor = accent, checkedThumbColor = Color.White, uncheckedTrackColor = Palette.VeilStrong, uncheckedThumbColor = Color.White, uncheckedBorderColor = Color.Transparent),
         )
     }
 }
@@ -131,13 +131,13 @@ fun ToggleRow(icon: ImageVector, label: String, description: String, checked: Bo
 @Composable
 fun <T> Segmented(options: List<Pair<T, String>>, selected: T, onSelect: (T) -> Unit, enabled: Boolean = true) {
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color(0x1A000000))
-            .border(1.dp, Color(0x14FFFFFF), RoundedCornerShape(16.dp)).padding(4.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Palette.Veil)
+            .border(1.dp, Palette.Border, RoundedCornerShape(16.dp)).padding(4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         for ((value, label) in options) {
             val active = value == selected
-            val fill by animateColorAsState(if (active) Color(0x33FFFFFF) else Color.Transparent, label = "segment")
+            val fill by animateColorAsState(if (active) Palette.Shield500 else Color.Transparent, label = "segment")
             Box(
                 Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(fill)
                     .then(if (active) Modifier.border(1.dp, Brush.verticalGradient(listOf(Glass.RimTop, Glass.RimBottom)), RoundedCornerShape(12.dp)) else Modifier)
@@ -175,11 +175,11 @@ fun formatDuration(sec: Double): String {
 }
 
 fun formatEta(sec: Double?): String = when {
-    sec == null -> "מחשב…"
-    sec < 1 -> "כמעט סיימנו"
-    sec < 60 -> "עוד ${sec.toInt() + 1} שנ׳"
-    sec < 3600 -> "עוד ${(sec / 60).toInt()} דק׳ ${"%02d".format((sec % 60).toInt())} שנ׳"
-    else -> "עוד ${(sec / 3600).toInt()} שע׳ ${((sec % 3600) / 60).toInt()} דק׳"
+    sec == null -> tr("מחשב…")
+    sec < 1 -> tr("כמעט סיימנו")
+    sec < 60 -> tr("עוד {0} שנ׳", sec.toInt() + 1)
+    sec < 3600 -> tr("עוד {0} דק׳ {1} שנ׳", (sec / 60).toInt(), "%02d".format((sec % 60).toInt()))
+    else -> tr("עוד {0} שע׳ {1} דק׳", (sec / 3600).toInt(), ((sec % 3600) / 60).toInt())
 }
 
 fun formatBytes(n: Long): String {

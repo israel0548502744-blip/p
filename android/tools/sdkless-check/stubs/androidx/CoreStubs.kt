@@ -16,8 +16,14 @@ class NotificationCompat {
         fun setOnlyAlertOnce(only: Boolean): Builder = this
         fun setAutoCancel(auto: Boolean): Builder = this
         fun setContentIntent(intent: PendingIntent?): Builder = this
+        fun setSubText(text: CharSequence?): Builder = this
+        fun setLargeIcon(icon: android.graphics.Bitmap?): Builder = this
+        fun setStyle(style: Style?): Builder = this
+        fun addAction(icon: Int, title: CharSequence?, intent: PendingIntent?): Builder = this
         fun build(): Notification = error("stub")
     }
+    abstract class Style
+    class BigPictureStyle : Style() { fun bigPicture(b: android.graphics.Bitmap?): BigPictureStyle = this }
 }
 object ServiceCompat {
     const val STOP_FOREGROUND_REMOVE = 1

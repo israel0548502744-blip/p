@@ -91,6 +91,43 @@ class PipelineE2ETest {
         p.close()
     }
 
+    /**
+     * Trim + "ask whom to censor": a 2 s cut of the clip is analysed only (people found, nothing drawn), then
+     * rendered with the user's choice and one person censored only for part of the time.
+     */
+    @Test fun trimChooseAndRangeEndToEnd() {
+        val full = VideoMeta.probe(ctx, fixture("woman_and_man.mp4"))
+        val cut = VideoMeta.probe(ctx, com.blueshield.app.engine.Trimmer.trim(ctx, full, 1.0, 3.0))
+        assertTrue("cut length ${cut.durationSec}", cut.durationSec in 1.5..3.3)
+        assertEquals(full.width, cut.width)
+        val p = Processor(ctx)
+        val chosen = p.run(cut, CensorSettings(speed = "fast"), analyseOnly = true) { }
+        assertEquals("error: ${chosen.error}", JobState.Stage.CHOOSING, chosen.stage)
+        assertTrue("no people", chosen.people.isNotEmpty())
+        assertTrue("nothing should be rendered yet", chosen.output == null)
+        val first = chosen.people.first()
+        p.ranges = mapOf(first.id to first.startSec..(first.startSec + 0.5))
+        val done = p.rerender(chosen.people.associate { it.id to com.blueshield.core.gender.Override.CENSOR }, chosen) { }
+        assertEquals("error: ${done.error}", JobState.Stage.COMPLETE, done.stage)
+        checkOutput(done.output, cut.width, cut.height, cut.durationSec)
+        p.close()
+    }
+
+    /** The brush: a stroke adds cover (the censor colour) on the full-size photo, an erase stroke brings the original back. */
+    @Test fun brushStrokesOnPhoto() {
+        val p = Processor(ctx)
+        val r = p.processPhoto(fixture("woman_and_man.jpg"), CensorSettings(color = "#FF0000"))
+        val w = r.original.width
+        val h = r.original.height
+        val add = com.blueshield.app.engine.BrushStroke(listOf(0.9f to 0.1f, 0.95f to 0.1f), 0.02f, erase = false)
+        val painted = p.renderPhoto(emptyMap(), listOf(add))
+        assertEquals(0xFFFF0000.toInt(), painted.censored.getPixel((0.92f * w).toInt(), (0.1f * h).toInt()))
+        val erase = com.blueshield.app.engine.BrushStroke(listOf(0.9f to 0.1f, 0.95f to 0.1f), 0.03f, erase = true)
+        val back = p.renderPhoto(emptyMap(), listOf(add, erase))
+        assertEquals(r.original.getPixel((0.92f * w).toInt(), (0.1f * h).toInt()), back.censored.getPixel((0.92f * w).toInt(), (0.1f * h).toInt()))
+        p.close()
+    }
+
     /** Batch photos: several photos censored one after another with one processor, each saved to the gallery. */
     @Test fun photoBatchEndToEnd() {
         val p = Processor(ctx)

@@ -49,7 +49,7 @@ object CrashReporter {
                     ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE, ApplicationExitInfo.REASON_OTHER,
                 )
                 am.getHistoricalProcessExitReasons(context.packageName, 0, 6)
-                    .firstOrNull { it.timestamp > seen && it.reason in bad }
+                    .firstOrNull { it.timestamp > seen && it.reason in bad && !systemCleanup(it) }
                     ?.let { info ->
                         sb.append("System exit info: ${reasonName(info.reason)} (status ${info.status}), importance ${info.importance}\n")
                         sb.append("Description: ${info.description}\n")
@@ -59,6 +59,18 @@ object CrashReporter {
         }
         if (sb.isBlank()) return null
         return "BlueShield ${BuildInfo.version} · ${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})\n\n$sb".trim()
+    }
+
+    /**
+     * The system closing the app while it sat in the background (Samsung's "AL_Kill", memory clean-up of cached
+     * apps): normal on Android, not a crash, and nothing the user should be told about. A kill while the app was on
+     * screen or processing (foreground service) is still reported.
+     */
+    private fun systemCleanup(info: ApplicationExitInfo): Boolean {
+        val background = info.importance >= ActivityManager.RunningAppProcessInfo.IMPORTANCE_CACHED
+        val softKill = info.reason == ApplicationExitInfo.REASON_OTHER || info.reason == ApplicationExitInfo.REASON_LOW_MEMORY ||
+            info.reason == ApplicationExitInfo.REASON_SIGNALED
+        return background && softKill || info.description?.contains("AL_Kill") == true
     }
 
     fun markSeen(context: Context) {
@@ -107,5 +119,7 @@ class BlueShieldApp : android.app.Application() {
         // Qualcomm's AI-chip runtime looks for its libraries here (they are extracted with the app's native libs)
         runCatching { android.system.Os.setenv("ADSP_LIBRARY_PATH", applicationInfo.nativeLibraryDir, true) }
         CrashReporter.install(this)
+        // the chosen language, before any screen or notification text is made
+        com.blueshield.app.ui.I18n.load(this, UiPrefs.load(getSharedPreferences("blueshield", MODE_PRIVATE)).language)
     }
 }

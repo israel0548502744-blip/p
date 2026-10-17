@@ -27,26 +27,26 @@ fun EngineSection() {
     var report by remember { mutableStateOf(Accelerators.report(context)) }
     Panel(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            SectionTitle("מעבד לחישוב")
-            Segmented(Accelerators.MODES.map { it.id to it.label }, mode, { mode = it; Accelerators.setMode(context, it) })
-            Text(Accelerators.MODES.first { it.id == mode }.hint, color = Palette.Ink300, fontSize = 12.sp, lineHeight = 17.sp)
+            SectionTitle(tr("מעבד לחישוב"))
+            Segmented(Accelerators.MODES.map { it.id to tr(it.label) }, mode, { mode = it; Accelerators.setMode(context, it) })
+            Text(tr(Accelerators.MODES.first { it.id == mode }.hint), color = Palette.Ink300, fontSize = 12.sp, lineHeight = 17.sp)
             Text(
-                "בטלפון הזה: ${Accelerators.chip}" + if (Accelerators.snapdragon) " · Snapdragon: כל האפשרויות זמינות" else "",
+                tr("בטלפון הזה: {0}", Accelerators.chip) + if (Accelerators.snapdragon) " · " + tr("Snapdragon: כל האפשרויות זמינות") else "",
                 color = Palette.Ink400, fontSize = 11.5.sp,
             )
             Text(
-                "בפעם הראשונה עם כל אפשרות, האפליקציה בודקת כל מודל על המעבד שנבחר (כמה שניות עד דקה). מודל שלא רץ שם, " +
-                    "או שנותן תוצאות שונות, נשאר על המעבד הרגיל.",
+                tr("בפעם הראשונה עם כל אפשרות, האפליקציה בודקת כל מודל על המעבד שנבחר (כמה שניות עד דקה). מודל שלא רץ שם, ") +
+                    tr("או שנותן תוצאות שונות, נשאר על המעבד הרגיל."),
                 color = Palette.Ink400, fontSize = 11.5.sp, lineHeight = 16.sp,
             )
             report?.let {
-                Text("בעיבוד האחרון:", color = Color.White, fontSize = 12.5.sp)
+                Text(tr("בעיבוד האחרון:"), color = Palette.Text, fontSize = 12.5.sp)
                 Text(it, color = Palette.Ink300, fontSize = 11.5.sp, lineHeight = 16.sp)
             }
             GlassOutlined(
                 onClick = { Accelerators.remeasure(context); report = null },
                 modifier = Modifier.fillMaxWidth().height(46.dp),
-            ) { Text("בדיקה מחדש של כל המעבדים") }
+            ) { Text(tr("בדיקה מחדש של כל המעבדים")) }
         }
     }
 }

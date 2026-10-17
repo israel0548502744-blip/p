@@ -14,4 +14,5 @@ class ActivityResultContracts {
     }
     open class PickMultipleVisualMedia(maxItems: Int = 0) : ActivityResultContract<PickVisualMediaRequest, List<Uri>>()
     class RequestPermission : ActivityResultContract<String, Boolean>()
+    class StartIntentSenderForResult : ActivityResultContract<androidx.activity.result.IntentSenderRequest, androidx.activity.result.ActivityResult>()
 }

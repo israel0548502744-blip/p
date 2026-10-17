@@ -103,6 +103,8 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.8.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
+    // Google Play's in-app rating card (goes through the Play Store app: no internet permission in BlueShield)
+    implementation("com.google.android.play:review:2.0.2")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")

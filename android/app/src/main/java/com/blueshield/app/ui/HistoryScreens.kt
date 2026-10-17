@@ -96,7 +96,7 @@ private fun Thumb(e: History.Entry, modifier: Modifier = Modifier, selected: Boo
         }
         if (e.gallery != null) {
             Icon(
-                Icons.Filled.CheckCircle, "נשמר בגלריה", tint = Palette.Emerald,
+                Icons.Filled.CheckCircle, tr("נשמר בגלריה"), tint = Palette.Emerald,
                 modifier = Modifier.align(Alignment.BottomStart).padding(4.dp).size(14.dp),
             )
         }
@@ -112,8 +112,8 @@ fun RecentStrip(entries: List<History.Entry>, onOpen: (Int) -> Unit, onAll: () -
             Row(Modifier.padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.PhotoLibrary, null, tint = Palette.Shield400, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("האחרונים", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                Text("הכול (${entries.size})", color = Palette.Shield400, fontSize = 13.sp, modifier = Modifier.clickable(onClick = onAll).padding(6.dp))
+                Text(tr("האחרונים"), color = Palette.Text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text(tr("הכול ({0})", entries.size), color = Palette.Shield400, fontSize = 13.sp, modifier = Modifier.clickable(onClick = onAll).padding(6.dp))
             }
             Spacer(Modifier.height(8.dp))
             LazyRow(contentPadding = PaddingValues(horizontal = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -129,20 +129,20 @@ fun RecentStrip(entries: List<History.Entry>, onOpen: (Int) -> Unit, onAll: () -
 @Composable
 fun HistoryScreen(entries: List<History.Entry>, autoSave: Boolean, onAutoSave: (Boolean) -> Unit, onOpen: (Int) -> Unit) {
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-        Text("האחרונים", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
+        Text(tr("האחרונים"), color = Palette.Text, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
         Text(
-            "${History.MAX_PHOTOS} התמונות האחרונות ו-${History.MAX_VIDEOS} הסרטונים האחרונים נשמרים כאן, גם אחרי סגירת האפליקציה. לחיצה פותחת, ואפשר לדפדף ביניהם.",
+            tr("{0} התמונות האחרונות ו-{1} הסרטונים האחרונים נשמרים כאן, גם אחרי סגירת האפליקציה. לחיצה פותחת, ואפשר לדפדף ביניהם.", History.MAX_PHOTOS, History.MAX_VIDEOS),
             color = Palette.Ink300, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(vertical = 6.dp),
         )
         ToggleRow(
-            Icons.Filled.Download, "שמירה אוטומטית בגלריה",
-            "כל תמונה וסרטון שמסיימים לצנזר נשמרים מיד בגלריה של הטלפון (תיקייה BlueShield).",
+            Icons.Filled.Download, tr("שמירה אוטומטית בגלריה"),
+            tr("כל תמונה וסרטון שמסיימים לצנזר נשמרים מיד בגלריה של הטלפון (תיקייה BlueShield)."),
             autoSave, onAutoSave,
         )
         Spacer(Modifier.height(10.dp))
         if (entries.isEmpty()) {
             Panel(Modifier.fillMaxWidth()) {
-                Text("עדיין אין כאן כלום. תמונות וסרטונים שתצנזרו יופיעו כאן.", color = Palette.Ink300, fontSize = 14.sp, modifier = Modifier.padding(20.dp))
+                Text(tr("עדיין אין כאן כלום. תמונות וסרטונים שתצנזרו יופיעו כאן."), color = Palette.Ink300, fontSize = 14.sp, modifier = Modifier.padding(20.dp))
             }
         } else {
             LazyVerticalGrid(
@@ -167,6 +167,7 @@ fun ViewerScreen(
     entries: List<History.Entry>, start: Int, batch: AppViewModel.BatchState?,
     onSave: (History.Entry) -> Unit, onShare: (History.Entry) -> Unit, onEdit: (History.Entry) -> Unit, onDelete: (History.Entry) -> Unit,
     onSaveAll: () -> Unit, onShareAll: () -> Unit, onClose: () -> Unit, onMore: (() -> Unit)?,
+    onWhatsApp: ((History.Entry) -> Unit)? = null, onDeleteOriginal: ((History.Entry) -> Unit)? = null,
 ) {
     if (entries.isEmpty()) return
     val pager = rememberPagerState(initialPage = start.coerceIn(0, entries.lastIndex)) { entries.size }
@@ -184,19 +185,19 @@ fun ViewerScreen(
         Column(Modifier.padding(horizontal = 16.dp)) {
             if (batch != null) {
                 Text(
-                    if (batch.saved == batch.ids.size && batch.ids.isNotEmpty()) "התמונות צונזרו ונשמרו בגלריה." else "התמונות צונזרו.",
-                    color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold,
+                    if (batch.saved == batch.ids.size && batch.ids.isNotEmpty()) tr("התמונות צונזרו ונשמרו בגלריה.") else tr("התמונות צונזרו."),
+                    color = Palette.Text, fontSize = 19.sp, fontWeight = FontWeight.SemiBold,
                 )
                 if (batch.failed.isNotEmpty()) {
-                    Text("לא הצליחו (${batch.failed.size}): " + batch.failed.joinToString(", "), color = Palette.Amber, fontSize = 12.5.sp)
+                    Text(tr("לא הצליחו ({0}): {1}", batch.failed.size, batch.failed.joinToString(", ")), color = Palette.Amber, fontSize = 12.5.sp)
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(current.name, color = Palette.Ink200, fontSize = 13.sp, maxLines = 1, modifier = Modifier.weight(1f))
-                Text(ltr("${pager.currentPage + 1} / ${entries.size}"), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Text(ltr("${pager.currentPage + 1} / ${entries.size}"), color = Palette.Text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             }
             Text(
-                (if (current.video) "סרטון" else "תמונה") + " · " + ltr("${current.width}×${current.height}") + " · " +
+                (if (current.video) tr("סרטון") else tr("תמונה")) + " · " + ltr("${current.width}×${current.height}") + " · " +
                     SimpleDateFormat("d.M.yyyy HH:mm", Locale.getDefault()).format(Date(current.time)),
                 color = Palette.Ink400, fontSize = 11.5.sp,
             )
@@ -228,27 +229,33 @@ fun ViewerScreen(
         }
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             PrimaryButton(
-                if (current.gallery != null) "נשמר בגלריה" else "הורדה לגלריה (גודל מלא)", Icons.Filled.Download,
+                if (current.gallery != null) tr("נשמר בגלריה") else tr("הורדה לגלריה (גודל מלא)"), Icons.Filled.Download,
                 enabled = current.gallery == null, onClick = { onSave(current) },
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                GlassOutlined(onClick = { onShare(current) }, modifier = Modifier.weight(1f)) { Icon(Icons.Filled.Share, null); Spacer(Modifier.width(4.dp)); Text("שיתוף") }
+                GlassOutlined(onClick = { onShare(current) }, modifier = Modifier.weight(1f)) { Icon(Icons.Filled.Share, null); Spacer(Modifier.width(4.dp)); Text(tr("שיתוף")) }
                 if (!current.video && current.source != null) {
-                    GlassOutlined(onClick = { onEdit(current) }, modifier = Modifier.weight(1f)) { Icon(Icons.Filled.Edit, null); Spacer(Modifier.width(4.dp)); Text("עריכה") }
+                    GlassOutlined(onClick = { onEdit(current) }, modifier = Modifier.weight(1f)) { Icon(Icons.Filled.Edit, null); Spacer(Modifier.width(4.dp)); Text(tr("עריכה")) }
                 }
-                GlassOutlined(onClick = { confirmDelete = current }, modifier = Modifier.weight(1f)) { Icon(Icons.Filled.Delete, null); Spacer(Modifier.width(4.dp)); Text("מחיקה") }
+                GlassOutlined(onClick = { confirmDelete = current }, modifier = Modifier.weight(1f)) { Icon(Icons.Filled.Delete, null); Spacer(Modifier.width(4.dp)); Text(tr("מחיקה")) }
+            }
+            if (onWhatsApp != null || (onDeleteOriginal != null && current.source != null)) {
+                MoreActionsRow(ExtraActions(
+                    onWhatsApp = { onWhatsApp?.invoke(current) }, onReport = {}, showReport = false,
+                    onDeleteOriginal = if (onDeleteOriginal != null && current.source != null) { { onDeleteOriginal(current) } } else null,
+                ))
             }
             if (batch != null) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     val unsaved = entries.count { it.gallery == null }
                     if (unsaved > 0) {
-                        GlassOutlined(onClick = onSaveAll, modifier = Modifier.weight(1f)) { Text("שמירת הכול ($unsaved)") }
+                        GlassOutlined(onClick = onSaveAll, modifier = Modifier.weight(1f)) { Text(tr("שמירת הכול ({0})", unsaved)) }
                     }
-                    GlassOutlined(onClick = onShareAll, modifier = Modifier.weight(1f)) { Text("שיתוף הכול") }
+                    GlassOutlined(onClick = onShareAll, modifier = Modifier.weight(1f)) { Text(tr("שיתוף הכול")) }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    onMore?.let { more -> GlassOutlined(onClick = more, modifier = Modifier.weight(1f)) { Icon(Icons.Filled.Image, null); Spacer(Modifier.width(4.dp)); Text("עוד תמונות") } }
-                    GlassOutlined(onClick = onClose, modifier = Modifier.weight(1f)) { Icon(Icons.Filled.CheckCircle, null); Spacer(Modifier.width(4.dp)); Text("סיום") }
+                    onMore?.let { more -> GlassOutlined(onClick = more, modifier = Modifier.weight(1f)) { Icon(Icons.Filled.Image, null); Spacer(Modifier.width(4.dp)); Text(tr("עוד תמונות")) } }
+                    GlassOutlined(onClick = onClose, modifier = Modifier.weight(1f)) { Icon(Icons.Filled.CheckCircle, null); Spacer(Modifier.width(4.dp)); Text(tr("סיום")) }
                 }
             }
         }
@@ -258,15 +265,15 @@ fun ViewerScreen(
         AlertDialog(
             onDismissRequest = { confirmDelete = null },
             containerColor = Palette.Ink850, shape = RoundedCornerShape(26.dp),
-            title = { Text("למחוק מהאחרונים?", color = Color.White) },
+            title = { Text(tr("למחוק מהאחרונים?"), color = Palette.Text) },
             text = {
                 Text(
-                    if (e.gallery != null) "העותק שנשמר בגלריה של הטלפון נשאר שם." else "הקובץ עדיין לא נשמר בגלריה, והוא יימחק לגמרי.",
+                    if (e.gallery != null) tr("העותק שנשמר בגלריה של הטלפון נשאר שם.") else tr("הקובץ עדיין לא נשמר בגלריה, והוא יימחק לגמרי."),
                     color = Palette.Ink200, fontSize = 13.sp,
                 )
             },
-            confirmButton = { TextButton(onClick = { confirmDelete = null; onDelete(e) }) { Text("מחיקה", color = Palette.Danger) } },
-            dismissButton = { TextButton(onClick = { confirmDelete = null }) { Text("ביטול") } },
+            confirmButton = { TextButton(onClick = { confirmDelete = null; onDelete(e) }) { Text(tr("מחיקה"), color = Palette.Danger) } },
+            dismissButton = { TextButton(onClick = { confirmDelete = null }) { Text(tr("ביטול")) } },
         )
     }
 }

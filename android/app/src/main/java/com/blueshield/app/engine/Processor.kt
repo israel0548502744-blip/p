@@ -1,5 +1,7 @@
 package com.blueshield.app.engine
 
+import com.blueshield.app.ui.tr
+
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -39,8 +41,18 @@ data class JobState(
     val censoredFrames: Int = 0,
     val preview: Bitmap? = null,
     val version: Int = 0,
+    /** The finished video's entry in the recent results. */
+    val entryId: Long? = null,
+    /** A queue of videos: which one is running (1-based) of how many, and the finished ones' entries. */
+    val queueIndex: Int = 0,
+    val queueTotal: Int = 0,
+    val queueIds: List<Long> = emptyList(),
+    val queueFailed: List<String> = emptyList(),
+    /** Saving to the gallery failed (the result is still in the recent results). */
+    val saveError: String? = null,
 ) {
-    enum class Stage { IDLE, ANALYZING, DETECTING, APPLYING, ENCODING, COMPLETE, ERROR, CANCELLED }
+    /** CHOOSING: the people are found and the user picks whom to censor before anything is drawn. */
+    enum class Stage { IDLE, ANALYZING, DETECTING, APPLYING, ENCODING, CHOOSING, COMPLETE, ERROR, CANCELLED }
     val running get() = stage in setOf(Stage.ANALYZING, Stage.DETECTING, Stage.APPLYING, Stage.ENCODING)
 }
 
@@ -76,6 +88,9 @@ class Processor(private val context: Context) {
     }
 
     private var modelsMode: String? = null
+
+    /** People censored only within a time span (seconds of the video); set before a re-render. */
+    @Volatile var ranges: Map<Int, ClosedFloatingPointRange<Double>> = emptyMap()
 
     /**
      * Held while a video or a photo is analysed: the two use separate model stores and opening one closes the other,
@@ -122,8 +137,8 @@ class Processor(private val context: Context) {
         analysis = null
     }
 
-    /** Full run: analyse then render. */
-    fun run(meta: VideoMeta, settings: CensorSettings, update: (JobState) -> Unit): JobState {
+    /** Full run: analyse then render. [analyseOnly]: stop once the people are found ([JobState.Stage.CHOOSING]). */
+    fun run(meta: VideoMeta, settings: CensorSettings, analyseOnly: Boolean = false, update: (JobState) -> Unit): JobState {
         cancelFlag.set(false)
         paused = false
         releaseAnalysis()
@@ -207,7 +222,7 @@ class Processor(private val context: Context) {
                 analyzer.store.close()
                 return JobState(stage = JobState.Stage.CANCELLED).also(update)
             }
-            if (analyzer.processed == 0) error("לא ניתן לפענח אף פריים מהסרטון.")
+            if (analyzer.processed == 0) error(tr("לא ניתן לפענח אף פריים מהסרטון."))
             analysis = analyzer.finish()
             // decoders deliver frames in presentation order; if this one didn't, fall back to counting
             analysedPts = pts.toLongArray().takeIf { arr -> (1 until arr.size).all { arr[it] > arr[it - 1] } } ?: LongArray(0)
@@ -217,6 +232,11 @@ class Processor(private val context: Context) {
             Accelerators.saveReport(context, store0)
             modelLock.unlock()
             locked = false
+            if (analyseOnly) {
+                val a = analysis!!
+                return state.copy(stage = JobState.Stage.CHOOSING, percent = 100f, people = a.summaries(this.settings, emptyMap()), preview = null)
+                    .also(update)
+            }
             return renderInternal(emptyMap(), state, ANALYSIS_SHARE, update)
         } catch (e: Renderer.CancelledException) {
             return JobState(stage = JobState.Stage.CANCELLED).also(update)
@@ -235,7 +255,7 @@ class Processor(private val context: Context) {
         return try {
             renderInternal(overrides, previous.copy(stage = JobState.Stage.APPLYING, percent = 0f, error = null), 0f, update)
         } catch (e: Renderer.CancelledException) {
-            previous.copy(stage = JobState.Stage.COMPLETE).also(update)
+            previous.copy(stage = if (previous.output == null) JobState.Stage.CHOOSING else JobState.Stage.COMPLETE).also(update)
         } catch (e: Throwable) {
             Breadcrumbs.mark("re-render failed: ${Errors.describe(e)}")
             JobState(stage = JobState.Stage.ERROR, error = Errors.describe(e)).also(update)
@@ -261,7 +281,9 @@ class Processor(private val context: Context) {
             override fun mask(index: Int, ptsUs: Long): Renderer.Mask? {
                 val i = analysisIndex(ptsIndex, index, ptsUs, total)
                 if (i < 0) return null
-                val raw = a.maskFor(i, decisions, s, lookahead)
+                val t = i / m.fps
+                val d = if (ranges.isEmpty()) decisions else decisions + ranges.mapValues { (_, r) -> t in r }
+                val raw = a.maskFor(i, d, s, lookahead)
                 if (!raw.any()) return null
                 censored++
                 val e = Composer.edgeMasks(raw, m.width, m.height, s.aggressive) ?: return null
@@ -297,7 +319,7 @@ class Processor(private val context: Context) {
                 render(Renderer.Options(options.rgb, options.animated, options.keepAudio, options.quality, softwareEncoder = true, softness = options.softness, clothing = options.clothing))
             } catch (e2: Renderer.IncompleteException) {
                 out.delete()
-                error("קידוד הסרטון נכשל: המקודד איבד פריימים (${e2.written} מתוך ${e2.sent}). נסו שוב, או בחרו איכות ייצוא אחרת.")
+                error(tr("קידוד הסרטון נכשל: המקודד איבד פריימים ({0} מתוך {1}). נסו שוב, או בחרו איכות ייצוא אחרת.", e2.written, e2.sent))
             }
         }
         Breadcrumbs.mark("render: done")
@@ -328,6 +350,10 @@ class Processor(private val context: Context) {
 
     /** A censored photo, plus what the people list needs for overrides. */
     class PhotoResult(val original: Bitmap, val censored: Bitmap, val people: List<PersonSummary>, val file: File, val overrides: Map<Int, Override>)
+
+    /** How censored photos are written: "jpg" or "png", and the JPEG quality. */
+    @Volatile var photoFormat = "jpg"
+    @Volatile var photoQuality = 94
 
     private var photo: Analysis? = null
     private var photoOriginal: Bitmap? = null
@@ -372,8 +398,11 @@ class Processor(private val context: Context) {
         return renderPhoto(emptyMap())
     }
 
-    /** Re-paint the analysed photo with manual per-person overrides (no re-analysis). */
-    fun renderPhoto(overrides: Map<Int, Override>): PhotoResult {
+    /**
+     * Re-paint the analysed photo with manual per-person overrides (no re-analysis) and the strokes painted by hand
+     * ([BrushStroke]: add cover where something was missed, or erase cover that isn't needed).
+     */
+    fun renderPhoto(overrides: Map<Int, Override>, strokes: List<BrushStroke> = emptyList()): PhotoResult {
         val a = photo ?: error("No photo analysed")
         val original = photoOriginal ?: error("No photo")
         val s = photoSettings
@@ -388,8 +417,15 @@ class Processor(private val context: Context) {
             com.blueshield.core.pipeline.StillImage.paint(px, w, h, alpha, CensorSettingsColor.rgb(s), cloth, a.clothWidth, a.clothHeight)
             out.setPixels(px, 0, w, 0, 0, w, h)
         }
-        val file = File(context.filesDir, "outputs/blueshield_photo_${System.currentTimeMillis()}.jpg").also { it.parentFile?.mkdirs() }
-        file.outputStream().use { out.compress(Bitmap.CompressFormat.JPEG, 94, it) }
+        if (strokes.isNotEmpty()) {
+            val orig = IntArray(w * h)
+            original.getPixels(orig, 0, w, 0, 0, w, h)
+            BrushStroke.apply(strokes, px, orig, w, h, CensorSettingsColor.rgb(s))
+            out.setPixels(px, 0, w, 0, 0, w, h)
+        }
+        val png = photoFormat == "png"
+        val file = File(context.filesDir, "outputs/blueshield_photo_${System.currentTimeMillis()}." + if (png) "png" else "jpg").also { it.parentFile?.mkdirs() }
+        file.outputStream().use { out.compress(if (png) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG, if (png) 100 else photoQuality, it) }
         return PhotoResult(original, out, a.summaries(s, overrides), file, overrides)
     }
 
@@ -423,9 +459,9 @@ class Processor(private val context: Context) {
                 stroke.color = if (censor) Color.rgb(40, 120, 255) else Color.GRAY
                 canvas.drawRect(t.box.x1, t.box.y1, t.box.x2, t.box.y2, stroke)
                 val label = when (t.gender.label(settings.threshold01)) {
-                    com.blueshield.core.gender.GenderEstimate.Label.FEMALE -> "אישה ${(t.gender.confidence * 100).toInt()}%"
-                    com.blueshield.core.gender.GenderEstimate.Label.MALE -> "גבר ${(t.gender.confidence * 100).toInt()}%"
-                    else -> "לא בטוח"
+                    com.blueshield.core.gender.GenderEstimate.Label.FEMALE -> tr("אישה") + " ${(t.gender.confidence * 100).toInt()}%"
+                    com.blueshield.core.gender.GenderEstimate.Label.MALE -> tr("גבר") + " ${(t.gender.confidence * 100).toInt()}%"
+                    else -> tr("לא בטוח")
                 }
                 canvas.drawText("#${t.id} $label", t.box.x1 + 6, maxOf(24f, t.box.y1 + 24f), text)
             }

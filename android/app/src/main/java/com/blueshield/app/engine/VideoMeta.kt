@@ -1,5 +1,7 @@
 package com.blueshield.app.engine
 
+import com.blueshield.app.ui.tr
+
 import android.content.Context
 import android.media.MediaExtractor
 import android.media.MediaFormat
@@ -52,7 +54,7 @@ data class VideoMeta(
                     if (mime.startsWith("video/") && video == null) video = f
                     if (mime.startsWith("audio/") && audioMime == null) audioMime = mime
                 }
-                val v = video ?: throw IllegalArgumentException("בקובץ הזה אין ערוץ וידאו.")
+                val v = video ?: throw IllegalArgumentException(tr("בקובץ הזה אין ערוץ וידאו."))
                 val mmr = MediaMetadataRetriever()
                 var rotation = 0
                 var frames = 0

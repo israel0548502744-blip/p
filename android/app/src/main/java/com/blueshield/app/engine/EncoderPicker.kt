@@ -1,5 +1,7 @@
 package com.blueshield.app.engine
 
+import com.blueshield.app.ui.tr
+
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaCodecList
@@ -53,7 +55,7 @@ object EncoderPicker {
                 codec.release()
             }
         }
-        throw IllegalStateException("אין במכשיר מקודד H.264 שתומך בסרטון בגודל ${width}x$height (${errors.joinToString("; ")})")
+        throw IllegalStateException(tr("אין במכשיר מקודד H.264 שתומך בסרטון בגודל {0}", "${width}x$height") + " (${errors.joinToString("; ")})")
     }
 
     private data class Candidate(val name: String, val width: Int, val height: Int, val bitrates: IntRange, val software: Boolean = false)

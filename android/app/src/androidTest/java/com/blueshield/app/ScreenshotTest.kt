@@ -17,6 +17,8 @@ class ScreenshotTest {
     fun homeScreen() {
         val inst = InstrumentationRegistry.getInstrumentation()
         val ctx = inst.targetContext
+        // past the welcome pages and the "what's new" note: the home screen itself
+        UiPrefs(onboarded = true, seenVersion = BuildInfo.version).save(ctx.getSharedPreferences("blueshield", android.content.Context.MODE_PRIVATE))
         val activity = inst.startActivitySync(
             Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
         )

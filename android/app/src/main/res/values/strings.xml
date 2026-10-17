@@ -1,13 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">BlueShield</string>
-    <string name="notif_channel">עיבוד סרטונים</string>
-    <string name="notif_title">מצנזרים את הסרטון שלך</string>
-    <string name="notif_starting">מתחיל…</string>
-    <string name="stage_analyzing">מנתח את הסרטון…</string>
-    <string name="stage_detecting">מאתר אזורים רגישים…</string>
-    <string name="stage_applying">מחיל את הצנזור…</string>
-    <string name="stage_encoding">מקודד את הסרטון הסופי…</string>
-    <string name="notif_done">הצנזור הושלם</string>
-    <string name="notif_done_text">הקישו כדי לצפות בסרטון, לשמור או לשתף אותו.</string>
 </resources>
