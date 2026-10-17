@@ -129,11 +129,13 @@ fun HomeScreen(
     video: VideoMeta?, settings: CensorSettings, loading: Boolean, error: String?,
     onPick: () -> Unit, onClear: () -> Unit, onEditSettings: () -> Unit, onStart: () -> Unit,
     onPickMany: () -> Unit = {},
+    recent: @Composable () -> Unit = {},
 ) {
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             if (video == null) {
                 EmptyState(loading, error, onPick, onPickMany)
+                recent()
             } else {
                 SinglePlayer(video.uri, video.width.toFloat() / video.height, Modifier.fillMaxWidth())
                 VideoInfo(video, onClear)

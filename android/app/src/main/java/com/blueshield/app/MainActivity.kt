@@ -68,6 +68,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -107,7 +108,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { HOME, PROCESSING, RESULT, PHOTO, PHOTO_RESULT, BATCH, SETTINGS, ABOUT }
+private enum class Screen { HOME, PROCESSING, RESULT, PHOTO, PHOTO_RESULT, BATCH, SETTINGS, ABOUT, HISTORY, VIEWER }
 
 @Composable
 private fun App(vm: AppViewModel) {
@@ -124,6 +125,9 @@ private fun App(vm: AppViewModel) {
     val photoResult by vm.photoResult.collectAsStateWithLifecycle()
     val photoBusy by vm.photoBusy.collectAsStateWithLifecycle()
     val batch by vm.batch.collectAsStateWithLifecycle()
+    val history by vm.history.collectAsStateWithLifecycle()
+    val autoSave by vm.autoSave.collectAsStateWithLifecycle()
+    val viewer by vm.viewer.collectAsStateWithLifecycle()
     /** A page opened from the menu, shown over whatever is current. */
     var page by remember { mutableStateOf<Screen?>(null) }
     var menuOpen by remember { mutableStateOf(false) }
@@ -150,7 +154,17 @@ private fun App(vm: AppViewModel) {
         if (Build.VERSION.SDK_INT >= 33) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS) else vm.start()
     }
 
-    val screen = page ?: when {
+    // Android 8–9 need the storage permission to save into the gallery
+    if (Build.VERSION.SDK_INT < 29) {
+        val storage = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+        androidx.compose.runtime.LaunchedEffect(Unit) {
+            if (context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                storage.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            }
+        }
+    }
+
+    val screen = if (viewer != null) Screen.VIEWER else page ?: when {
         job.running -> Screen.PROCESSING
         batch != null -> Screen.BATCH
         showResult && job.stage == JobState.Stage.COMPLETE && job.output != null && video != null -> Screen.RESULT
@@ -158,7 +172,8 @@ private fun App(vm: AppViewModel) {
         photo != null -> Screen.PHOTO
         else -> Screen.HOME
     }
-    BackHandler(enabled = page != null) { page = null }
+    BackHandler(enabled = page != null && viewer == null) { page = null }
+    BackHandler(enabled = viewer != null) { vm.closeViewer() }
     BackHandler(enabled = page == null && screen == Screen.RESULT) { vm.adjust() }
     BackHandler(enabled = page == null && screen == Screen.PHOTO_RESULT) { vm.adjustPhoto() }
     BackHandler(enabled = page == null && screen == Screen.BATCH) { vm.closeBatch() }
@@ -169,8 +184,8 @@ private fun App(vm: AppViewModel) {
                 .padding(start = 12.dp, end = 2.dp, top = 6.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (page != null) {
-                IconButton(onClick = { page = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "חזרה", tint = Color.White) }
+            if (page != null || viewer != null) {
+                IconButton(onClick = { if (viewer != null) vm.closeViewer() else page = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "חזרה", tint = Color.White) }
             }
             Logo()
             Spacer(Modifier.weight(1f))
@@ -190,6 +205,8 @@ private fun App(vm: AppViewModel) {
                         })
                     DropdownMenuItem(text = { Text("כמה תמונות בבת אחת") }, leadingIcon = { Icon(Icons.Filled.Collections, null) },
                         enabled = !job.running && batch == null, onClick = { menuOpen = false; page = null; launchMany() })
+                    DropdownMenuItem(text = { Text("האחרונים") }, leadingIcon = { Icon(Icons.Filled.PhotoLibrary, null) },
+                        onClick = { menuOpen = false; vm.closeViewer(); page = Screen.HISTORY })
                     DropdownMenuItem(text = { Text("אודות") }, leadingIcon = { Icon(Icons.Filled.Info, null) },
                         onClick = { menuOpen = false; page = Screen.ABOUT })
                 }
@@ -203,8 +220,31 @@ private fun App(vm: AppViewModel) {
                     onPick = { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) },
                     onClear = vm::clearVideo, onEditSettings = { page = Screen.SETTINGS }, onStart = startWithPermission,
                     onPickMany = launchMany,
+                    recent = {
+                        com.blueshield.app.ui.RecentStrip(history, onOpen = { i -> vm.openViewer(history.map { it.id }, i) }, onAll = { page = Screen.HISTORY })
+                    },
                 )
-                Screen.BATCH -> batch?.let { b -> BatchScreen(b, onClose = vm::closeBatch, onMore = { vm.closeBatch(); launchMany() }) }
+                Screen.HISTORY -> com.blueshield.app.ui.HistoryScreen(history, autoSave, vm::setAutoSave, onOpen = { i -> vm.openViewer(history.map { it.id }, i) })
+                Screen.VIEWER -> viewer?.let { v ->
+                    val entries = v.ids.mapNotNull { id -> history.firstOrNull { it.id == id } }
+                    com.blueshield.app.ui.ViewerScreen(
+                        entries, v.start, batch = null,
+                        onSave = vm::saveEntry, onShare = { activity.startActivity(vm.shareEntryIntent(it)) },
+                        onEdit = vm::editEntry, onDelete = vm::deleteEntry,
+                        onSaveAll = {}, onShareAll = {}, onClose = vm::closeViewer, onMore = null,
+                    )
+                }
+                Screen.BATCH -> batch?.let { b ->
+                    val entries = b.ids.mapNotNull { id -> history.firstOrNull { it.id == id } }
+                    // when the batch ends: every photo, one after another
+                    if (b.finished && entries.isNotEmpty()) com.blueshield.app.ui.ViewerScreen(
+                        entries, 0, batch = b,
+                        onSave = vm::saveEntry, onShare = { activity.startActivity(vm.shareEntryIntent(it)) },
+                        onEdit = vm::editEntry, onDelete = vm::deleteEntry,
+                        onSaveAll = { vm.saveEntries(b.ids) }, onShareAll = { vm.shareEntriesIntent(b.ids)?.let(activity::startActivity) },
+                        onClose = vm::closeBatch, onMore = { vm.closeBatch(); launchMany() },
+                    ) else BatchScreen(b, onClose = vm::closeBatch, onMore = { vm.closeBatch(); launchMany() })
+                }
                 Screen.PHOTO -> photo?.let { p ->
                     PhotoHome(p.preview, p.name, settings, photoBusy, onEditSettings = { page = Screen.SETTINGS }, onClear = vm::clearPhoto, onStart = vm::startPhoto)
                 }
@@ -216,7 +256,7 @@ private fun App(vm: AppViewModel) {
                         saved = saved, settings = settings,
                     )
                 }
-                Screen.SETTINGS -> SettingsScreen(settings, enabled = !job.running && !photoBusy, onChange = vm::updateSettings)
+                Screen.SETTINGS -> SettingsScreen(settings, enabled = !job.running && !photoBusy, onChange = vm::updateSettings, autoSave = autoSave, onAutoSave = vm::setAutoSave)
                 Screen.ABOUT -> AboutScreen()
                 Screen.PROCESSING -> ProcessingScreen(job, vm::pause, vm::resume, vm::cancel)
                 Screen.RESULT -> ResultScreen(

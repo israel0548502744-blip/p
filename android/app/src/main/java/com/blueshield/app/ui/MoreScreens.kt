@@ -52,12 +52,20 @@ import com.blueshield.core.gender.Override
 
 /** Full settings page (from the menu, or "Edit" on the home screen). */
 @Composable
-fun SettingsScreen(settings: CensorSettings, enabled: Boolean, onChange: (CensorSettings) -> Unit) {
+fun SettingsScreen(
+    settings: CensorSettings, enabled: Boolean, onChange: (CensorSettings) -> Unit,
+    autoSave: Boolean = true, onAutoSave: (Boolean) -> Unit = {},
+) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("הגדרות", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
         Text("ההגדרות נשמרות אוטומטית וחלות על כל סרטון ותמונה.", color = Palette.Ink300, fontSize = 13.sp)
         if (!enabled) Text("עיבוד פועל כרגע — השינויים יחולו בעיבוד הבא.", color = Palette.Amber, fontSize = 12.5.sp)
         SettingsSection(settings, hasAudio = true, enabled = true, onChange = onChange)
+        ToggleRow(
+            Icons.Filled.Download, "שמירה אוטומטית בגלריה",
+            "כל תמונה וסרטון שמסיימים לצנזר נשמרים מיד בגלריה של הטלפון (תיקייה BlueShield).",
+            autoSave, onAutoSave,
+        )
         EngineSection()
     }
 }
@@ -272,11 +280,11 @@ fun BatchScreen(b: com.blueshield.app.AppViewModel.BatchState, onClose: () -> Un
             Spacer(Modifier.width(12.dp))
             Column {
                 Text(
-                    if (b.finished) "התמונות צונזרו ונשמרו בגלריה." else "מצנזר תמונות…",
+                    if (b.finished) (if (b.saved > 0) "התמונות צונזרו ונשמרו בגלריה." else "העיבוד הסתיים.") else "מצנזר תמונות…",
                     color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    if (b.finished) "בתיקייה BlueShield בגלריה." else (b.current ?: ""),
+                    if (b.finished) (if (b.saved > 0) "בתיקייה BlueShield בגלריה." else "") else (b.current ?: ""),
                     color = Palette.Ink300, fontSize = 12.5.sp, maxLines = 1,
                 )
             }

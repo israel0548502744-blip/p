@@ -67,6 +67,40 @@ object Exporter {
         return uri
     }
 
+    /**
+     * Saves [file] to the gallery, or, when [existing] (an earlier save of the same result) is still there, writes
+     * over it: re-rendering with per-person changes then doesn't leave two copies in the gallery.
+     */
+    fun saveOrReplace(context: Context, file: File, displayName: String, video: Boolean, existing: String?): Uri {
+        if (existing != null) {
+            val uri = Uri.parse(existing)
+            val replaced = runCatching {
+                context.contentResolver.openOutputStream(uri, "wt")?.use { out -> file.inputStream().use { it.copyTo(out, 1 shl 20) } } != null
+            }.getOrDefault(false)
+            if (replaced) return uri
+        }
+        return if (video) saveToGallery(context, file, displayName) else savePhotoToGallery(context, file, displayName)
+    }
+
+    /** Opens a finished video in the phone's own player. */
+    fun viewIntent(context: Context, file: File): Intent {
+        val uri = FileProvider.getUriForFile(context, context.packageName + ".files", file)
+        return Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, if (file.extension.equals("jpg", true)) "image/jpeg" else "video/mp4")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+    }
+
+    /** Several results at once (the batch viewer's "share all"). */
+    fun shareManyIntent(context: Context, files: List<File>): Intent {
+        val uris = ArrayList(files.map { FileProvider.getUriForFile(context, context.packageName + ".files", it) })
+        return Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+            type = if (files.all { it.extension.equals("jpg", true) }) "image/jpeg" else "*/*"
+            putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }.let { Intent.createChooser(it, null) }
+    }
+
     fun shareIntent(context: Context, file: File): Intent {
         val uri = FileProvider.getUriForFile(context, context.packageName + ".files", file)
         return Intent(Intent.ACTION_SEND).apply {
