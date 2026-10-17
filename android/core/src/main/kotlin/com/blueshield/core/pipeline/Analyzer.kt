@@ -144,17 +144,23 @@ class Analysis(
     private var cacheFor: Pair<Map<Int, Boolean>, Boolean>? = null
     private val cache = LinkedHashMap<Int, ByteMask>()
 
-    @Synchronized
+    // (only the cache is locked: the rendering builds several frames' masks at once, on several threads)
     private fun composed(i: Int, decisions: Map<Int, Boolean>, settings: CensorSettings): ByteMask {
         val key = decisions to settings.censorUnassigned
-        if (cacheFor != key) {
-            cache.clear()
-            cacheFor = key
+        synchronized(cache) {
+            if (cacheFor != key) {
+                cache.clear()
+                cacheFor = key
+            }
+            cache[i]?.let { return it }
         }
-        cache[i]?.let { return it }
         val m = Composer.compose(store[i], records[i], decisions, settings.censorUnassigned, spec.ownershipBoxPad, spec.unassignedMinArea)
-        cache[i] = m
-        while (cache.size > 12) cache.remove(cache.keys.first())
+        synchronized(cache) {
+            if (cacheFor == key) {
+                cache[i] = m
+                while (cache.size > 32) cache.remove(cache.keys.first())
+            }
+        }
         return m
     }
 

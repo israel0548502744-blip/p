@@ -105,6 +105,8 @@ data class PipelineSpec(
         @SerialName("full_every_det") val fullEveryDet: Int,
         /** "all": every crop of every person on every segmented frame; "alternate": whole-body crop and detail tiles in turns. */
         val refresh: String = "all",
+        /** With "alternate": people with one crop only are refreshed every other frame too. */
+        val single: Boolean = false,
     )
 
     @Serializable

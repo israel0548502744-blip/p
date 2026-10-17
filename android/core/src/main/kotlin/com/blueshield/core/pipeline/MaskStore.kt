@@ -42,12 +42,15 @@ class MaskStore(val file: File, val width: Int, val height: Int) : AutoCloseable
         lengths.add(bytes.size)
     }
 
-    @Synchronized
     operator fun get(i: Int): ByteMask {
-        if (i < 0 || i >= size || lengths[i] == 0) return empty
-        val bytes = ByteArray(lengths[i])
-        raf.seek(offsets[i])
-        raf.readFully(bytes)
+        val bytes = synchronized(this) {
+            if (i < 0 || i >= size || lengths[i] == 0) return empty
+            ByteArray(lengths[i]).also {
+                raf.seek(offsets[i])
+                raf.readFully(it)
+            }
+        }
+        // inflated outside the lock: several threads read the store while a video is rendered
         val inf = Inflater()
         inf.setInput(bytes)
         val out = ByteArray(width * height)

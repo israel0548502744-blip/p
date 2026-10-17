@@ -130,12 +130,20 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
             for (pi in boxes.indices) {
                 val id = ids!![pi]
                 val mine = crops.filter { it.person == pi }
-                if (mine.none { it.tile } || mine.none { !it.tile }) continue // one kind only: always fresh
+                if (mine.isEmpty()) continue
                 val lw = carry.lastWhole[id]
                 val lt = carry.lastTiles[id]
+                val tilesTurn = (frameNo + id) % 2 == 1
+                if (mine.none { it.tile } || mine.none { !it.tile }) {
+                    // one kind only (a small or far person: one crop): refreshed every other frame, people in turns
+                    val tile = mine[0].tile
+                    val last = if (tile) lt else lw
+                    val map = if (tile) carry.tiles else carry.whole
+                    if (roi.single && last != null && map != null && frameNo - last == 1 && tilesTurn) for (c in mine) c.fresh = false
+                    continue
+                }
                 // new (or not seen in the last 2 frames): everything fresh; otherwise the kind whose turn it is
                 if (lw == null || lt == null || frameNo - lw > 2 || frameNo - lt > 2 || carry.whole == null || carry.tiles == null) continue
-                val tilesTurn = (frameNo + id) % 2 == 1
                 for (c in mine) c.fresh = c.tile == tilesTurn
             }
         }
