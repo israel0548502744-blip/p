@@ -224,6 +224,7 @@ class Analyzer(
     private var vetoIds: Set<Int> = emptySet()
     private var sinceVeto = Int.MAX_VALUE / 2
     private val personDetector = PersonDetector(models)
+    private val ahead get() = AHEAD
     private val faceFinder = FullFaceDetector(models)
     private val pm = spec.personMasks
     private val outlineModel = (personMaskSize ?: if (settings.speed in pm.speeds) pm.videoSize else 0)
@@ -294,6 +295,19 @@ class Analyzer(
         val start = processed
         val detIdx = frames.indices.filter { (start + it) % detStride == 0 }
         val nude = timed("faces_full") { detIdx.zip(faceFinder.detect(detIdx.map { frames[it] }, FULL_FACE_MIN)).toMap() }
+        // The person detector depends on the frame alone: it runs for the chunk's detection frames on a thread of
+        // its own while this thread does the per-frame work (much of it single-threaded), and each frame takes its
+        // result when it gets there. Same results, in the same order.
+        val personsAhead = HashMap<Int, java.util.concurrent.Future<List<Detection>>>()
+        // the whole-frame skin pass of the detection frames that are sure to get one (every frame is segmented
+        // afresh when segStride is 1), the same way
+        val fullAhead = HashMap<Int, java.util.concurrent.Future<SkinSegmenter.Result>>()
+        for (k in detIdx) {
+            personsAhead[k] = ahead.submit<List<Detection>> { personDetector.detect(frames[k], personMin) }
+            if (segStride == 1 && (start + k) / detStride % spec.roi.fullEveryDet == 0) {
+                fullAhead[k] = ahead.submit<SkinSegmenter.Result> { segmenter.segment(frames[k], settings.includeFace, tiled = settings.aggressive) }
+            }
+        }
         for ((k, frame) in frames.withIndex()) {
             val idx = start + k
             val cut = sceneCut.isCut(frame)
@@ -311,7 +325,7 @@ class Analyzer(
             regions.predict(flow, width, height)
             faces.predict(flow, width, height)
             nude[k]?.let { dets ->
-                people.update(frame, timed("persons") { personDetector.detect(frame, personMin) }, idx, dets.filter { it.label in FACE_LABELS }.map { it.box })
+                people.update(frame, timed("persons") { personsAhead.getValue(k).get() }, idx, dets.filter { it.label in FACE_LABELS }.map { it.box })
                 regions.update(dets.filter { it.label in labels })
                 // faces to keep uncovered: the whole-frame face detector's, plus each person's own face found by the
                 // face detector in their head area (it finds the small, turned and dim faces the other one misses).
@@ -331,7 +345,7 @@ class Analyzer(
                 val fullDue = lastSkin == null || cut ||
                     (nude.containsKey(k) && (boxes.isEmpty() || idx / detStride % spec.roi.fullEveryDet == 0))
                 var seg = if (fullDue) {
-                    timed("seg_full") { segmenter.segment(frame, settings.includeFace, tiled = settings.aggressive) }
+                    timed("seg_full") { fullAhead.remove(k)?.get() ?: segmenter.segment(frame, settings.includeFace, tiled = settings.aggressive) }
                 } else { // between whole-frame passes: carry the last result along with the motion
                     SkinSegmenter.Result(flow.warp(lastSkin!!), flow.warp(lastPerson!!), flow.warp(faceMap!!), lastClothes?.let { flow.warp(it) } ?: FloatMask(width, height))
                 }
@@ -626,6 +640,9 @@ class Analyzer(
     fun finish(): Analysis = Analysis(settings, spec, fps, store, records.toList(), people.all.filterValues { it.frames > 0 }, people.aliases.toMap(), clothStore)
 
     companion object {
+        /** One thread, shared by every analysis, for work done ahead of the frame loop (the person detector), in order. */
+        private val AHEAD = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "blueshield-ahead").apply { isDaemon = true } }
+
         val FACE_LABELS = setOf("FACE")
         /** Whole-frame face detector score: below it the mirror selfie had a false face on the phone (0.63). */
         const val FULL_FACE_MIN = 0.7f
