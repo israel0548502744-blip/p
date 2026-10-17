@@ -707,6 +707,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         /** The developer's address for "contact us" and mistake reports; empty = the user picks where to send. */
-        const val SUPPORT_EMAIL = ""
+        const val SUPPORT_EMAIL = "israel05466313522@gmail.com"
     }
 }
