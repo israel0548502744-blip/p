@@ -12,7 +12,6 @@ import com.blueshield.core.image.FloatMask
 import com.blueshield.core.image.Guided
 import com.blueshield.core.image.MaskOps
 import com.blueshield.core.image.RgbImage
-import com.blueshield.core.image.WhiteBalance
 import com.blueshield.core.ml.AgeGenderModel
 import com.blueshield.core.ml.ClothesSegmenter
 import com.blueshield.core.ml.ColorSkin
@@ -206,7 +205,6 @@ class Analyzer(
     private val reclassifyEvery = max(detStride, (spec.gender.reclassifySeconds * fps).roundToInt())
 
     private val segmenter = SkinSegmenter(models, spec.thresholds.faceExclusion)
-    private val whiteBalance = System.getProperty("blueshield.wb") == "1"
     /** Skin-model runs so far (profiling). */
     val segmenterRuns get() = segmenter.runs
     private val veto = spec.clothesVeto
@@ -246,8 +244,6 @@ class Analyzer(
         spec.tracking.fuserMemory,
         if (settings.aggressive) spec.tracking.fuserLiftAggressive else spec.tracking.fuserLift,
         skinOn, spec.tracking.hysteresisOffRatio,
-        (System.getProperty("blueshield.blurSpeed")?.toFloatOrNull() ?: Float.MAX_VALUE) * max(width, height),
-        System.getProperty("blueshield.blurRelax")?.toFloatOrNull() ?: 1f,
     )
     val store = MaskStore(storeFile, maskWidth, maskHeight)
     /** Garment colour next to the skin, per frame ([ClothMap]): the "continue the clothes" fill. */
@@ -322,7 +318,6 @@ class Analyzer(
             val fastMotion = sinceSeg >= 1 && flow.meanMotion() > 0.012f * max(width, height)
             val fresh = lastSkin == null || cut || sinceSeg + 1 >= segStride || fastMotion
             if (fresh) {
-                segmenter.gains = if (whiteBalance) WhiteBalance.grayWorld(frame) else null
                 // (with nobody in view, every detection round — the motion-carried mask covers the frames between)
                 val fullDue = lastSkin == null || cut ||
                     (nude.containsKey(k) && (boxes.isEmpty() || idx / detStride % spec.roi.fullEveryDet == 0))

@@ -14,11 +14,7 @@ import kotlin.math.sqrt
  * current score by at most [lift], never keep a pixel on by itself, so skin that moved
  * away is released at once and a moving arm leaves no trail.
  */
-class TemporalFuser(
-    private val memory: Float, private val lift: Float, onThreshold: Float, offRatio: Float,
-    /** Moving faster than this (analysis pixels per frame) the threshold drops to [blurRelax] of itself: a motion-blurred arm. */
-    private val blurSpeed: Float = Float.MAX_VALUE, private val blurRelax: Float = 1f,
-) {
+class TemporalFuser(private val memory: Float, private val lift: Float, onThreshold: Float, offRatio: Float) {
     private val on = onThreshold
     private val off = onThreshold * offRatio
     private var state: FloatMask? = null
@@ -46,11 +42,9 @@ class TemporalFuser(
                 } else max(c, w * 0.97f)
             }
         }
-        val speed = if (blurRelax < 1f) flow.speeds(current.width, current.height) else null
         val out = BooleanArray(n) { i ->
             val s = next.data[i]
-            val k = if (speed != null && speed[i] > blurSpeed) blurRelax else 1f
-            s >= on * k || ((prevBin?.data?.get(i) ?: 0f) > 0.5f && s >= off * k)
+            s >= on || ((prevBin?.data?.get(i) ?: 0f) > 0.5f && s >= off)
         }
         state = next
         binary = out

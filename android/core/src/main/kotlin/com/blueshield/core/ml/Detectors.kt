@@ -24,9 +24,6 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
     var runs = 0
         private set
 
-    /** Per-channel gains (R, G, B) for the light's colour cast of the current frame ([WhiteBalance]), or null. */
-    var gains: FloatArray? = null
-
     /** The model's input: the image letterboxed (edge-replicated) to [side] px, scaled to SIZE, -1..1; [left]/[top] = padding. */
     class Input(val data: FloatArray, val side: Int, val left: Int, val top: Int)
 
@@ -182,7 +179,7 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
 
     /** Runs the model on [img] letterboxed (edge-replicated) to a square, so portrait video keeps its proportions. */
     private fun run(img: RgbImage, includeFace: Boolean, session: ai.onnxruntime.OrtSession = models.session(ModelStore.SEGMENTER)): Raw {
-        val x = input(img, gains)
+        val x = input(img)
         synchronized(this) { runs++ }
         val out = session.runFloat(models.env, x.data, SHAPE).first().second
         val side = x.side
@@ -216,14 +213,13 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
         const val SIZE = 256
         val SHAPE = longArrayOf(1, SIZE.toLong(), SIZE.toLong(), 3)
 
-        /** The model's input for [img] (see [Input]), each channel times [gains] when given (the light's colour cast undone). */
-        fun input(img: RgbImage, gains: FloatArray? = null): Input {
+        /** The model's input for [img] (see [Input]). */
+        fun input(img: RgbImage): Input {
             val side = max(img.width, img.height)
             val left = (side - img.width) / 2
             val top = (side - img.height) / 2
             val sq = if (side == img.width && side == img.height) img else img.crop(-left, -top, side, side)
             val x = sq.resize(SIZE, SIZE)
-            if (gains != null) return Input(FloatArray(SIZE * SIZE * 3) { ((x.data[it].toInt() and 0xFF) * gains[it % 3]).coerceAtMost(255f) / 127.5f - 1f }, side, left, top)
             return Input(FloatArray(SIZE * SIZE * 3) { (x.data[it].toInt() and 0xFF) / 127.5f - 1f }, side, left, top)
         }
 
