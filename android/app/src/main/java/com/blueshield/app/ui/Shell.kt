@@ -68,13 +68,15 @@ fun TopBar(onMenu: () -> Unit, onBack: (() -> Unit)?) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, tr("חזרה"), tint = Palette.Text)
             }
         }
-        Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+        // kept clear of the round menu button on either side (English is wider than Hebrew)
+        Column(Modifier.align(Alignment.Center).padding(horizontal = 52.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("BlueShield", color = Palette.Text, fontSize = 22.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.3).sp)
                 Spacer(Modifier.width(6.dp))
                 Icon(Icons.Filled.Shield, null, tint = Palette.Shield400, modifier = Modifier.size(24.dp))
             }
-            Text(tr("צנזור חכם • פרטי • על המכשיר שלך"), color = Palette.Ink400, fontSize = 12.sp)
+            Text(tr("צנזור חכם • פרטי • על המכשיר שלך"), color = Palette.Ink400, fontSize = 12.sp, maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
         }
         Box(
             Modifier.align(Alignment.CenterEnd).size(46.dp).clip(CircleShape).background(Palette.Ink800)
