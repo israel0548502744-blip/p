@@ -84,6 +84,10 @@ object BuildInfo {
     var version = "?"
         internal set
 
+    /** SHA-256 of the installed APK's signing certificate (read at startup), so users can check that the file is genuine. */
+    var SIGNING_SHA256 = "?"
+        internal set
+
     /** Always the newest tested build: the CI publishes every build that passes the emulator tests as a release. */
     const val LATEST_APK = "https://github.com/israel0548502744-blip/p/releases/latest/download/BlueShield.apk"
 }
@@ -92,6 +96,14 @@ class BlueShieldApp : android.app.Application() {
     override fun onCreate() {
         super.onCreate()
         BuildInfo.version = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() ?: "?"
+        BuildInfo.SIGNING_SHA256 = runCatching {
+            val cert = if (android.os.Build.VERSION.SDK_INT >= 28) {
+                packageManager.getPackageInfo(packageName, android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES).signingInfo!!.apkContentsSigners[0]
+            } else {
+                @Suppress("DEPRECATION") packageManager.getPackageInfo(packageName, android.content.pm.PackageManager.GET_SIGNATURES).signatures!![0]
+            }
+            java.security.MessageDigest.getInstance("SHA-256").digest(cert.toByteArray()).joinToString(":") { "%02X".format(it) }
+        }.getOrNull() ?: "?"
         // Qualcomm's AI-chip runtime looks for its libraries here (they are extracted with the app's native libs)
         runCatching { android.system.Os.setenv("ADSP_LIBRARY_PATH", applicationInfo.nativeLibraryDir, true) }
         CrashReporter.install(this)

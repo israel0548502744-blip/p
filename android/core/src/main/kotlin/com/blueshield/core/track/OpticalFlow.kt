@@ -73,6 +73,25 @@ class OpticalFlow(val width: Int, val height: Int, flowSide: Int = 128) {
         return s / (uu.size / 4f) / scale / 2f
     }
 
+    /**
+     * Motion speed (analysis pixels per frame) at every pixel of a [w] × [h] mask (nearest flow cell), or null
+     * before two frames were seen.
+     */
+    fun speeds(w: Int, h: Int): FloatArray? {
+        val uu = u ?: return null
+        val vv = v ?: return null
+        val xs = IntArray(w) { ((it + 0.5f) * fw / w).toInt().coerceIn(0, fw - 1) }
+        val out = FloatArray(w * h)
+        for (y in 0 until h) {
+            val r = ((y + 0.5f) * fh / h).toInt().coerceIn(0, fh - 1) * fw
+            for (x in 0 until w) {
+                val i = r + xs[x]
+                out[y * w + x] = sqrt(uu[i] * uu[i] + vv[i] * vv[i]) / scale
+            }
+        }
+        return out
+    }
+
     /** Largest |flow| component in flow pixels (cached per update). */
     private var maxFlowCache = -1f
 

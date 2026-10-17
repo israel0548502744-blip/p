@@ -136,6 +136,7 @@ fun AboutScreen() {
                     "כברירת מחדל מצונזרות רק נשים בוגרות. ילדות, גברים וכל מי שסימנתם \"אל תצנזר\" נשארים כמו שהם.",
                     "העור החשוף של כל מי שמצונזרת מכוסה — זרועות, כתפיים, גב חשוף ומחשוף נמוך מסוף הגרון ומטה. הפנים והגרון נשארים גלויים.",
                     "טקסט וכתוביות שעל המסך אף פעם לא מכוסים.",
+                    "אפשר לשלוח לאפליקציה תמונה או סרטון ישר מהגלריה או מווטסאפ: \"שיתוף\" ← BlueShield. כמה תמונות יחד מעובדות ברצף ונשמרות בגלריה.",
                     "לא בטוח? ברירת המחדל הבטוחה היא לצנזר. אפשר לשנות את ההחלטה לכל אדם ולעבד מחדש בלי לנתח שוב.",
                 )) Text("• $line", color = Palette.Ink100, fontSize = 13.sp, lineHeight = 18.sp)
             }
@@ -144,6 +145,12 @@ fun AboutScreen() {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SectionTitle("פרטיות")
                 Text("הכול רץ על הטלפון הזה. סרטונים ותמונות אף פעם לא מועלים.", color = Palette.Ink100, fontSize = 13.sp)
+                Text(
+                    "לאפליקציה אין בכלל הרשאת אינטרנט: אפשר לבדוק בהגדרות הטלפון ← אפליקציות ← BlueShield ← הרשאות.",
+                    color = Palette.Ink100, fontSize = 13.sp, lineHeight = 18.sp,
+                )
+                Text("טביעת האצבע של חתימת האפליקציה (SHA-256), לבדיקה שהקובץ מקורי:", color = Palette.Ink300, fontSize = 12.sp)
+                Text(ltr(BuildInfo.SIGNING_SHA256), color = Palette.Ink300, fontSize = 10.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
             }
         }
         Panel(Modifier.fillMaxWidth()) {

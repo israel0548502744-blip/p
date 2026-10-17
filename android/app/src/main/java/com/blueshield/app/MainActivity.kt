@@ -83,6 +83,27 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         // The UI is Hebrew: right-to-left everywhere, whatever the phone's language is.
         setContent { CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) { BlueShieldTheme { App(vm) } } }
+        if (savedInstanceState == null) openShared(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        openShared(intent)
+    }
+
+    /** Photos / videos shared to the app ("Share → BlueShield"): one opens as if picked, several photos run as a batch. */
+    private fun openShared(intent: Intent?) {
+        val uris: List<android.net.Uri> = when (intent?.action) {
+            Intent.ACTION_SEND -> listOfNotNull(
+                if (android.os.Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(Intent.EXTRA_STREAM, android.net.Uri::class.java)
+                else @Suppress("DEPRECATION") intent.getParcelableExtra(Intent.EXTRA_STREAM),
+            )
+            Intent.ACTION_SEND_MULTIPLE ->
+                (if (android.os.Build.VERSION.SDK_INT >= 33) intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, android.net.Uri::class.java)
+                else @Suppress("DEPRECATION") intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM)).orEmpty()
+            else -> emptyList()
+        }
+        if (uris.isNotEmpty()) vm.onPickedMany(uris)
     }
 }
 

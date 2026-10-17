@@ -430,6 +430,9 @@ internal fun PeoplePanel(
                             color = if (p.gender == "uncertain") Palette.Amber else Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold,
                         )
                         Text(ltr("${formatDuration(p.startSec)}–${formatDuration(p.endSec)}") + " · ${p.votes} זיהויי פנים", color = Palette.Ink400, fontSize = 11.sp)
+                        // no model tells a 13-17 year old from an adult reliably: an estimated age in between is flagged
+                        // for a look (the automatic choice stays the safe one, covered)
+                        if (!p.child && (p.age ?: 99.0) < 18.0) Text("הגיל לא ודאי, כדאי לבדוק ולבחור ידנית", color = Palette.Amber, fontSize = 11.sp)
                         Spacer(Modifier.height(4.dp))
                         Row(Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0x33000000)).padding(2.dp)) {
                             for ((o, label) in listOf(Override.AUTO to "אוטומטי", Override.CENSOR to "צנזר", Override.KEEP to "אל תצנזר")) {

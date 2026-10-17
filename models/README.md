@@ -20,10 +20,10 @@ e.g. on older women), and the age decides "adult woman" vs. "girl".
 ## `onnx/` (Android — copied into the APK's assets by Gradle)
 | File | Converted from | Tool | Check vs. original |
 |---|---|---|---|
-| `selfie_multiclass_256x256.onnx` | MediaPipe Selfie Multiclass (TFLite, Apache-2.0) | `tf2onnx --opset 17` | max abs diff 5e-5 |
+| `selfie_multiclass_256x256.onnx` | MediaPipe Selfie Multiclass (TFLite, Apache-2.0) | `tf2onnx --opset 17`, then weights stored fp16 (`shared/tools/fp16_storage.py`) | max abs diff 5e-5 (fp32); fp16 storage: 0.06, 0.03 % of pixels change class |
 | `yolox_tiny.onnx` | [YOLOX](https://github.com/Megvii-BaseDetection/YOLOX) release 0.1.1rc0 `yolox_tiny.onnx` (Apache-2.0), person class only | weights stored fp16 (`fp16_storage` in `shared/tools/build_mobilesam.py`) | max score diff 9e-6 |
 | `blaze_face_short_range.onnx` | MediaPipe BlazeFace short range (TFLite, Apache-2.0) | `tf2onnx` | max abs diff 3e-4 (logits) |
-| `gender_faceres.onnx` | `gender_faceres_fp16.tflite` above | `tf2onnx` | max abs diff 1e-7 |
+| `gender_faceres.onnx` | `gender_faceres_fp16.tflite` above | `tf2onnx`, then weights stored fp16 (`shared/tools/fp16_storage.py`; the source is fp16, so lossless) | max abs diff 1e-7 |
 | `face_detection_yunet_2023mar.onnx` | [YuNet](https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet) 2023mar (OpenCV Zoo, MIT, Copyright (c) 2020 Shiqi Yu), unchanged; sha256 `8f2383e4…52fa4` | — | — |
 | `faceapi_agegender.onnx` | face-api.js AgeGenderNet (see above) | `tf2onnx --opset 17` (SavedModel) | max abs diff 1e-5 |
 | `mobilesam_encoder_512.onnx`, `mobilesam_encoder_1024.onnx`, `mobilesam_decoder.onnx` | [MobileSAM](https://github.com/ChaoningZhang/MobileSAM) `weights/mobile_sam.pt` (Apache-2.0) | `shared/tools/build_mobilesam.py` (torch.onnx, opset 17, weights stored fp16) | masks identical to PyTorch (IoU 1.000) |
