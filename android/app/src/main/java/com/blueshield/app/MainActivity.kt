@@ -313,6 +313,8 @@ private fun Main(vm: AppViewModel, ui: UiPrefs) {
     }
     ModalNavigationDrawer(
         drawerState = drawer,
+        // opened with the menu button only: a sideways swipe belongs to the photo viewer, sliders and the compare handle
+        gesturesEnabled = drawer.isOpen,
         drawerContent = {
             ModalDrawerSheet(drawerContainerColor = Palette.Ink900, drawerShape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp)) {
                 DrawerContent(drawerSelected) { item ->
