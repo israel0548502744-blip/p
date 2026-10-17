@@ -39,7 +39,7 @@ object EncoderPicker {
                     setInteger(MediaFormat.KEY_FRAME_RATE, fps.roundToInt().coerceAtLeast(1))
                     setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
                 }
-                codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                Codecs.configureFast(codec, format, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
                 val surface = codec.createInputSurface()
                 try {
                     codec.start()

@@ -253,6 +253,9 @@ class Analyzer(
     private var lastSkin: FloatMask? = null
     private var lastPerson: FloatMask? = null
     private var lastClothes: FloatMask? = null
+    private val roiCarry = SkinSegmenter.RoiCarry()
+    /** The garment colours are only needed for the "continue the clothes" fill (fixed for the analysis' lifetime). */
+    private val clothing = settings.fill == "clothing"
     private var faceMap: FloatMask? = null
     private var sinceSeg = Int.MAX_VALUE / 2
     var processed = 0
@@ -324,13 +327,17 @@ class Analyzer(
                 var seg = if (fullDue) {
                     timed("seg_full") { segmenter.segment(frame, settings.includeFace, tiled = settings.aggressive) }
                 } else { // between whole-frame passes: carry the last result along with the motion
-                    SkinSegmenter.Result(flow.warp(lastSkin!!), flow.warp(lastPerson!!), flow.warp(faceMap!!), flow.warp(lastClothes!!))
+                    SkinSegmenter.Result(flow.warp(lastSkin!!), flow.warp(lastPerson!!), flow.warp(faceMap!!), lastClothes?.let { flow.warp(it) } ?: FloatMask(width, height))
                 }
                 // the close-up per-person pass only for people who are (still) to be censored, or not decided yet: a
                 // man already recognised, or a small child, is never covered, so his skin needn't be found in detail
                 val roiTracks = people.visible().filter { roiWanted(it) }
                 val roiBoxes = roiTracks.map { it.box }
-                if (roiBoxes.isNotEmpty()) seg = timed("seg_rois") { segmenter.segmentRois(frame, roiBoxes, seg, settings.includeFace, spec.roi, baseIsFresh = fullDue, orphanSkin = skinOn) }
+                if (cut) roiCarry.reset() else if (spec.roi.refresh == "alternate") roiCarry.warp { flow.warp(it) }
+                if (roiBoxes.isNotEmpty()) seg = timed("seg_rois") {
+                    segmenter.segmentRois(frame, roiBoxes, seg, settings.includeFace, spec.roi, baseIsFresh = fullDue, orphanSkin = skinOn,
+                        ids = roiTracks.map { it.id }, carry = roiCarry, frameNo = idx)
+                }
                 var skin = seg.skin
                 val clothesMaps = clothesModel?.let { m -> timed("clothes") { clothesMaps(m, frame, roiTracks, cut) } }
                 // a photo runs the clothes model once: free its session (and arena) before the 1024 px outline encoder loads
@@ -376,11 +383,11 @@ class Analyzer(
                 lastSkin = skin
                 lastPerson = seg.person
                 faceMap = seg.face
-                lastClothes = seg.clothes
+                lastClothes = if (clothing) seg.clothes else null
                 sinceSeg = 0
             } else {
                 lastSkin = flow.warp(lastSkin!!)
-                lastClothes = lastClothes?.let { flow.warp(it) }
+                if (clothing) lastClothes = lastClothes?.let { flow.warp(it) }
                 carryVeto()
                 sinceSeg++
             }

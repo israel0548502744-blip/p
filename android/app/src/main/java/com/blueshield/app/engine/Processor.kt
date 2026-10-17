@@ -18,6 +18,7 @@ import com.blueshield.core.pipeline.Composer
 import com.blueshield.core.pipeline.PersonSummary
 import com.blueshield.core.pipeline.ProgressMeter
 import java.io.File
+import kotlin.math.min
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -277,18 +278,29 @@ class Processor(private val context: Context) {
         val version = start.version + 1
         val out = File(context.filesDir, "outputs/blueshield_${System.currentTimeMillis()}_v$version.mp4").also { it.parentFile?.mkdirs() }
         val ptsIndex = analysedPts
+        // the mask of analysed frame i, ready to upload (pure: the same i always gives the same mask)
+        fun build(i: Int): Renderer.Mask? {
+            val t = i / m.fps
+            val d = if (ranges.isEmpty()) decisions else decisions + ranges.mapValues { (_, r) -> t in r }
+            val raw = a.maskFor(i, d, s, lookahead)
+            if (!raw.any()) return null
+            val e = Composer.edgeMasks(raw, m.width, m.height, s.aggressive) ?: return null
+            val cloth = if (s.fill == "clothing") a.clothFor(i) else null
+            return Renderer.Mask(e.soft.width, e.soft.height, e.soft.data, e.band.data, cloth, a.clothWidth, a.clothHeight)
+        }
+        // Masks are built a few frames ahead on other cores while the GPU draws and the encoder encodes: on the
+        // render thread alone, composing and feathering each mask took longer than decoding + drawing + encoding.
+        val ahead = java.util.concurrent.Executors.newFixedThreadPool(MASK_THREADS) { r -> Thread(r, "blueshield-masks").apply { isDaemon = true } }
+        val pending = java.util.concurrent.ConcurrentHashMap<Int, java.util.concurrent.Future<Renderer.Mask?>>()
         val source = object : Renderer.FrameSource {
             override fun mask(index: Int, ptsUs: Long): Renderer.Mask? {
                 val i = analysisIndex(ptsIndex, index, ptsUs, total)
                 if (i < 0) return null
-                val t = i / m.fps
-                val d = if (ranges.isEmpty()) decisions else decisions + ranges.mapValues { (_, r) -> t in r }
-                val raw = a.maskFor(i, d, s, lookahead)
-                if (!raw.any()) return null
+                for (j in i + 1..min(total - 1, i + MASK_AHEAD)) pending.computeIfAbsent(j) { ahead.submit<Renderer.Mask?> { build(j) } }
+                pending.keys.removeIf { it < i - 2 }
+                val mask = (pending.remove(i)?.get() ?: build(i)) ?: return null
                 censored++
-                val e = Composer.edgeMasks(raw, m.width, m.height, s.aggressive) ?: return null
-                val cloth = if (s.fill == "clothing") a.clothFor(i) else null
-                return Renderer.Mask(e.soft.width, e.soft.height, e.soft.data, e.band.data, cloth, a.clothWidth, a.clothHeight)
+                return mask
             }
         }
         // the models aren't needed to render: free them (their memory, and any GPU / AI-chip buffers) for the
@@ -309,18 +321,23 @@ class Processor(private val context: Context) {
             onPreview = { bmp -> state = state.copy(preview = bmp); update(state) },
         )
         try {
-            render(options)
-        } catch (e: Renderer.IncompleteException) {
-            // a hardware encoder that loses a frame leaves every later frame undecodable: never hand that out
-            Breadcrumbs.mark("render: ${e.message}; again with a software encoder")
-            out.delete()
-            censored = 0
             try {
-                render(Renderer.Options(options.rgb, options.animated, options.keepAudio, options.quality, softwareEncoder = true, softness = options.softness, clothing = options.clothing))
-            } catch (e2: Renderer.IncompleteException) {
+                render(options)
+            } catch (e: Renderer.IncompleteException) {
+                pending.clear()
+                // a hardware encoder that loses a frame leaves every later frame undecodable: never hand that out
+                Breadcrumbs.mark("render: ${e.message}; again with a software encoder")
                 out.delete()
-                error(tr("קידוד הסרטון נכשל: המקודד איבד פריימים ({0} מתוך {1}). נסו שוב, או בחרו איכות ייצוא אחרת.", e2.written, e2.sent))
+                censored = 0
+                try {
+                    render(Renderer.Options(options.rgb, options.animated, options.keepAudio, options.quality, softwareEncoder = true, softness = options.softness, clothing = options.clothing))
+                } catch (e2: Renderer.IncompleteException) {
+                    out.delete()
+                    error(tr("קידוד הסרטון נכשל: המקודד איבד פריימים ({0} מתוך {1}). נסו שוב, או בחרו איכות ייצוא אחרת.", e2.written, e2.sent))
+                }
             }
+        } finally {
+            ahead.shutdownNow()
         }
         Breadcrumbs.mark("render: done")
         start.output?.takeIf { it != out }?.delete()
@@ -488,6 +505,9 @@ class Processor(private val context: Context) {
 
     companion object {
         const val ANALYSIS_SHARE = 0.7f
+        /** Masks built ahead of the render thread, on this many threads. */
+        private val MASK_THREADS = (Runtime.getRuntime().availableProcessors() - 1).coerceIn(1, 4)
+        private const val MASK_AHEAD = 6
 
         fun toBitmap(img: RgbImage): Bitmap {
             val px = IntArray(img.width * img.height) { i ->

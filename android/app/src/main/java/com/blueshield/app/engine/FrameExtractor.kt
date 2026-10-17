@@ -34,7 +34,7 @@ class FrameExtractor(private val context: Context, private val meta: VideoMeta, 
         val format = ex.getTrackFormat(track)
         format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
         val codec = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME)!!)
-        codec.configure(format, null, null, 0)
+        Codecs.configureFast(codec, format, null, 0)
         codec.start()
         val info = MediaCodec.BufferInfo()
         var inputDone = false
@@ -128,7 +128,14 @@ class FrameExtractor(private val context: Context, private val meta: VideoMeta, 
         val vRow = v.rowStride
         val vPix = v.pixelStride
         val n = sub * sub
-        for (oy in 0 until outH) {
+        // the planes copied out once (a bulk copy is a few ms; reading samples one by one through the ByteBuffer
+        // was most of this function's time), then the rows converted on all cores. Same arithmetic as before.
+        val ya = planeBytes(yb, 0)
+        val ua = planeBytes(ub, 1)
+        val va = planeBytes(vb, 2)
+        val left = crop.left
+        val top = crop.top
+        com.blueshield.core.image.Par.rows(outH, outW * n) { oy ->
             for (ox in 0 until outW) {
                 var sr = 0
                 var sg = 0
@@ -136,13 +143,13 @@ class FrameExtractor(private val context: Context, private val meta: VideoMeta, 
                 for (jy in 0 until sub) for (jx in 0 until sub) {
                     val r = oy * sub + jy
                     val c = ox * sub + jx
-                    val px = (rowX[r] + colX[c]).coerceIn(0, cw - 1) + crop.left
-                    val py = (rowY[r] + colY[c]).coerceIn(0, ch - 1) + crop.top
-                    val yy = (yb.get(py * yRow + px * yPix + hi).toInt() and 0xFF) - 16
+                    val px = (rowX[r] + colX[c]).coerceIn(0, cw - 1) + left
+                    val py = (rowY[r] + colY[c]).coerceIn(0, ch - 1) + top
+                    val yy = (ya[py * yRow + px * yPix + hi].toInt() and 0xFF) - 16
                     val uvx = px / 2
                     val uvy = py / 2
-                    val uu = (ub.get(uvy * uRow + uvx * uPix + hi).toInt() and 0xFF) - 128
-                    val vv = (vb.get(uvy * vRow + uvx * vPix + hi).toInt() and 0xFF) - 128
+                    val uu = (ua[uvy * uRow + uvx * uPix + hi].toInt() and 0xFF) - 128
+                    val vv = (va[uvy * vRow + uvx * vPix + hi].toInt() and 0xFF) - 128
                     val l = 1.164f * yy
                     sr += (l + 1.596f * vv).toInt().coerceIn(0, 255)
                     sg += (l - 0.392f * uu - 0.813f * vv).toInt().coerceIn(0, 255)
@@ -155,5 +162,18 @@ class FrameExtractor(private val context: Context, private val meta: VideoMeta, 
             }
         }
         return out
+    }
+
+    /** Reused per plane: a 1080p frame's planes are ~3 MB, copied every frame. */
+    private val planeCache = arrayOfNulls<ByteArray>(3)
+
+    private fun planeBytes(b: java.nio.ByteBuffer, k: Int): ByteArray {
+        // absolute indices, as ByteBuffer.get(index) used: from 0 to the limit
+        val d = b.duplicate()
+        d.position(0)
+        val n = d.limit()
+        val arr = planeCache[k]?.takeIf { it.size >= n } ?: ByteArray(n).also { planeCache[k] = it }
+        d.get(arr, 0, n)
+        return arr
     }
 }

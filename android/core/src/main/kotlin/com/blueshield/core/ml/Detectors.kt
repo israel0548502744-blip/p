@@ -68,19 +68,47 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
      * so on a whole frame an arm is a handful of pixels. Each person gets a square crop (no distortion) and
      * the result replaces [base] inside their slightly padded box. Only that box is resampled.
      */
+    /**
+     * What the close-up crops found on earlier frames, carried along with the motion: with [PipelineSpec.Roi.refresh]
+     * "alternate" a person's whole-body crop and their detail tiles are refreshed on alternate frames, each kind
+     * carried from the frame before in between (half the model runs; the max of both, as when both are fresh).
+     */
+    class RoiCarry {
+        internal var whole: Result? = null
+        internal var tiles: Result? = null
+        internal val lastWhole = HashMap<Int, Int>()
+        internal val lastTiles = HashMap<Int, Int>()
+
+        fun warp(f: (FloatMask) -> FloatMask) {
+            whole = whole?.let { Result(f(it.skin), f(it.person), f(it.face), f(it.clothes)) }
+            tiles = tiles?.let { Result(f(it.skin), f(it.person), f(it.face), f(it.clothes)) }
+        }
+
+        fun reset() {
+            whole = null
+            tiles = null
+            lastWhole.clear()
+            lastTiles.clear()
+        }
+    }
+
     fun segmentRois(
         img: RgbImage, boxes: List<Box>, base: Result, includeFace: Boolean, roi: PipelineSpec.Roi, baseIsFresh: Boolean = false,
         /** Skin probability from which a blob of the (fresh) base outside every crop gets a close-up of its own (0 = never). */
         orphanSkin: Float = 0f,
+        /** With [carry]: the people's track ids (parallel to [boxes]) and the frame number, for refreshing crops in turns. */
+        ids: List<Int>? = null, carry: RoiCarry? = null, frameNo: Int = 0,
     ): Result {
         val w = img.width
         val h = img.height
         val roiOut = Result(FloatMask(w, h), FloatMask(w, h), FloatMask(w, h), FloatMask(w, h))
         val cover = BooleanArray(w * h)
         // crops first, then the model on all of them (side by side when there are several), then the pasting
-        class Crop(val a: Int, val b: Int, val side: Int, val rx1: Int, val ry1: Int, val rx2: Int, val ry2: Int)
+        class Crop(val a: Int, val b: Int, val side: Int, val rx1: Int, val ry1: Int, val rx2: Int, val ry2: Int, val person: Int, val tile: Boolean) {
+            var fresh = true
+        }
         val crops = ArrayList<Crop>()
-        for (box in boxes) {
+        for ((pi, box) in boxes.withIndex()) {
             val px = roi.pastePad * box.w
             val py = roi.pastePad * box.h
             for ((k, c) in roiCrops(box, roi.sideScale).withIndex()) {
@@ -93,18 +121,67 @@ class SkinSegmenter(private val models: ModelStore, private val faceExclusion: F
                 val rx2 = min(min(w, (box.x2 + px).toInt() + 1), a + side)
                 val ry2 = min(min(h, (box.y2 + py).toInt() + 1), b + side)
                 if (rx2 <= rx1 || ry2 <= ry1) continue
-                crops += Crop(a, b, side, rx1, ry1, rx2, ry2)
+                crops += Crop(a, b, side, rx1, ry1, rx2, ry2, pi, k > 0)
+            }
+        }
+        val turns = carry != null && ids != null && roi.refresh == "alternate"
+        if (turns) {
+            carry!!
+            for (pi in boxes.indices) {
+                val id = ids!![pi]
+                val mine = crops.filter { it.person == pi }
+                if (mine.none { it.tile } || mine.none { !it.tile }) continue // one kind only: always fresh
+                val lw = carry.lastWhole[id]
+                val lt = carry.lastTiles[id]
+                // new (or not seen in the last 2 frames): everything fresh; otherwise the kind whose turn it is
+                if (lw == null || lt == null || frameNo - lw > 2 || frameNo - lt > 2 || carry.whole == null || carry.tiles == null) continue
+                val tilesTurn = (frameNo + id) % 2 == 1
+                for (c in mine) c.fresh = c.tile == tilesTurn
             }
         }
         // (side by side only on the plain CPU engine: an accelerator runs one input at a time anyway)
-        val raws = if (crops.size < 2 || models.engineOf(ModelStore.SEGMENTER) != ModelStore.CPU) crops.map { run(img.crop(it.a, it.b, it.side, it.side), includeFace) }
+        val todo = crops.filter { it.fresh }
+        val raws = if (todo.size < 2 || models.engineOf(ModelStore.SEGMENTER) != ModelStore.CPU) todo.map { run(img.crop(it.a, it.b, it.side, it.side), includeFace) }
         else {
             val single = models.singleThreaded(ModelStore.SEGMENTER)
-            crops.map { c -> pool.submit<Raw> { run(img.crop(c.a, c.b, c.side, c.side), includeFace, single) } }.map { it.get() }
+            todo.map { c -> pool.submit<Raw> { run(img.crop(c.a, c.b, c.side, c.side), includeFace, single) } }.map { it.get() }
         }
-        for ((c, raw) in crops.zip(raws)) {
-            raw.into(roiOut, c.a, c.b, c.rx1, c.ry1, c.rx2, c.ry2, max = true)
-            for (y in c.ry1 until c.ry2) java.util.Arrays.fill(cover, y * w + c.rx1, y * w + c.rx2, true)
+        if (!turns) {
+            for ((c, raw) in todo.zip(raws)) {
+                raw.into(roiOut, c.a, c.b, c.rx1, c.ry1, c.rx2, c.ry2, max = true)
+                for (y in c.ry1 until c.ry2) java.util.Arrays.fill(cover, y * w + c.rx1, y * w + c.rx2, true)
+            }
+        } else {
+            carry!!
+            // each kind on its own map: fresh crops pasted, the others' areas taken from the carried map
+            val whole = Result(FloatMask(w, h), FloatMask(w, h), FloatMask(w, h), FloatMask(w, h))
+            val tiles = Result(FloatMask(w, h), FloatMask(w, h), FloatMask(w, h), FloatMask(w, h))
+            for ((c, raw) in todo.zip(raws)) raw.into(if (c.tile) tiles else whole, c.a, c.b, c.rx1, c.ry1, c.rx2, c.ry2, max = true)
+            for (c in crops) {
+                for (y in c.ry1 until c.ry2) java.util.Arrays.fill(cover, y * w + c.rx1, y * w + c.rx2, true)
+                if (c.fresh) continue
+                val from = (if (c.tile) carry.tiles else carry.whole)!!
+                val to = if (c.tile) tiles else whole
+                for (y in c.ry1 until c.ry2) for (x in c.rx1 until c.rx2) {
+                    val i = y * w + x
+                    to.skin.data[i] = max(to.skin.data[i], from.skin.data[i])
+                    to.person.data[i] = max(to.person.data[i], from.person.data[i])
+                    to.face.data[i] = max(to.face.data[i], from.face.data[i])
+                    to.clothes.data[i] = max(to.clothes.data[i], from.clothes.data[i])
+                }
+            }
+            for (i in 0 until w * h) if (cover[i]) {
+                roiOut.skin.data[i] = max(whole.skin.data[i], tiles.skin.data[i])
+                roiOut.person.data[i] = max(whole.person.data[i], tiles.person.data[i])
+                roiOut.face.data[i] = max(whole.face.data[i], tiles.face.data[i])
+                roiOut.clothes.data[i] = max(whole.clothes.data[i], tiles.clothes.data[i])
+            }
+            carry.whole = whole
+            carry.tiles = tiles
+            for (c in crops) if (c.fresh) {
+                val id = ids!![c.person]
+                if (c.tile) carry.lastTiles[id] = frameNo else carry.lastWhole[id] = frameNo
+            }
         }
         if (crops.isEmpty()) return base
         if (orphanSkin > 0f && baseIsFresh) closeUpOrphans(img, base, roiOut, cover, orphanSkin, includeFace, roi)

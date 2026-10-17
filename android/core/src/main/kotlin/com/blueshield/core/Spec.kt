@@ -103,6 +103,8 @@ data class PipelineSpec(
         @SerialName("max_frame_ratio") val maxFrameRatio: Float,
         /** Whole-frame segmentation on every Nth detection round (people get their own crop every frame). */
         @SerialName("full_every_det") val fullEveryDet: Int,
+        /** "all": every crop of every person on every segmented frame; "alternate": whole-body crop and detail tiles in turns. */
+        val refresh: String = "all",
     )
 
     @Serializable

@@ -76,12 +76,15 @@ class Renderer(private val context: Context, private val meta: VideoMeta) {
         val frameLock = ReentrantLock()
         val frameCond = frameLock.newCondition()
         var frameReady = false
-        st.setOnFrameAvailableListener {
+        // frame-ready callbacks on a thread of their own: without a Handler they went through the main thread,
+        // which is busy redrawing the progress screen
+        val frameThread = android.os.HandlerThread("blueshield-frames").also { it.start() }
+        st.setOnFrameAvailableListener({
             frameLock.withLock {
                 frameReady = true
                 frameCond.signalAll()
             }
-        }
+        }, android.os.Handler(frameThread.looper))
         val ex = MediaExtractor()
         ex.setDataSource(context, meta.uri, null)
         val vTrack = (0 until ex.trackCount).first { ex.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true }
@@ -91,7 +94,7 @@ class Renderer(private val context: Context, private val meta: VideoMeta) {
         // Leaving rotation-degrees in the format would make the decoder rotate the frames as well.
         if (vFormat.containsKey(MediaFormat.KEY_ROTATION)) vFormat.setInteger(MediaFormat.KEY_ROTATION, 0)
         val decoder = MediaCodec.createDecoderByType(vFormat.getString(MediaFormat.KEY_MIME)!!)
-        decoder.configure(vFormat, decoderSurface, null, 0)
+        Codecs.configureFast(decoder, vFormat, decoderSurface, 0)
         decoder.start()
 
         var videoTrackOut = -1
@@ -227,6 +230,7 @@ class Renderer(private val context: Context, private val meta: VideoMeta) {
             encoder.release()
             shader.release()
             st.release()
+            frameThread.quitSafely()
             decoderSurface.release()
             egl.close()
             inputSurface.release()
