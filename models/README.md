@@ -24,7 +24,7 @@ e.g. on older women), and the age decides "adult woman" vs. "girl".
 | `yolox_tiny.onnx` | [YOLOX](https://github.com/Megvii-BaseDetection/YOLOX) release 0.1.1rc0 `yolox_tiny.onnx` (Apache-2.0), person class only | weights stored fp16 (`fp16_storage` in `shared/tools/build_mobilesam.py`) | max score diff 9e-6 |
 | `blaze_face_short_range.onnx` | MediaPipe BlazeFace short range (TFLite, Apache-2.0) | `tf2onnx` | max abs diff 3e-4 (logits) |
 | `gender_faceres.onnx` | `gender_faceres_fp16.tflite` above | `tf2onnx` | max abs diff 1e-7 |
-| `nudenet_320n.onnx` | NudeNet v3 320n (MIT), unchanged | — | — |
+| `face_detection_yunet_2023mar.onnx` | [YuNet](https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet) 2023mar (OpenCV Zoo, MIT, Copyright (c) 2020 Shiqi Yu), unchanged; sha256 `8f2383e4…52fa4` | — | — |
 | `faceapi_agegender.onnx` | face-api.js AgeGenderNet (see above) | `tf2onnx --opset 17` (SavedModel) | max abs diff 1e-5 |
 | `mobilesam_encoder_512.onnx`, `mobilesam_encoder_1024.onnx`, `mobilesam_decoder.onnx` | [MobileSAM](https://github.com/ChaoningZhang/MobileSAM) `weights/mobile_sam.pt` (Apache-2.0) | `shared/tools/build_mobilesam.py` (torch.onnx, opset 17, weights stored fp16) | masks identical to PyTorch (IoU 1.000) |
 | `skin_clothes_hair_mnv3s_512.onnx` | [Skin-Clothes-Hair-Segmentation-using-SMP](https://github.com/Kazuhito00/Skin-Clothes-Hair-Segmentation-using-SMP) by Kazuhito Takahashi (MIT), `DeepLabV3Plus(timm-mobilenetv3_small_100)_1366_2.16M_0.8297/best_model_simplifier.onnx` | `shared/tools/build_skin_clothes_hair.py` (graph unchanged, weights stored fp16) | max abs diff 0.03 on real photos; < 0.02 % of pixels change side of 0.5 |

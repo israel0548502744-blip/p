@@ -187,7 +187,8 @@ class ModelStore(
         const val PERSONS = "yolox_tiny.onnx"
         const val FACES = "blaze_face_short_range.onnx"
         const val GENDER = "gender_faceres.onnx"
-        const val NUDENET = "nudenet_320n.onnx"
+        /** Every face in a frame ([FullFaceDetector], YuNet). */
+        const val FULL_FACES = "face_detection_yunet_2023mar.onnx"
         const val AGE_GENDER = "faceapi_agegender.onnx"
         const val SAM_ENCODER_512 = "mobilesam_encoder_512.onnx"
         const val SAM_ENCODER_1024 = "mobilesam_encoder_1024.onnx"
@@ -198,7 +199,7 @@ class ModelStore(
          * The models that can run on an engine. The app's engine memory and crash guard are keyed on their sizes, so a model
          * that never leaves the CPU ([CLOTHES]) stays out: adding it would wipe the list of drivers known to crash.
          */
-        val ALL = listOf(SEGMENTER, PERSONS, FACES, GENDER, NUDENET, AGE_GENDER, SAM_ENCODER_512, SAM_ENCODER_1024, SAM_DECODER)
+        val ALL = listOf(SEGMENTER, PERSONS, FACES, GENDER, FULL_FACES, AGE_GENDER, SAM_ENCODER_512, SAM_ENCODER_1024, SAM_DECODER)
     }
 }
 

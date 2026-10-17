@@ -155,9 +155,25 @@ fun AboutScreen() {
                     "MobileSAM (Apache-2.0)",
                     "מודל מגדר " + ltr("FaceRes, @vladmandic/human-models (MIT)"),
                     "face-api.js AgeGenderNet, @vladmandic/face-api (MIT)",
-                    "NudeNet v3 (MIT)",
+                    "YuNet, OpenCV Zoo (MIT)",
                     "Skin-Clothes-Hair Segmentation, Kazuhito Takahashi (MIT)",
                 )) Text(m, color = Palette.Ink300, fontSize = 12.sp)
+                // the full licence texts and copyright notices (Apache-2.0 and MIT ask for them to ship with the app)
+                val context = androidx.compose.ui.platform.LocalContext.current
+                var notices by remember { mutableStateOf<String?>(null) }
+                Text(
+                    if (notices == null) "הצגת הרישיונות וזכויות היוצרים המלאים" else "הסתרת הרישיונות",
+                    color = Palette.Ink100, fontSize = 13.sp,
+                    modifier = Modifier.clickable {
+                        notices = if (notices != null) null
+                        else runCatching { context.assets.open("third_party_notices.txt").bufferedReader().use { it.readText() } }.getOrElse { "—" }
+                    }.padding(vertical = 6.dp),
+                )
+                notices?.let {
+                    androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr) {
+                        Text(it, color = Palette.Ink300, fontSize = 10.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                    }
+                }
             }
         }
     }

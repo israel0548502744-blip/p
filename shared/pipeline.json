@@ -16,7 +16,6 @@
   },
   "thresholds": {
     "skin_on": { "strict": 0.72, "sensitive": 0.30, "aggressive_bonus": 0.08 },
-    "nudenet_min_score": { "strict": 0.50, "sensitive": 0.20 },
     "person_min_score": { "strict": 0.45, "sensitive": 0.25 },
     "face_min_score": 0.5,
     "min_face_px": 14,

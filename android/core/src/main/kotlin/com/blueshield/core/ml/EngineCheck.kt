@@ -55,7 +55,7 @@ class EngineCheck private constructor(
 
     companion object {
         /** Raised whenever the check changes: every remembered engine choice is then measured again. */
-        const val VERSION = 2
+        const val VERSION = 3
 
         /**
          * The probe photo, a classpath resource of the core: one frame of Intel's sample video
@@ -86,7 +86,7 @@ class EngineCheck private constructor(
         /** Models this check can verify; everything else (the outline decoder: several inputs) stays on the plain engine. */
         val CHECKED = setOf(
             ModelStore.SEGMENTER, ModelStore.PERSONS, ModelStore.FACES, ModelStore.GENDER, ModelStore.AGE_GENDER,
-            ModelStore.NUDENET, ModelStore.SAM_ENCODER_512, ModelStore.SAM_ENCODER_1024,
+            ModelStore.FULL_FACES, ModelStore.SAM_ENCODER_512, ModelStore.SAM_ENCODER_1024,
         )
 
         // The probe's people and faces (probe pixels), measured once on the plain engine. Fixed, so that checking
@@ -158,13 +158,15 @@ class EngineCheck private constructor(
                         Verdict(dp <= P_DIFF && dAge <= AGE_DIFF, "P(male) Δ %.4f, age Δ %.2f".format(dp, dAge))
                     }
                 }
-                ModelStore.NUDENET -> {
-                    // two frames: the pipeline runs this model on batches of key frames
-                    val frames = listOf(probe, mirrored(probe))
-                    val (x, shape) = NudeNet.input(frames)
-                    EngineCheck(listOf(x to shape)) { a, b ->
-                        fun dets(o: List<Outputs>) = NudeNet.decode(o[0][0], frames, 0.2f).map { f -> f.map { Det(it.label, it.score, it.box) } }
-                        boxes(dets(a), dets(b), strong = 0.4f)
+                ModelStore.FULL_FACES -> {
+                    // both passes the pipeline runs: the frame fitted to the input, and the smaller copy for close-ups
+                    val fit = min(1f, FullFaceDetector.INPUT.toFloat() / max(probe.width, probe.height))
+                    val passes = listOf(fit, fit * FullFaceDetector.SMALL).map { FullFaceDetector.input(probe, it) }
+                    EngineCheck(passes.map { it.first to FullFaceDetector.SHAPE }) { a, b ->
+                        fun dets(o: List<Outputs>) = passes.indices.map { k ->
+                            FullFaceDetector.decode(o[k], passes[k].second, probe.width, probe.height, 0.3f).map { Det(it.label, it.score, it.box) }
+                        }
+                        boxes(dets(a), dets(b), strong = 0.6f)
                     }
                 }
                 ModelStore.SAM_ENCODER_512, ModelStore.SAM_ENCODER_1024 -> {
@@ -189,14 +191,6 @@ class EngineCheck private constructor(
                 }
                 else -> null
             }
-        }
-
-        private fun mirrored(img: RgbImage): RgbImage {
-            val out = RgbImage(img.width, img.height)
-            for (y in 0 until img.height) for (x in 0 until img.width) {
-                System.arraycopy(img.data, (y * img.width + x) * 3, out.data, (y * img.width + img.width - 1 - x) * 3, 3)
-            }
-            return out
         }
 
         /**

@@ -18,10 +18,9 @@ Models
    (float16) with ``shared/tools/convert_tfjs_to_tflite.py``. The converted file is
    committed at ``models/gender_faceres_fp16.tflite`` and copied into place.
 
-5. NudeNet v3 detector "320n" (MIT, notAI-tech) — a YOLOv8 ONNX model that
-   localises exposed sensitive body regions. It ships inside the ``nudenet``
-   pip package (installed from requirements.txt); a copy is placed in
-   ``backend/models`` on first run.
+5. YuNet face detector (OpenCV Zoo, MIT, 2023mar) — every face in a frame, small and large.
+   Committed at ``models/onnx/face_detection_yunet_2023mar.onnx``. (It replaced the NudeNet v3
+   detector, whose code is AGPL-3.0 and whose weights were trained with Ultralytics YOLOv8.)
 """
 
 from __future__ import annotations
@@ -55,8 +54,7 @@ GENDER_FILE = MODELS_DIR / "gender_faceres_fp16.tflite"
 GENDER_BUNDLED = ROOT_DIR.parent / "models" / "gender_faceres_fp16.tflite"
 AGE_GENDER_FILE = MODELS_DIR / "faceapi_agegender.tflite"
 AGE_GENDER_BUNDLED = ROOT_DIR.parent / "models" / "faceapi_agegender.tflite"
-NUDENET_FILE = MODELS_DIR / "nudenet_320n.onnx"
-NUDENET_URL = "https://github.com/notAI-tech/NudeNet/releases/download/v3.4-weights/320n.onnx"
+FULL_FACE_FILE = ROOT_DIR.parent / "models" / "onnx" / "face_detection_yunet_2023mar.onnx"  # bundled in the repository
 
 _lock = threading.Lock()
 
@@ -111,21 +109,10 @@ def ensure_age_gender_model() -> Path:
     return AGE_GENDER_FILE
 
 
-def ensure_nudenet() -> Path:
-    with _lock:
-        if NUDENET_FILE.exists():
-            return NUDENET_FILE
-        try:
-            import nudenet  # type: ignore
-
-            bundled = Path(nudenet.__file__).parent / "320n.onnx"
-            if bundled.exists():
-                shutil.copyfile(bundled, NUDENET_FILE)
-                return NUDENET_FILE
-        except Exception:  # pragma: no cover - fall back to download
-            pass
-        _download(NUDENET_URL, NUDENET_FILE)
-    return NUDENET_FILE
+def ensure_full_face_detector() -> Path:
+    if not FULL_FACE_FILE.exists():
+        raise RuntimeError(f"Face detector missing: expected {FULL_FACE_FILE} (part of the repository)")
+    return FULL_FACE_FILE
 
 
 def models_status() -> dict:
@@ -140,8 +127,8 @@ def models_status() -> dict:
                   "source": FACE_URL, "license": "Apache-2.0"},
         "gender": {"name": "FaceRes gender classifier (TFLite fp16)", "ready": GENDER_FILE.exists() or GENDER_BUNDLED.exists(),
                    "source": "repository: models/gender_faceres_fp16.tflite", "license": "see models/README.md"},
-        "nudenet": {"name": "NudeNet v3 (320n)", "ready": NUDENET_FILE.exists(),
-                    "source": "pip package 'nudenet' (fallback: " + NUDENET_URL + ")", "license": "MIT"},
+        "full_faces": {"name": "YuNet face detector (OpenCV Zoo)", "ready": FULL_FACE_FILE.exists(),
+                       "source": "repository: models/onnx/face_detection_yunet_2023mar.onnx", "license": "MIT"},
     }
 
 
@@ -150,7 +137,7 @@ def ensure_all() -> None:
     ensure_person_detector()
     ensure_face_detector()
     ensure_gender_model()
-    ensure_nudenet()
+    ensure_full_face_detector()
 
 
 def onnx_providers() -> list[str]:

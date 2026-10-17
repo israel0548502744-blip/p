@@ -3,7 +3,7 @@
 
     python shared/tools/fetch_models.py --dest android/app/src/main/assets/models --target android
 
-Sources: Google's public MediaPipe model bucket, the NudeNet wheel on PyPI, and
+Sources: Google's public MediaPipe model bucket, PyPI wheels (when listed), and
 files committed to this repository (models/). Only the standard library is used.
 """
 

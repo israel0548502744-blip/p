@@ -18,7 +18,7 @@ import com.blueshield.core.ml.ColorSkin
 import com.blueshield.core.ml.FaceDetector
 import com.blueshield.core.ml.GenderModel
 import com.blueshield.core.ml.ModelStore
-import com.blueshield.core.ml.NudeNet
+import com.blueshield.core.ml.FullFaceDetector
 import com.blueshield.core.ml.PersonDetector
 import com.blueshield.core.ml.PersonMasks
 import com.blueshield.core.ml.SkinSegmenter
@@ -177,7 +177,7 @@ class Analysis(
 
 /**
  * Stateful, streaming analysis (stages 1–3 + skin + sensitive regions). Feed frames in
- * order via [process] (in chunks so NudeNet keyframes can be batched), then [finish].
+ * order via [process] (in chunks, detection keyframes first), then [finish].
  * Mirrors desktop `pipeline.analyze`.
  */
 class Analyzer(
@@ -200,7 +200,6 @@ class Analyzer(
     val detStride = max(1, preset.detStride - if (settings.aggressive) 1 else 0)
     private val s01 = settings.sensitivity01
     private val skinOn = spec.thresholds.skinOn.let { it.strict + (it.sensitive - it.strict) * s01 - if (settings.aggressive) it.aggressiveBonus else 0f }
-    private val nudeMin = spec.thresholds.nudenetMinScore.at(s01)
     private val personMin = spec.thresholds.personMinScore.at(s01)
     private val labels = spec.sensitiveLabels.toSet() + if (settings.aggressive) spec.aggressiveExtraLabels else emptyList()
     private val reclassifyEvery = max(detStride, (spec.gender.reclassifySeconds * fps).roundToInt())
@@ -219,7 +218,7 @@ class Analyzer(
     private var vetoIds: Set<Int> = emptySet()
     private var sinceVeto = Int.MAX_VALUE / 2
     private val personDetector = PersonDetector(models)
-    private val nudeNet = NudeNet(models)
+    private val faceFinder = FullFaceDetector(models)
     private val pm = spec.personMasks
     private val outlineModel = (personMaskSize ?: if (settings.speed in pm.speeds) pm.videoSize else 0)
         .takeIf { it > 0 }?.let { PersonMasks(models, it) }
@@ -234,7 +233,7 @@ class Analyzer(
     private val flow = OpticalFlow(width, height)
     private val sceneCut = SceneCutDetector(spec.tracking.sceneCutThreshold)
     private val regions = RegionTracker(if (settings.aggressive) 5 else spec.tracking.regionMaxMisses)
-    /** NudeNet face boxes (any gender label), only used to keep faces *un*censored. */
+    /** Face boxes of the whole-frame face detector, only used to keep faces *un*censored. */
     private val faces = RegionTracker(maxMisses = 2, smooth = 0.6f)
     private val people = PersonTracker(
         maxMisses = max(3, (spec.tracking.personLostSeconds * fps / detStride).roundToInt()),
@@ -285,7 +284,7 @@ class Analyzer(
     fun process(frames: List<RgbImage>, onFrame: (Int) -> Unit = {}) {
         val start = processed
         val detIdx = frames.indices.filter { (start + it) % detStride == 0 }
-        val nude = timed("nudenet") { detIdx.zip(nudeNet.detect(detIdx.map { frames[it] }, nudeMin)).toMap() }
+        val nude = timed("faces_full") { detIdx.zip(faceFinder.detect(detIdx.map { frames[it] }, FULL_FACE_MIN)).toMap() }
         for ((k, frame) in frames.withIndex()) {
             val idx = start + k
             val cut = sceneCut.isCut(frame)
@@ -305,7 +304,7 @@ class Analyzer(
             nude[k]?.let { dets ->
                 people.update(frame, timed("persons") { personDetector.detect(frame, personMin) }, idx, dets.filter { it.label in FACE_LABELS }.map { it.box })
                 regions.update(dets.filter { it.label in labels })
-                // faces to keep uncovered: the sensitive-region detector's, plus each person's own face found by the
+                // faces to keep uncovered: the whole-frame face detector's, plus each person's own face found by the
                 // face detector in their head area (it finds the small, turned and dim faces the other one misses).
                 // The own faces are checked against the facial-skin map: on the first frame of a shot — and on a
                 // photo — there is none yet (or only the previous shot's), so they wait for this frame's below.
@@ -614,7 +613,9 @@ class Analyzer(
     fun finish(): Analysis = Analysis(settings, spec, fps, store, records.toList(), people.all.filterValues { it.frames > 0 }, people.aliases.toMap(), clothStore)
 
     companion object {
-        val FACE_LABELS = setOf("FACE_FEMALE", "FACE_MALE")
+        val FACE_LABELS = setOf("FACE")
+        /** Whole-frame face detector score: below it the mirror selfie had a false face on the phone (0.63). */
+        const val FULL_FACE_MIN = 0.7f
 
         /** Mean facial-skin probability the segmenter needs inside a face box found only by the face detector. */
         const val OWN_FACE_SKIN = 0.3f

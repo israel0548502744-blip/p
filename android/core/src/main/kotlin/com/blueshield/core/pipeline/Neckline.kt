@@ -15,7 +15,7 @@ import kotlin.math.min
  *   chin) downwards — a low neckline, a V-neck. The chin is where the segmenter's facial skin ends ([faceChin]):
  *   face boxes end anywhere from the lower lip to well under the chin.
  *
- * All sizes are relative to the face box (NudeNet face detection, motion-tracked), so it works at any zoom.
+ * All sizes are relative to the face box (whole-frame face detection, motion-tracked), so it works at any zoom.
  * (The throat used to be cleared deeper, 0.7 face heights, unless a low neckline was seen below it: that decision
  * flipped with a pixel's shift of the picture, and a narrow V-neck was never "seen" — its skin stayed uncovered.
  * Now both depths are the same; the neckline probe only feeds the sticky flag.)

@@ -83,7 +83,7 @@ android/app/build/outputs/apk/phone/debug/app-phone-debug.apk
                                    │
  ProcessingService (foreground, התראת התקדמות, ממשיך גם כשהמסך כבוי) ──► Processor
    ├─ ניתוח:   MediaCodec (פענוח חומרה, YUV) ─► RGB זקוף בגודל ניתוח ─► android/core Analyzer (מנות של פריימים)
-   │           └─ ONNX Runtime ‏(CPU, ליציבות): סגמנטציה · אנשים · פנים · מגדר · NudeNet
+   │           └─ ONNX Runtime ‏(CPU, ליציבות): סגמנטציה · אנשים · פנים · מגדר · YuNet
    │           └─ מסכות נשמרות דחוסות בקובץ cache, רק אינדקס בזיכרון
    └─ רינדור:  MediaCodec ─► SurfaceTexture ─► OpenGL ES shader (מסכה מרוככת + כחול/shimmer)
                ─► מקודד H.264 חומרה (input Surface) ─► MediaMuxer ‏(MP4, ‏timestamps וסיבוב מקוריים)
@@ -116,7 +116,7 @@ android/app/build/outputs/apk/phone/debug/app-phone-debug.apk
 | **1. זיהוי אנשים** | תיבה לכל אדם | MediaPipe EfficientDet-Lite0 (קטגוריית person) |
 | **2. סיווג מגדר** | לכל אדם במעקב: איתור הראש (מפת "עור פנים" או חיתוך עליון) ← זיהוי פנים ← יישור לפי העיניים ← הסתברות שזה גבר | BlazeFace ‏+ FaceRes ‏(MobileNet) |
 | **3. מעקב אנשים** | זהות יציבה לאורך הסרטון: IoU ‏+ מראה (היסטוגרמת צבע) ‏+ Optical flow, וזיהוי מחדש של אדם שיצא מהפריים וחזר או אחרי חיתוך סצנה | — |
-| **4. אזורים רגישים** | NudeNet מזהה אזורים, וכל אזור משויך לאדם שבתוך התיבה שלו | NudeNet v3 |
+| **4. פנים בכל התמונה** | כל הפנים בפריים, גם קטנות ורחוקות, כדי שיישארו גלויות | YuNet ‏(OpenCV Zoo) |
 | **5. מסכות** | סגמנטציית עור. **כל פיקסל עור משויך לבעלים שלו**, לפי התיבה, ובחפיפה או מחוץ לתיבות לפי רוב רכיב העור המחובר. ‏**רק מי שמחליטים לצנזר נצבע** | MediaPipe Selfie Multiclass |
 
 **ההחלטה (אף פעם לא מפריים בודד):**
@@ -147,7 +147,7 @@ android/app/build/outputs/apk/phone/debug/app-phone-debug.apk
 
 ## 7. הדסקטופ המקורי
 
-כל היכולות הקודמות נשמרו: העלאה בגרירה וכל הפורמטים, FFmpeg, ‏NudeNet, ‏MediaPipe/LiteRT, ‏Optical flow, זיהוי חיתוכי סצנה, מסכת סגמנטציה כחולה, מצב Aggressive, כיסוי פנים, תצוגה צד-לצד, סליידר השוואה, ניגון מסונכרן, השהיה/המשך/ביטול, אחוזי התקדמות, ייצוא MP4 ‏H.264 ברזולוציה, ב-FPS ועם האודיו המקוריים, ועיבוד מקומי.
+כל היכולות הקודמות נשמרו: העלאה בגרירה וכל הפורמטים, FFmpeg, ‏YuNet, ‏MediaPipe/LiteRT, ‏Optical flow, זיהוי חיתוכי סצנה, מסכת סגמנטציה כחולה, מצב Aggressive, כיסוי פנים, תצוגה צד-לצד, סליידר השוואה, ניגון מסונכרן, השהיה/המשך/ביטול, אחוזי התקדמות, ייצוא MP4 ‏H.264 ברזולוציה, ב-FPS ועם האודיו המקוריים, ועיבוד מקומי.
 
 **מה נוסף:** הבחירה "Women only / Everyone", סף ביטחון, מדיניות ל"לא בטוח", רשימת אנשים עם עקיפה ידנית ורינדור מחדש מהיר, ותוויות חיות על כל אדם בזמן העיבוד.
 
@@ -160,7 +160,7 @@ android/app/build/outputs/apk/phone/debug/app-phone-debug.apk
 | EfficientDet-Lite0 | אנשים | Google MediaPipe bucket | Apache-2.0 |
 | BlazeFace short-range | פנים | Google MediaPipe bucket | Apache-2.0 |
 | FaceRes ‏(fp16 TFLite) | מגדר | בתוך הריפו, `models/` | ראו `models/README.md` |
-| NudeNet v3 320n | אזורים רגישים | חבילת pip ‏`nudenet` | MIT |
+| YuNet 2023mar | פנים בכל התמונה | בתוך הריפו, `models/onnx/` | MIT |
 
 ### API מקומי (‏127.0.0.1:8765)
 | Method | Path | תיאור |

@@ -2,8 +2,7 @@
 
 * :class:`SkinSegmenter` — per-pixel body-skin segmentation (MediaPipe Selfie Multiclass).
   Produces soft masks that follow the true outline of exposed skin.
-* :class:`SensitiveRegionDetector` — NudeNet YOLOv8 detector for exposed sensitive
-  body areas. Supports batched inference and GPU execution providers.
+* :class:`FullFaceDetector` — YuNet face detector over the whole frame (faces stay visible).
 * :class:`ClothesSegmenter` — skin / clothes / hair segmenter, a second opinion on clothing (the clothes veto,
   :func:`veto_blobs`).
 * :func:`color_skin_probability` — classic YCrCb/HSV skin model, used only *inside*
@@ -239,16 +238,10 @@ class SkinSegmenter:
         return skin, np.ascontiguousarray(person), face
 
 
-# NudeNet v3 label set (order matters — matches the model's output channels).
-NUDENET_LABELS = [
-    "FEMALE_GENITALIA_COVERED", "FACE_FEMALE", "BUTTOCKS_EXPOSED", "FEMALE_BREAST_EXPOSED",
-    "FEMALE_GENITALIA_EXPOSED", "MALE_BREAST_EXPOSED", "ANUS_EXPOSED", "FEET_EXPOSED",
-    "BELLY_COVERED", "FEET_COVERED", "ARMPITS_COVERED", "ARMPITS_EXPOSED", "FACE_MALE",
-    "BELLY_EXPOSED", "MALE_GENITALIA_EXPOSED", "ANUS_COVERED", "FEMALE_BREAST_COVERED",
-    "BUTTOCKS_COVERED",
-]
-# Face boxes (any gender label) — used only to keep faces *un*censored when face censoring is off.
-FACE_LABELS = {"FACE_FEMALE", "FACE_MALE"}
+# Face boxes of the whole-frame face detector — used only to keep faces *un*censored when face censoring is off.
+FACE_LABELS = {"FACE"}
+# Whole-frame face detector score: below it the mirror selfie had a false face on the phone (0.63).
+FULL_FACE_MIN = 0.7
 # Always censored when detected.
 SENSITIVE_LABELS = {
     "BUTTOCKS_EXPOSED", "FEMALE_BREAST_EXPOSED", "FEMALE_GENITALIA_EXPOSED",
@@ -328,56 +321,64 @@ class Detection:
     box: tuple[float, float, float, float]  # x1, y1, x2, y2 in frame pixels
 
 
-class SensitiveRegionDetector:
-    def __init__(self, input_size: int = 320) -> None:
+class FullFaceDetector:
+    """Every face in a frame: YuNet (OpenCV Zoo, MIT, 2023mar, 640 x 640). It sees faces of about 10 to 300 px, so
+    each frame goes through twice: scaled to fit the input, and at ``SMALL`` of that for close-up faces (a selfie).
+    Boxes come out in the face-box convention the pipeline was tuned on (the earlier detector's): a little wider than
+    YuNet's and starting below the hairline. Same as Android's ``FullFaceDetector``."""
+
+    INPUT = 640
+    SMALL = 0.4
+
+    def __init__(self) -> None:
         import onnxruntime as ort
 
-        path = models.ensure_nudenet()
+        path = models.ensure_full_face_detector()
         so = ort.SessionOptions()
         so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         self.session = ort.InferenceSession(str(path), sess_options=so, providers=models.onnx_providers())
         self.input_name = self.session.get_inputs()[0].name
-        self.size = input_size
 
-    def _prep(self, bgr: np.ndarray) -> tuple[np.ndarray, float]:
+    def _pass(self, bgr: np.ndarray, scale: float, min_score: float) -> list[Detection]:
         h, w = bgr.shape[:2]
-        side = max(h, w)
-        padded = cv2.copyMakeBorder(bgr, 0, side - h, 0, side - w, cv2.BORDER_CONSTANT)
-        blob = cv2.resize(padded, (self.size, self.size), interpolation=cv2.INTER_AREA)
-        blob = cv2.cvtColor(blob, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-        return blob.transpose(2, 0, 1), side / self.size
+        sw, sh = max(1, min(self.INPUT, round(w * scale))), max(1, min(self.INPUT, round(h * scale)))
+        r = cv2.resize(bgr, (sw, sh), interpolation=cv2.INTER_AREA) if (sw, sh) != (w, h) else bgr
+        x = np.zeros((self.INPUT, self.INPUT, 3), np.float32)
+        x[:sh, :sw] = r
+        out = self.session.run(None, {self.input_name: x.transpose(2, 0, 1)[None]})
+        s = sw / w
+        dets = []
+        for k, st in enumerate((8, 16, 32)):
+            cls, obj, bb = out[k][0, :, 0], out[3 + k][0, :, 0], out[6 + k][0]
+            score = np.sqrt(np.clip(cls, 0, 1) * np.clip(obj, 0, 1))
+            cols = self.INPUT // st
+            for i in np.nonzero(score >= min_score)[0]:
+                cx, cy = (i % cols + bb[i, 0]) * st, (i // cols + bb[i, 1]) * st
+                bw, bh = np.exp(bb[i, 2]) * st, np.exp(bb[i, 3]) * st
+                x0, y0, fw, fh = (cx - bw / 2) / s, (cy - bh / 2) / s, bw / s, bh / s
+                box = (max(0.0, x0 - 0.08 * fw), max(0.0, y0 + 0.13 * fh), min(float(w), x0 + 1.08 * fw), min(float(h), y0 + 1.02 * fh))
+                dets.append(Detection("FACE", float(score[i]), box))
+        return dets
 
-    def detect_batch(self, frames: list[np.ndarray], min_score: float = 0.25) -> list[list[Detection]]:
-        if not frames:
-            return []
-        preps = [self._prep(f) for f in frames]
-        batch = np.stack([p[0] for p in preps]).astype(np.float32)
-        out = self.session.run(None, {self.input_name: batch})[0]  # (B, 4+C, N)
+    def detect_batch(self, frames: list[np.ndarray], min_score: float = 0.7) -> list[list[Detection]]:
         results = []
-        for b, (_, scale) in enumerate(preps):
-            h, w = frames[b].shape[:2]
-            pred = out[b].T  # (N, 4+C)
-            cls_scores = pred[:, 4:]
-            cls = cls_scores.argmax(1)
-            score = cls_scores[np.arange(len(cls)), cls]
-            keep = score >= min_score
-            pred, cls, score = pred[keep], cls[keep], score[keep]
-            boxes = []
-            for (cx, cy, bw, bh) in pred[:, :4]:
-                x1 = max(0.0, (cx - bw / 2) * scale)
-                y1 = max(0.0, (cy - bh / 2) * scale)
-                x2 = min(float(w), (cx + bw / 2) * scale)
-                y2 = min(float(h), (cy + bh / 2) * scale)
-                boxes.append([x1, y1, x2 - x1, y2 - y1])
-            dets: list[Detection] = []
-            if boxes:
-                idx = cv2.dnn.NMSBoxes(boxes, score.tolist(), min_score, 0.45)
-                for i in np.array(idx).reshape(-1):
-                    x, y, bw, bh = boxes[i]
-                    dets.append(Detection(NUDENET_LABELS[int(cls[i])], float(score[i]),
-                                          (x, y, x + bw, y + bh)))
-            results.append(dets)
+        for f in frames:
+            fit = min(1.0, self.INPUT / max(f.shape[:2]))
+            dets = self._pass(f, fit, min_score) + self._pass(f, fit * self.SMALL, min_score)
+            keep = []
+            for d in sorted(dets, key=lambda d: -d.score):
+                if all(_box_iou(d.box, k.box) < 0.3 for k in keep):
+                    keep.append(d)
+            results.append(keep)
         return results
+
+
+def _box_iou(a, b) -> float:
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
 
 
 SKIN_MAX_BLUE_OVER_RED = 6  # a skin pixel is never clearly bluer than it is red

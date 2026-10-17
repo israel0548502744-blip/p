@@ -5,7 +5,7 @@ Analysis (``analyze``) — analysis resolution, streamed:
       ├─ person detection (YOLOX-tiny)  ─► person tracking (IoU + appearance, re-id)
       │                                        └─► gender classification per track (face → FaceRes votes)
       ├─ skin segmentation (Selfie Multiclass, keyframes + flow propagation) ─► anti-flicker fusion
-      └─ sensitive regions (NudeNet, batched) ─► region tracking ─► assigned to their person
+      └─ faces (YuNet, whole frame) ─► kept visible
     → compressed skin masks on disk + per-frame person/region records
 
 Rendering (``render``) — original resolution, streamed:
@@ -33,8 +33,8 @@ import numpy as np
 from . import media, outlines
 from .censor import BlueCensor, hex_to_bgr
 from .config import ANALYSIS_MAX_SIDE, MASK_MAX_SIDE, WORK_DIR
-from .detectors import (ROI_FULL_EVERY_DET, SegResult, AGGRESSIVE_LABELS, FACE_LABELS, SENSITIVE_LABELS, ClothesSegmenter,
-                        Detection, SensitiveRegionDetector, SkinSegmenter, color_skin_probability, roi_crops,
+from .detectors import (ROI_FULL_EVERY_DET, SegResult, AGGRESSIVE_LABELS, FACE_LABELS, FULL_FACE_MIN, SENSITIVE_LABELS, ClothesSegmenter,
+                        Detection, FullFaceDetector, SkinSegmenter, color_skin_probability, roi_crops,
                         skin_color_plausible, veto_blobs)
 from . import gender as gender_mod
 from .gender import GenderClassifier, censor_decision
@@ -168,8 +168,8 @@ class Engine:
                 self._m[key] = factory()
             return self._m[key]
 
-    def models(self) -> tuple[SkinSegmenter, SensitiveRegionDetector]:
-        return self._get("seg", SkinSegmenter), self._get("nude", SensitiveRegionDetector)
+    def models(self) -> tuple[SkinSegmenter, FullFaceDetector]:
+        return self._get("seg", SkinSegmenter), self._get("nude", FullFaceDetector)
 
     def people_models(self) -> tuple[PersonDetector, GenderClassifier]:
         return self._get("person", PersonDetector), self._get("gender", GenderClassifier)
@@ -293,7 +293,7 @@ def analyze(engine: Engine, info: media.VideoInfo, settings: CensorSettings, con
     det_stride = max(1, preset["det_stride"] - (1 if settings.aggressive else 0))
     sens = settings.sensitivity / 100.0
     skin_threshold = 0.72 - 0.42 * sens - (0.08 if settings.aggressive else 0.0)
-    det_min_score = 0.50 - 0.30 * sens  # NudeNet: 0.50 .. 0.20
+    det_min_score = FULL_FACE_MIN
     person_min_score = 0.45 - 0.20 * sens  # YOLOX: 0.45 .. 0.25
     labels = AGGRESSIVE_LABELS if settings.aggressive else SENSITIVE_LABELS
     reclassify_every = max(det_stride, int(round(info.fps)))  # once a second after enough votes

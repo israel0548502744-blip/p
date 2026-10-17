@@ -123,7 +123,6 @@ data class PipelineSpec(
     @Serializable
     data class Thresholds(
         @SerialName("skin_on") val skinOn: SkinRange,
-        @SerialName("nudenet_min_score") val nudenetMinScore: Range,
         @SerialName("person_min_score") val personMinScore: Range,
         @SerialName("face_min_score") val faceMinScore: Float,
         @SerialName("min_face_px") val minFacePx: Float,

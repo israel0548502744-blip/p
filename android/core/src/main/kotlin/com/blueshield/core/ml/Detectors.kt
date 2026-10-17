@@ -12,6 +12,7 @@ import kotlin.math.ceil
 import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /** Skin segmentation (MediaPipe Selfie Multiclass): body skin, face skin and person probability maps. */
@@ -489,91 +490,74 @@ class GenderModel(private val models: ModelStore) {
     }
 }
 
-/** NudeNet v3 (YOLOv8) sensitive-region detector, batched. */
-class NudeNet(private val models: ModelStore) {
-    fun detect(frames: List<RgbImage>, minScore: Float): List<List<Detection>> {
-        if (frames.isEmpty()) return emptyList()
-        val (input, shape) = input(frames)
-        return decode(models.session(ModelStore.NUDENET).runFloat(models.env, input, shape).first(), frames, minScore)
+/**
+ * Every face in a frame: YuNet (OpenCV Zoo, MIT, 2023mar, 640 × 640). It sees faces of about 10 to 300 px, so
+ * each frame goes through twice — scaled to fit the input, and at [SMALL] of that for close-up faces (a selfie).
+ * Boxes come out in the face-box convention the pipeline was tuned on (the earlier detector's): a little wider than
+ * YuNet's and starting below the hairline ([toPipeline]).
+ */
+class FullFaceDetector(private val models: ModelStore) {
+    fun detect(frames: List<RgbImage>, minScore: Float): List<List<Detection>> = frames.map { f ->
+        val all = ArrayList<Detection>()
+        val fit = min(1f, INPUT.toFloat() / max(f.width, f.height))
+        for (scale in floatArrayOf(fit, fit * SMALL)) {
+            val (x, s) = input(f, scale)
+            all += decode(models.session(ModelStore.FULL_FACES).runFloat(models.env, x, SHAPE), s, f.width, f.height, minScore)
+        }
+        nms(all.map { it.box }, all.map { it.score }, 0.3f).map { all[it] }
     }
 
     companion object {
-        const val INPUT = 320
+        const val INPUT = 640
+        /** Second pass: the frame at this share of the first pass's size (faces up to ~750 px of the first pass). */
+        const val SMALL = 0.4f
+        val SHAPE = longArrayOf(1, 3, INPUT.toLong(), INPUT.toLong())
+        private val STRIDES = intArrayOf(8, 16, 32)
 
-        /** The model's input for a batch of [frames] (each padded right/bottom to a square, 0..1 planes) and its shape. */
-        fun input(frames: List<RgbImage>): Pair<FloatArray, LongArray> {
-            val b = frames.size
+        /** The model input (BGR 0..255 planes, the frame scaled by [scale] at the top left, zeros elsewhere) and the scale used. */
+        fun input(f: RgbImage, scale: Float): Pair<FloatArray, Float> {
+            val w = max(1, min(INPUT, (f.width * scale).roundToInt()))
+            val h = max(1, min(INPUT, (f.height * scale).roundToInt()))
+            val r = f.resize(w, h)
             val plane = INPUT * INPUT
-            val input = FloatArray(b * 3 * plane)
-            for ((k, f) in frames.withIndex()) {
-                val r = f.padToSquare().resize(INPUT, INPUT)
-                for (i in 0 until plane) for (c in 0 until 3) input[k * 3 * plane + c * plane + i] = (r.data[i * 3 + c].toInt() and 0xFF) / 255f
+            val x = FloatArray(3 * plane)
+            for (y in 0 until h) for (xx in 0 until w) {
+                val i = y * w + xx
+                val o = y * INPUT + xx
+                x[o] = (r.data[i * 3 + 2].toInt() and 0xFF).toFloat()
+                x[plane + o] = (r.data[i * 3 + 1].toInt() and 0xFF).toFloat()
+                x[2 * plane + o] = (r.data[i * 3].toInt() and 0xFF).toFloat()
             }
-            return input to longArrayOf(b.toLong(), 3, INPUT.toLong(), INPUT.toLong())
+            return x to w.toFloat() / f.width
         }
-
-        /** Labelled regions per frame (image pixels) from the raw output for [frames]. */
-        fun decode(output: Pair<LongArray, FloatArray>, frames: List<RgbImage>, minScore: Float): List<List<Detection>> {
-            val (shape, out) = output
-            val scales = FloatArray(frames.size) { max(frames[it].width, frames[it].height).toFloat() / INPUT }
-            val ch = shape[1].toInt()
-            val n = shape[2].toInt()
-            return frames.indices.map { k ->
-                val base = k * ch * n
-                val boxes = ArrayList<Box>()
-                val scores = ArrayList<Float>()
-                val labels = ArrayList<String>()
-                for (i in 0 until n) {
-                    var best = -1
-                    var bestS = minScore
-                    for (c in 4 until ch) {
-                        val s = out[base + c * n + i]
-                        if (s >= bestS) {
-                            bestS = s
-                            best = c - 4
-                        }
-                    }
-                    if (best < 0) continue
-                    val cx = out[base + i]
-                    val cy = out[base + n + i]
-                    val w = out[base + 2 * n + i]
-                    val h = out[base + 3 * n + i]
-                    val s = scales[k]
-                    val f = frames[k]
-                    boxes += Box(
-                        max(0f, (cx - w / 2) * s), max(0f, (cy - h / 2) * s),
-                        min(f.width.toFloat(), (cx + w / 2) * s), min(f.height.toFloat(), (cy + h / 2) * s),
-                    )
-                    scores += bestS
-                    labels += LABELS[best]
-                }
-                nms(boxes, scores, 0.45f).map { Detection(labels[it], scores[it], boxes[it]) }
-            }
-        }
-
-        /** A box this much inside a bigger one is a partial (e.g. upper-body) duplicate. */
-        const val CONTAINED_MIN = 0.8f
 
         /**
-         * Drop partial duplicates: a detection lying almost entirely inside a bigger one of the same person.
-         * Plain NMS keeps them (small IoU); left alone they become a second "person" that splits the gender
-         * evidence. The smaller box survives only when the detector is clearly more confident about it.
+         * Faces (frame pixels, [toPipeline] convention) from the model's outputs (cls, obj, bbox, kps per stride, in
+         * that order): score √(cls·obj), box centre (cell + offset)·stride, size e^(·)·stride.
          */
-        fun suppressContained(dets: List<Detection>): List<Detection> {
-            val keep = ArrayList<Detection>()
-            for (d in dets.sortedByDescending { it.box.area }) {
-                if (keep.any { k -> d.box.containedIn(k.box) > CONTAINED_MIN && d.score < k.score + 0.15f }) continue
-                keep += d
+        fun decode(out: List<Pair<LongArray, FloatArray>>, scale: Float, width: Int, height: Int, minScore: Float): List<Detection> {
+            val dets = ArrayList<Detection>()
+            for ((k, st) in STRIDES.withIndex()) {
+                val cls = out[k].second
+                val obj = out[3 + k].second
+                val bb = out[6 + k].second
+                val cols = INPUT / st
+                for (i in cls.indices) {
+                    val sc = sqrt(cls[i].coerceIn(0f, 1f) * obj[i].coerceIn(0f, 1f))
+                    if (sc < minScore) continue
+                    val cx = (i % cols + bb[i * 4]) * st
+                    val cy = (i / cols + bb[i * 4 + 1]) * st
+                    val bw = exp(bb[i * 4 + 2]) * st
+                    val bh = exp(bb[i * 4 + 3]) * st
+                    val box = toPipeline((cx - bw / 2) / scale, (cy - bh / 2) / scale, bw / scale, bh / scale)
+                    dets += Detection("FACE", sc, Box(max(0f, box.x1), max(0f, box.y1), min(width.toFloat(), box.x2), min(height.toFloat(), box.y2)))
+                }
             }
-            return keep
+            return dets
         }
-        val LABELS = listOf(
-            "FEMALE_GENITALIA_COVERED", "FACE_FEMALE", "BUTTOCKS_EXPOSED", "FEMALE_BREAST_EXPOSED",
-            "FEMALE_GENITALIA_EXPOSED", "MALE_BREAST_EXPOSED", "ANUS_EXPOSED", "FEET_EXPOSED",
-            "BELLY_COVERED", "FEET_COVERED", "ARMPITS_COVERED", "ARMPITS_EXPOSED", "FACE_MALE",
-            "BELLY_EXPOSED", "MALE_GENITALIA_EXPOSED", "ANUS_COVERED", "FEMALE_BREAST_COVERED",
-            "BUTTOCKS_COVERED",
-        )
+
+        /** YuNet's box (x, y, w, h) in the pipeline's face-box convention: measured on the GT images, mean of 14 faces. */
+        fun toPipeline(x: Float, y: Float, w: Float, h: Float) = Box(x - 0.08f * w, y + 0.13f * h, x + 1.08f * w, y + 1.02f * h)
     }
 }
 

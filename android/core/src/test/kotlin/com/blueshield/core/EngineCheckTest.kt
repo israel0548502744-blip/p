@@ -37,7 +37,7 @@ class EngineCheckTest {
     }
 
     @Test fun sixteenBitRoundingPassesInt8AndGarbageFail() {
-        for (file in listOf(ModelStore.SEGMENTER, ModelStore.PERSONS, ModelStore.FACES, ModelStore.GENDER, ModelStore.NUDENET)) {
+        for (file in listOf(ModelStore.SEGMENTER, ModelStore.PERSONS, ModelStore.FACES, ModelStore.GENDER, ModelStore.FULL_FACES)) {
             val bytes = model(file)
             val v = verdicts(file, mapOf(
                 "fp16" to Weights.map(bytes, Weights::fp16Like),

@@ -38,7 +38,7 @@ object Accelerators {
     )
     val MODEL_NAMES = mapOf(
         ModelStore.SEGMENTER to "עור", ModelStore.PERSONS to "אנשים", ModelStore.FACES to "פנים", ModelStore.GENDER to "מגדר",
-        ModelStore.AGE_GENDER to "גיל", ModelStore.NUDENET to "אזורים רגישים", ModelStore.SAM_ENCODER_512 to "קווי מתאר",
+        ModelStore.AGE_GENDER to "גיל", ModelStore.FULL_FACES to "פנים בכל התמונה", ModelStore.SAM_ENCODER_512 to "קווי מתאר",
         ModelStore.SAM_ENCODER_1024 to "קווי מתאר (תמונות)", ModelStore.SAM_DECODER to "קווי מתאר (פענוח)",
         ModelStore.CLOTHES to "בגדים",
     )

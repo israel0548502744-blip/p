@@ -7,9 +7,8 @@ Pipeline for one person on a classification keyframe::
 
 Why it's built this way
 -----------------------
-* Gender is inferred from the **face** only. Body-based cues (e.g. NudeNet's
-  gendered labels) proved unreliable in testing and are *not* used here — that
-  detector is only used for sensitive-region detection.
+* Gender is inferred from the **face** only. Body-based cues (e.g. an earlier
+  detector's gendered face labels) proved unreliable in testing and are *not* used.
 * A single frame is never trusted. Each frame's prediction becomes a vote
   (weighted by face size and detector confidence) that accumulates on the
   person's track for the whole time they are on screen.
