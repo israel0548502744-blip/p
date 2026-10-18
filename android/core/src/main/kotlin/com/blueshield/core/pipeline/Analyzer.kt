@@ -624,11 +624,13 @@ class Analyzer(
             // generous: an arm or a leg reaching out of a tight detector box is still that person's
             val px = GATE_PAD * b.w
             val py = GATE_PAD * b.h
-            val x0 = max(0, (b.x1 - px).toInt())
-            val x1 = minOf(width, (b.x2 + px).toInt() + 1)
-            val y0 = max(0, (b.y1 - py).toInt())
-            val y1 = minOf(height, (b.y2 + py).toInt() + 1)
-            for (y in y0 until y1) java.util.Arrays.fill(inBox, y * width + x0, y * width + max(x0, x1), true)
+            // (clamped on both sides: a tracked box can drift past the frame's edge, and a fill from past the end
+            // of the last row crashed on some videos)
+            val x0 = (b.x1 - px).toInt().coerceIn(0, width)
+            val x1 = ((b.x2 + px).toInt() + 1).coerceIn(x0, width)
+            val y0 = (b.y1 - py).toInt().coerceIn(0, height)
+            val y1 = ((b.y2 + py).toInt() + 1).coerceIn(y0, height)
+            for (y in y0 until y1) java.util.Arrays.fill(inBox, y * width + x0, y * width + x1, true)
         }
         val keep = ByteMask(width, height, ByteArray(n) { i ->
             val l = labels[i]
