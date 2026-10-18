@@ -22,6 +22,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
+import androidx.compose.material.icons.filled.MovieCreation
+import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ExpandMore
@@ -79,65 +86,76 @@ class EntryActions(
     val delete: (History.Entry) -> Unit,
 )
 
-/** The start screen: what to censor, the last results, quick settings, and the privacy promise. */
+/** Something still being worked on, shown on the home screen when the user stepped away from it. */
+class ActiveWork(val title: String, val percent: Int?, val onOpen: () -> Unit)
+
+/** The start screen: the welcome, what to censor (two painted tiles), the latest files and the quick tools. */
 @Composable
 fun StartScreen(
-    loading: Boolean, history: List<History.Entry>, settings: CensorSettings, ui: UiPrefs,
+    loading: Boolean, history: List<History.Entry>, name: String,
     onPhoto: () -> Unit, onVideo: () -> Unit, onAll: () -> Unit, actions: EntryActions,
-    onSettings: (CensorSettings) -> Unit, onUi: ((UiPrefs) -> UiPrefs) -> Unit, onPrivacy: () -> Unit,
+    onGuide: () -> Unit, onSettings: () -> Unit, onPrivacy: () -> Unit, onPresets: () -> Unit,
+    active: ActiveWork? = null,
 ) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(top = 6.dp, bottom = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                (if (name.isBlank()) tr("ברוך הבא") else tr("ברוך הבא, {0}", name)) + " 👋",
+                color = Palette.Text, fontSize = 24.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                tr("בחר פעולה כדי להתחיל בצנזור פריט חדש בקלות ובביטחון."),
+                color = Palette.Ink300, fontSize = 14.sp, lineHeight = 20.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp),
+            )
+        }
+        active?.let { ActiveCard(it) }
+        if (loading) Box(Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Palette.Shield400) }
+        else Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            KindTile(Scene.TEAL, Icons.Outlined.Image, Color(0xFFB5F5E8), tr("צנזור תמונה"), tr("העלאת תמונה לצנזור"), Modifier.weight(1f), onPhoto)
+            KindTile(Scene.VIOLET, Icons.Filled.MovieCreation, Color(0xFFE2D8FF), tr("צנזור סרטון"), tr("העלאת וידאו לצנזור"), Modifier.weight(1f), onVideo)
+        }
+
+        SectionHeading(tr("קבצים אחרונים"), if (history.isNotEmpty()) tr("הצג הכל") else null, onAll)
         Panel(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(tr("מה תרצה לצנזר היום?"), color = Palette.Text, fontSize = 22.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-                Spacer(Modifier.height(4.dp))
-                Text(tr("כל העיבוד מתבצע במכשיר שלך – שום דבר לא עולה לאינטרנט."), color = Palette.Ink300, fontSize = 13.sp, textAlign = TextAlign.Center)
-                Spacer(Modifier.height(14.dp))
-                if (loading) CircularProgressIndicator(color = Palette.Shield400, modifier = Modifier.padding(24.dp))
-                else Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    KindTile(Icons.Filled.Image, tr("תמונה"), tr("אחת או כמה ביחד"), Modifier.weight(1f), onPhoto)
-                    KindTile(Icons.Filled.VideoLibrary, tr("סרטון"), tr("אחד או כמה בתור"), Modifier.weight(1f), onVideo)
-                }
+            if (history.isEmpty()) Text(
+                tr("עוד אין כאן קבצים. תמונות וסרטונים שתצנזרו יופיעו כאן."), color = Palette.Ink300, fontSize = 13.5.sp,
+                modifier = Modifier.padding(18.dp),
+            )
+            history.take(3).forEachIndexed { i, e ->
+                if (i > 0) HorizontalDivider(color = Palette.Border, modifier = Modifier.padding(horizontal = 14.dp))
+                RecentRow(e, i, actions)
             }
         }
 
-        if (history.isNotEmpty()) {
-            SectionCard(tr("פעולות אחרונות"), Icons.Filled.History) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    history.take(3).forEachIndexed { i, e -> RecentRow(e, i, actions) }
-                }
-                Row(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable(onClick = onAll).padding(6.dp),
-                    horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(tr("הצג הכל"), color = Palette.Ink200, fontSize = 14.sp)
-                    Spacer(Modifier.width(4.dp))
-                    Icon(Icons.Filled.ExpandMore, null, tint = Palette.Ink300, modifier = Modifier.size(18.dp))
-                }
-            }
+        SectionHeading(tr("כלים מהירים"))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Bottom) {
+            QuickTool(Icons.AutoMirrored.Outlined.MenuBook, tr("מדריך למתחילים"), Modifier.weight(1f), onClick = onGuide)
+            QuickTool(Icons.Outlined.Tune, tr("הגדרות"), Modifier.weight(1f), onClick = onSettings)
+            QuickTool(Icons.Outlined.Shield, tr("בדיקת פרטיות"), Modifier.weight(1f), badge = tr("חדש"), onClick = onPrivacy)
+            QuickTool(Icons.Outlined.GridView, tr("טמפלטים"), Modifier.weight(1f), onClick = onPresets)
         }
+    }
+}
 
-        SectionCard(tr("הגדרות מהירות"), Icons.Outlined.Settings) {
-            Row(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Palette.Veil).border(1.dp, Palette.Border, RoundedCornerShape(14.dp))
-                    .padding(vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                QuickCell(Icons.Outlined.CheckCircle, tr("שמירה אוטומטית"), if (ui.autoSave) tr("מופעל") else tr("כבוי"), ui.autoSave, Modifier.weight(1f)) {
-                    onUi { it.copy(autoSave = !it.autoSave) }
-                }
-                Box(Modifier.width(1.dp).height(36.dp).background(Palette.Border))
-                QuickCell(Icons.Outlined.Description, tr("פורמט"), formatLabel(ui.photoFormat), false, Modifier.weight(1f)) {
-                    onUi { it.copy(photoFormat = when (it.photoFormat) { "original" -> "jpg"; "jpg" -> "png"; else -> "original" }) }
-                }
-                Box(Modifier.width(1.dp).height(36.dp).background(Palette.Border))
-                QuickCell(Icons.Filled.Hd, tr("איכות"), qualityLabel(settings.quality), false, Modifier.weight(1f)) {
-                    onSettings(settings.copy(quality = when (settings.quality) { "high" -> "balanced"; "balanced" -> "small"; else -> "high" }))
-                }
-            }
-        }
-
-        PrivacyCard(onPrivacy)
+/** "Still working on …": a card back to the photo or video that is being processed. */
+@Composable
+private fun ActiveCard(a: ActiveWork) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Palette.Shield500.copy(alpha = 0.16f))
+            .border(1.dp, Palette.Shield400.copy(alpha = 0.4f), RoundedCornerShape(18.dp)).clickable(onClick = a.onOpen).padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (a.percent != null) Box(contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(progress = { a.percent / 100f }, color = Palette.Shield300, trackColor = Palette.Ink700, strokeWidth = 3.dp, modifier = Modifier.size(38.dp))
+            Text("${a.percent}%", color = Palette.Text, fontSize = 10.sp)
+        } else CircularProgressIndicator(color = Palette.Shield300, strokeWidth = 3.dp, modifier = Modifier.size(32.dp))
+        Spacer(Modifier.width(12.dp))
+        Text(a.title, color = Palette.Text, fontSize = 14.5.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, null, tint = Palette.Ink200)
     }
 }
 
@@ -153,34 +171,48 @@ fun qualityLabel(q: String) = when (q) {
     else -> tr("רגילה")
 }
 
+/** One of the two big start tiles: a painted landscape, the icon, the name, and the round arrow. */
 @Composable
-private fun KindTile(icon: ImageVector, title: String, sub: String, modifier: Modifier, onClick: () -> Unit) {
-    Column(
-        modifier.clip(RoundedCornerShape(18.dp)).background(Palette.Veil).border(1.dp, Palette.Border, RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick).padding(vertical = 18.dp, horizontal = 10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+private fun KindTile(scene: Scene, icon: ImageVector, iconTint: Color, title: String, sub: String, modifier: Modifier, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(22.dp)
+    Box(
+        modifier.height(218.dp).clip(shape).border(1.dp, Brush.verticalGradient(listOf(Color(0x55FFFFFF), Color(0x14FFFFFF))), shape)
+            .clickable(onClick = onClick),
     ) {
-        Icon(icon, null, tint = Palette.Shield400, modifier = Modifier.size(42.dp))
-        Spacer(Modifier.height(10.dp))
-        Text(title, color = Palette.Text, fontSize = 19.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(4.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(sub, color = Palette.Ink300, fontSize = 12.5.sp)
-            Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, null, tint = Palette.Ink300, modifier = Modifier.size(16.dp))
+        Landscape(scene, Modifier.fillMaxSize())
+        Column(Modifier.fillMaxSize().padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Spacer(Modifier.height(10.dp))
+            Icon(icon, null, tint = iconTint, modifier = Modifier.size(64.dp))
+            Spacer(Modifier.height(10.dp))
+            Text(title, color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(2.dp))
+            Text(sub, color = Color.White.copy(alpha = 0.8f), fontSize = 12.5.sp, textAlign = TextAlign.Center)
+            Spacer(Modifier.weight(1f))
+            Box(
+                Modifier.size(38.dp).clip(CircleShape).background(Color(0x40FFFFFF)).border(1.dp, Color(0x55FFFFFF), CircleShape),
+                contentAlignment = Alignment.Center,
+            ) { DesignArrow(Color.White) }
         }
     }
 }
 
+/** A small square tool under "כלים מהירים", with an optional label on its top edge ("חדש"). */
 @Composable
-private fun QuickCell(icon: ImageVector, label: String, value: String, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
-    Row(modifier.clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center) {
-        Icon(icon, null, tint = if (on) Palette.Shield400 else Palette.Ink300, modifier = Modifier.size(24.dp))
-        Spacer(Modifier.width(6.dp))
-        Column {
-            Text(label, color = Palette.Ink200, fontSize = 12.5.sp, maxLines = 1)
-            Text(value, color = if (on) Palette.Shield400 else Palette.Ink300, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+private fun QuickTool(icon: ImageVector, label: String, modifier: Modifier, badge: String? = null, onClick: () -> Unit) {
+    Box(modifier, contentAlignment = Alignment.TopCenter) {
+        Column(
+            Modifier.padding(top = 9.dp).fillMaxWidth().height(92.dp).glass(RoundedCornerShape(18.dp)).clickable(onClick = onClick)
+                .padding(horizontal = 4.dp, vertical = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+        ) {
+            Icon(icon, null, tint = Palette.Ink100, modifier = Modifier.size(28.dp))
+            Spacer(Modifier.height(6.dp))
+            Text(label, color = Palette.Ink100, fontSize = 12.sp, lineHeight = 14.sp, textAlign = TextAlign.Center, maxLines = 2)
         }
+        if (badge != null) Text(
+            badge, color = Color(0xFF062A27), fontSize = 10.5.sp, fontWeight = FontWeight.Bold,
+            modifier = Modifier.clip(RoundedCornerShape(50)).background(Palette.Teal).padding(horizontal = 9.dp, vertical = 1.dp),
+        )
     }
 }
 
@@ -189,12 +221,11 @@ private fun QuickCell(icon: ImageVector, label: String, value: String, on: Boole
 fun RecentRow(e: History.Entry, index: Int, actions: EntryActions) {
     var menu by remember { mutableStateOf(false) }
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Palette.Veil).border(1.dp, Palette.Border, RoundedCornerShape(14.dp))
-            .clickable { actions.open(index) }.padding(8.dp),
+        Modifier.fillMaxWidth().clickable { actions.open(index) }.padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         val bmp by produceState<Bitmap?>(null, e.thumb) { value = withContext(Dispatchers.IO) { History.decode(e.thumb, 300) } }
-        Box(Modifier.width(72.dp).height(52.dp).clip(RoundedCornerShape(10.dp)).background(Palette.Ink700), contentAlignment = Alignment.Center) {
+        Box(Modifier.width(76.dp).height(54.dp).clip(RoundedCornerShape(10.dp)).background(Palette.Ink700), contentAlignment = Alignment.Center) {
             bmp?.let { Image(it.asImageBitmap(), null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
             if (e.video) Box(Modifier.size(24.dp).clip(CircleShape).background(Color(0x99000000)), contentAlignment = Alignment.Center) {
                 Icon(Icons.Filled.PlayArrow, null, tint = Color.White, modifier = Modifier.size(16.dp))
@@ -202,15 +233,16 @@ fun RecentRow(e: History.Entry, index: Int, actions: EntryActions) {
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(e.name, color = Palette.Text, fontSize = 14.5.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+            Text(ltr(e.name), color = Palette.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             Text(
-                ltr(SimpleDateFormat("dd.MM.yy", Locale.US).format(Date(e.time)) + " • " + formatBytes(File(e.file).length())) +
+                ltr(SimpleDateFormat("dd.MM.yy", Locale.US).format(Date(e.time)) + "  •  " + formatBytes(File(e.file).length())) +
                     if (e.gallery != null) " • " + tr("בגלריה") else "",
                 color = Palette.Ink400, fontSize = 12.sp,
             )
         }
         Box {
-            IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, tr("אפשרויות"), tint = Palette.Ink300) }
+            IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, tr("אפשרויות"), tint = Palette.Ink200) }
             DropdownMenu(menu, { menu = false }, containerColor = Palette.Ink850) {
                 DropdownMenuItem(text = { Text(tr("פתיחה")) }, leadingIcon = { Icon(Icons.Filled.PlayArrow, null) }, onClick = { menu = false; actions.open(index) })
                 if (e.gallery == null) {
@@ -221,25 +253,5 @@ fun RecentRow(e: History.Entry, index: Int, actions: EntryActions) {
                 DropdownMenuItem(text = { Text(tr("מחיקה")) }, leadingIcon = { Icon(Icons.Filled.Delete, null) }, onClick = { menu = false; actions.delete(e) })
             }
         }
-    }
-}
-
-/** "Your privacy comes first": the promise, with a link to the privacy page. */
-@Composable
-fun PrivacyCard(onOpen: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().glass(RoundedCornerShape(20.dp)).clickable(onClick = onOpen).padding(14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(tr("הפרטיות שלך היא בראש סדר העדיפויות"), color = Palette.Text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(2.dp))
-            Text(tr("הקבצים נשארים במכשיר שלך. לא נשלחים, לא נשמרים בשרת, לא נחשפים."), color = Palette.Ink300, fontSize = 12.5.sp, lineHeight = 17.sp)
-        }
-        Spacer(Modifier.width(12.dp))
-        Box(
-            Modifier.size(52.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Palette.Shield400, Palette.Shield700))),
-            contentAlignment = Alignment.Center,
-        ) { Icon(Icons.Filled.Lock, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
     }
 }

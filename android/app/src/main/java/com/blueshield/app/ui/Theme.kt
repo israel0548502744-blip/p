@@ -60,6 +60,8 @@ object Palette {
     var Shield700 by mutableStateOf(Color(0xFF4F2FD0))
     val Violet = Color(0xFF8B5CF6)
     val Cyan = Color(0xFF22D3EE)
+    /** The second colour of the design (photo tile, finished steps, the ring's end). */
+    var Teal by mutableStateOf(Color(0xFF2DD4BF))
     var Emerald by mutableStateOf(Color(0xFF34D399))
     var EmeraldText by mutableStateOf(Color(0xFFA7F3D0))
     var Amber by mutableStateOf(Color(0xFFFCD34D))
@@ -78,19 +80,20 @@ object Palette {
     fun apply(dark: Boolean, accent: Color) {
         this.dark = dark
         if (dark) {
-            Ink950 = Color(0xFF070912); Ink900 = Color(0xFF0C0F1D); Ink850 = Color(0xFF111526); Ink800 = Color(0xFF171C30)
-            Ink700 = Color(0xFF20263D); Ink600 = Color(0xFF2C3350); Ink400 = Color(0xFF7D84A0); Ink300 = Color(0xFFA6ACC2)
-            Ink200 = Color(0xFFCDD1E0); Ink100 = Color(0xFFEEF0F7); Text = Color.White
-            Emerald = Color(0xFF34D399); EmeraldText = Color(0xFFA7F3D0); Amber = Color(0xFFFCD34D)
+            // deep night violet, as in the design
+            Ink950 = Color(0xFF0B0A19); Ink900 = Color(0xFF110F23); Ink850 = Color(0xFF15132B); Ink800 = Color(0xFF1B1835)
+            Ink700 = Color(0xFF262245); Ink600 = Color(0xFF332E57); Ink400 = Color(0xFF8A86A6); Ink300 = Color(0xFFB0ADC6)
+            Ink200 = Color(0xFFD3D1E2); Ink100 = Color(0xFFF0EFF7); Text = Color.White
+            Emerald = Color(0xFF34D399); EmeraldText = Color(0xFFA7F3D0); Amber = Color(0xFFFCD34D); Teal = Color(0xFF2DD4BF)
             Danger = Color(0xFFF87171); DangerText = Color(0xFFFECACA)
             Border = Color(0x1FFFFFFF); Veil = Color(0x0AFFFFFF); VeilStrong = Color(0x26FFFFFF)
             Glass.Fill = Color(0x12FFFFFF); Glass.FillStrong = Color(0x22FFFFFF); Glass.Highlight = Color(0x0CFFFFFF)
-            Glass.RimTop = Color(0x33FFFFFF); Glass.RimBottom = Color(0x0AFFFFFF); Glass.Bar = Color(0xE60B0E1B)
+            Glass.RimTop = Color(0x2EFFFFFF); Glass.RimBottom = Color(0x0FFFFFFF); Glass.Bar = Color(0xF2110F23)
         } else {
             Ink950 = Color(0xFFF3F2F9); Ink900 = Color(0xFFFFFFFF); Ink850 = Color(0xFFFFFFFF); Ink800 = Color(0xFFECEAF4)
             Ink700 = Color(0xFFE0DDEC); Ink600 = Color(0xFFC9C5DA); Ink400 = Color(0xFF6E6A84); Ink300 = Color(0xFF55516B)
             Ink200 = Color(0xFF3B3852); Ink100 = Color(0xFF1E1B30); Text = Color(0xFF14121F)
-            Emerald = Color(0xFF0E9F6E); EmeraldText = Color(0xFF056A48); Amber = Color(0xFFB45309)
+            Emerald = Color(0xFF0E9F6E); EmeraldText = Color(0xFF056A48); Amber = Color(0xFFB45309); Teal = Color(0xFF0D9488)
             Danger = Color(0xFFDC2626); DangerText = Color(0xFF991B1B)
             Border = Color(0x1A000000); Veil = Color(0x08000000); VeilStrong = Color(0x1A000000)
             Glass.Fill = Color(0xCCFFFFFF); Glass.FillStrong = Color(0xF2FFFFFF); Glass.Highlight = Color(0x66FFFFFF)
@@ -139,7 +142,7 @@ fun GlassBackground(modifier: Modifier = Modifier, content: @Composable BoxScope
         0f, (2 * Math.PI).toFloat(), infiniteRepeatable(tween(40_000, easing = LinearEasing), RepeatMode.Restart), label = "phase",
     )
     val dark = Palette.dark
-    val top = if (dark) Color(0xFF0B0E22) else Color(0xFFF7F5FD)
+    val top = if (dark) Color(0xFF100D24) else Color(0xFFF7F5FD)
     Box(modifier.fillMaxSize().background(Brush.verticalGradient(listOf(top, Palette.Ink950, Palette.Ink950)))) {
         Canvas(Modifier.fillMaxSize()) {
             val w = size.width
@@ -149,7 +152,7 @@ fun GlassBackground(modifier: Modifier = Modifier, content: @Composable BoxScope
                 Brush.radialGradient(listOf(color.copy(alpha = alpha), color.copy(alpha = alpha * 0.35f), Color.Transparent), Offset(x, y), radius),
                 radius, Offset(x, y),
             )
-            val k = if (dark) 1f else 0.45f
+            val k = if (dark) 0.7f else 0.45f
             glow(Palette.Shield500, w * (0.85f + 0.08f * cos(t)), h * (0.1f + 0.05f * sin(t)), r * 0.55f, 0.26f * k)
             glow(Palette.Shield700, w * (0.1f + 0.1f * sin(t + 1f)), h * (0.5f + 0.06f * cos(t * 2)), r * 0.5f, 0.18f * k)
             glow(Palette.Shield400, w * (0.7f + 0.12f * sin(t + 2.5f)), h * (0.95f + 0.04f * cos(t + 1f)), r * 0.45f, 0.10f * k)

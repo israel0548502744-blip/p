@@ -41,6 +41,8 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.HighlightAlt
+import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Person
@@ -169,22 +171,43 @@ fun CompareImage(original: Bitmap, censored: Bitmap, modifier: Modifier = Modifi
 }
 
 /**
- * "Ask whom to censor": the people found, each with a tick (ticked as the automatic choice would be). Nothing
- * is drawn until the choice is confirmed.
+ * "Ask whom to censor" (the design's "צנזור" step): a picture with every person found marked by a box; a violet
+ * box with handles is covered, a dashed one stays as is. A tap on a box (or on the person in the list) switches
+ * it. The first marks are the automatic choice; nothing is drawn until "continue".
  */
 @Composable
 fun ChooseScreen(
     people: List<PersonSummary>, thumbnail: (Int) -> Bitmap?, busy: Boolean,
     onConfirm: (Map<Int, Boolean>) -> Unit, onCancel: () -> Unit, video: Boolean,
+    overview: com.blueshield.app.engine.Processor.Overview? = null, onAddArea: ((Map<Int, Boolean>) -> Unit)? = null,
 ) {
-    val pick = remember(people) { mutableStateMapOf<Int, Boolean>().apply { people.forEach { put(it.id, it.censored) } } }
+    val auto = remember(people) { people.associate { it.id to it.censored } }
+    val pick = remember(people) { mutableStateMapOf<Int, Boolean>().apply { putAll(auto) } }
     Column(Modifier.fillMaxSize()) {
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(tr("את מי לצנזר?"), color = Palette.Text, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (overview != null) MarkedPicture(overview, pick, video)
+            else Box(Modifier.fillMaxWidth().height(200.dp).clip(RoundedCornerShape(18.dp)).background(Palette.Ink850), contentAlignment = Alignment.Center) {
+                androidx.compose.material3.CircularProgressIndicator(color = Palette.Shield400)
+            }
             Text(
-                tr("סמנו את מי לכסות. הסימון ההתחלתי הוא הבחירה האוטומטית. רק אחרי האישור מתחיל הצנזור."),
+                tr("לחצו על אדם כדי לסמן או לבטל את הצנזור שלו. הסימון ההתחלתי הוא הבחירה האוטומטית."),
                 color = Palette.Ink300, fontSize = 13.sp, lineHeight = 18.sp,
             )
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                GlassOutlined(
+                    onClick = { if (onAddArea != null) onAddArea(pick.toMap()) else people.forEach { pick[it.id] = true } },
+                    modifier = Modifier.weight(1f).height(52.dp), shape = RoundedCornerShape(16.dp),
+                ) {
+                    Icon(if (onAddArea != null) Icons.Filled.HighlightAlt else Icons.Filled.Check, null, tint = Palette.Ink100)
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (onAddArea != null) tr("הוסף אזור צנזור") else tr("סמן את כולם"), color = Palette.Ink100)
+                }
+                Box(
+                    Modifier.size(52.dp).glass(RoundedCornerShape(16.dp)).clickable { pick.clear(); pick.putAll(auto) },
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.Filled.Replay, tr("חזרה לבחירה האוטומטית"), tint = Palette.Ink100) }
+            }
+            SectionHeading(tr("אנשים ({0})", people.size))
             if (people.isEmpty()) Text(tr("לא זוהו אנשים."), color = Palette.Ink300, fontSize = 14.sp)
             for (p in people) {
                 val on = pick[p.id] == true
@@ -195,7 +218,7 @@ fun ChooseScreen(
                         .clickable { pick[p.id] = !on }.padding(10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Box(Modifier.size(72.dp).clip(RoundedCornerShape(12.dp)).background(Palette.Ink700), contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)).background(Palette.Ink700), contentAlignment = Alignment.Center) {
                         val bmp = thumbnail(p.id)
                         if (bmp != null) Image(bmp.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                         else Icon(Icons.Filled.Person, null, tint = Palette.Ink400)
@@ -203,6 +226,10 @@ fun ChooseScreen(
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(personLabel(p), color = Palette.Text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            if (on) tr("יצונזר") else tr("לא יצונזר"),
+                            color = if (on) Palette.Shield300 else Palette.Ink400, fontSize = 12.sp,
+                        )
                         if (video) Text(ltr("${formatDuration(p.startSec)}–${formatDuration(p.endSec)}"), color = Palette.Ink400, fontSize = 12.sp)
                         if (!p.child && (p.age ?: 99.0) < 18.0) Text(tr("הגיל לא ודאי, כדאי לבדוק"), color = Palette.Amber, fontSize = 12.sp)
                     }
@@ -211,11 +238,70 @@ fun ChooseScreen(
             }
         }
         BottomBar {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                val n = pick.values.count { it }
-                if (busy) androidx.compose.material3.CircularProgressIndicator(color = Palette.Shield400, modifier = Modifier.align(Alignment.CenterHorizontally))
-                else PrimaryButton(if (n == 0) tr("בלי צנזור") else tr("צנזור ({0})", n), Icons.Filled.Check) { onConfirm(pick.toMap()) }
-                GlassOutlined(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text(tr("ביטול")) }
+            val n = pick.values.count { it }
+            if (busy) androidx.compose.material3.CircularProgressIndicator(color = Palette.Shield400)
+            else PrimaryButton(if (n == 0) tr("המשך בלי צנזור") else tr("המשך לעיבוד"), null, trailingArrow = true) { onConfirm(pick.toMap()) }
+        }
+    }
+}
+
+/** The picture with a box over each person: violet with corner handles when covered, dashed when not. */
+@Composable
+private fun MarkedPicture(o: com.blueshield.app.engine.Processor.Overview, pick: MutableMap<Int, Boolean>, video: Boolean) {
+    val img = o.image
+    val aspect = img.width.toFloat() / img.height.coerceAtLeast(1)
+    val screenH = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp
+    Column(Modifier.fillMaxWidth().glass(RoundedCornerShape(18.dp)).padding(8.dp)) {
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            val w = minOf(maxWidth, screenH * 0.5f * aspect)
+            var size by remember { mutableStateOf(androidx.compose.ui.unit.IntSize(1, 1)) }
+            Box(
+                Modifier.width(w).aspectRatio(aspect).clip(RoundedCornerShape(14.dp)).onSizeChanged { size = it }
+                    .pointerInput(o) {
+                        detectTapGestures { t ->
+                            val fx = t.x / size.width
+                            val fy = t.y / size.height
+                            o.boxes.filter { it.value.contains(fx, fy) }.minByOrNull { it.value.width() * it.value.height() }
+                                ?.let { (id, _) -> pick[id] = pick[id] != true }
+                        }
+                    },
+            ) {
+                Image(img.asImageBitmap(), null, contentScale = ContentScale.FillBounds, modifier = Modifier.fillMaxSize())
+                val accent = Palette.Shield500
+                val rim = Palette.Shield300
+                androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+                    for ((id, b) in o.boxes) {
+                        val tl = Offset(b.left * size.width, b.top * size.height)
+                        val sz = androidx.compose.ui.geometry.Size(b.width() * size.width, b.height() * size.height)
+                        if (pick[id] == true) {
+                            drawRect(accent.copy(alpha = 0.42f), tl, sz)
+                            drawRect(rim, tl, sz, style = androidx.compose.ui.graphics.drawscope.Stroke(1.5.dp.toPx()))
+                            for (c in listOf(tl, tl + Offset(sz.width, 0f), tl + Offset(0f, sz.height), tl + Offset(sz.width, sz.height))) {
+                                drawCircle(Color.White, 4.5.dp.toPx(), c)
+                                drawCircle(accent, 4.5.dp.toPx(), c, style = androidx.compose.ui.graphics.drawscope.Stroke(1.5.dp.toPx()))
+                            }
+                        } else drawRect(
+                            Color.White.copy(alpha = 0.75f), tl, sz,
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(
+                                1.5.dp.toPx(), pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 4.dp.toPx())),
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+        if (video && o.durationSec > 0) androidx.compose.runtime.CompositionLocalProvider(
+            androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr,
+        ) {
+            // where in the video this picture is
+            Row(Modifier.fillMaxWidth().padding(top = 10.dp, start = 4.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                val f = (o.timeSec / o.durationSec).toFloat().coerceIn(0f, 1f)
+                Box(Modifier.weight(1f).height(4.dp).clip(RoundedCornerShape(2.dp)).background(Palette.Ink600)) {
+                    Box(Modifier.fillMaxWidth(f).fillMaxHeight().background(Palette.Shield400))
+                }
+                Spacer(Modifier.width(10.dp))
+                Text("${formatDuration(o.timeSec)} / ${formatDuration(o.durationSec)}", color = Palette.Ink300, fontSize = 11.5.sp,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
             }
         }
     }
@@ -281,7 +367,6 @@ fun BrushScreen(censored: Bitmap, colour: Color, initial: List<BrushStroke>, onA
     var area by remember { mutableStateOf(IntSize(1, 1)) }
     val current = remember { mutableStateListOf<Offset>() }
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(tr("תיקון במכחול"), color = Palette.Text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
         Text(tr("מעבירים אצבע על מקום שצריך לכסות, או על כיסוי מיותר במצב \"מחיקה\"."), color = Palette.Ink300, fontSize = 12.5.sp)
         Segmented(listOf(false to tr("הוספת כיסוי"), true to tr("מחיקת כיסוי")), erase, { erase = it })
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -369,7 +454,6 @@ fun ReportDialog(hasResult: Boolean, onSend: (String, Boolean, Boolean, Boolean)
 fun PresetsScreen(presets: List<Preset>, current: CensorSettings, onApply: (Preset) -> Unit, onSave: (String) -> Unit, onDelete: (Preset) -> Unit) {
     var name by remember { mutableStateOf("") }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(tr("תבניות שמירה"), color = Palette.Text, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Text(tr("כל תבנית היא סט הגדרות צנזור. לחיצה מפעילה אותה, וההגדרות חלות על הצנזור הבא."), color = Palette.Ink300, fontSize = 13.sp, lineHeight = 18.sp)
         for (p in presets) {
             val active = p.settings.copy(color = current.color) == current
@@ -414,7 +498,6 @@ fun presetSummary(s: CensorSettings): String = listOf(
 @Composable
 fun PrivacyScreen() {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(tr("פרטיות ואבטחה"), color = Palette.Text, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         for ((icon, title, body) in listOf(
             Triple(Icons.Filled.Lock, tr("הכול נשאר בטלפון"), tr("הזיהוי והצנזור רצים על המעבד של הטלפון. תמונות וסרטונים אף פעם לא נשלחים לשום מקום.")),
             Triple(Icons.Filled.Shield, tr("אין לאפליקציה אינטרנט"), tr("לאפליקציה אין בכלל הרשאת אינטרנט, כך שהיא לא יכולה לשלוח כלום. אפשר לבדוק: הגדרות הטלפון ← אפליקציות ← BlueShield ← הרשאות.")),
@@ -457,7 +540,6 @@ fun FaqScreen() {
         tr("העיבוד איטי. מה אפשר לעשות?") to tr("בהגדרות: \"ביצועים\" ← \"מהיר\", או לחתוך את הסרטון לקטע הנחוץ. בטלפונים עם Snapdragon אפשר לבחור את שבב הבינה המלאכותית."),
     )
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(tr("שאלות נפוצות"), color = Palette.Text, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         for ((q, a) in items) {
             var open by remember { mutableStateOf(false) }
             Panel(Modifier.fillMaxWidth().clickable { open = !open }) {
@@ -527,12 +609,9 @@ fun WhatsNewDialog(onClose: () -> Unit) {
 }
 
 val WHATS_NEW = listOf(
-    "עיצוב חדש: תפריט צד, סרגל תחתון, ומסך בית עם הפעולות האחרונות והגדרות מהירות.",
-    "בהגדרות: צבע האפליקציה לבחירה, מצב כהה או בהיר, גודל טקסט ושפה.",
-    "\"לשאול את מי לצנזר\": האפליקציה מוצאת את האנשים, ואתם בוחרים לפני הצנזור.",
-    "מכחול לתיקון ידני בתמונות, והשוואה בגרירה בין המקור לתוצאה.",
-    "חיתוך סרטון לפני הצנזור, ולכל אדם \"רק בחלק מהזמן\".",
-    "כמה סרטונים בבת אחת, בתור, גם כשהמסך כבוי.",
-    "תבניות הגדרות, שליחה ישירה לוואטסאפ, מחיקת המקור ודיווח על טעות.",
-    "ווידג'ט למסך הבית ואריח בהגדרות המהירות של הטלפון.",
+    "עיצוב חדש לגמרי: מסך בית מאויר, כפתור + במרכז, לשונית כלים ותפריט צד עם פרופיל.",
+    "ארבעה שלבים ברורים לכל תמונה וסרטון: בחירה, עיבוד, צנזור ושמירה.",
+    "\"את מי לצנזר\" עכשיו על התמונה עצמה: מסגרת סגולה סביב כל מי שיצונזר.",
+    "נגן וידאו חדש: תמיד נכנס במסך, עם כפתור הפעלה גדול.",
+    "עיבוד סרטונים מהיר עד פי 1.8, באותה איכות בדיוק.",
 )

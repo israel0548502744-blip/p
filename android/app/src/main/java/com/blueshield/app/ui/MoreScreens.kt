@@ -21,6 +21,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Image
@@ -55,15 +58,35 @@ import com.blueshield.core.gender.Override
 fun SettingsScreen(
     settings: CensorSettings, enabled: Boolean, onChange: (CensorSettings) -> Unit,
     ui: com.blueshield.app.UiPrefs, onUi: ((com.blueshield.app.UiPrefs) -> com.blueshield.app.UiPrefs) -> Unit, onPresets: () -> Unit,
+    onProfile: () -> Unit = {}, onAbout: () -> Unit = {},
 ) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Text(tr("הגדרות"), color = Palette.Text, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+        Text(tr("הגדרות"), color = Palette.Text, fontSize = 24.sp, fontWeight = FontWeight.Bold)
         Text(tr("ההגדרות נשמרות אוטומטית וחלות על כל סרטון ותמונה."), color = Palette.Ink300, fontSize = 13.sp)
         if (!enabled) Text(tr("עיבוד פועל כרגע — השינויים יחולו בעיבוד הבא."), color = Palette.Amber, fontSize = 12.5.sp)
+        Row(
+            Modifier.fillMaxWidth().glass(RoundedCornerShape(18.dp)).clickable(onClick = onProfile).padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier.size(46.dp).clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(Palette.Shield400, Palette.Shield700))),
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.Filled.Person, null, tint = Color.White) }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(ui.name.ifBlank { tr("הפרופיל שלי") }, color = Palette.Text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text(ui.email.ifBlank { tr("שם ומייל, נשמרים רק בטלפון") }, color = Palette.Ink300, fontSize = 12.5.sp)
+            }
+            Icon(Icons.Filled.Edit, tr("עריכה"), tint = Palette.Ink300)
+        }
         AppearanceSection(ui, onUi)
         BehaviourSection(ui, onUi, onPresets)
         SettingsSection(settings, hasAudio = true, enabled = true, onChange = onChange)
         EngineSection()
+        GlassOutlined(onClick = onAbout, modifier = Modifier.fillMaxWidth().height(48.dp)) {
+            Icon(Icons.Filled.Info, null); Spacer(Modifier.width(8.dp)); Text(tr("אודות ועדכון"))
+        }
     }
 }
 
@@ -166,7 +189,6 @@ fun SettingsSummary(s: CensorSettings, onEdit: () -> Unit) {
 @Composable
 fun AboutScreen(onWhatsNew: () -> Unit, onFaq: () -> Unit, onPrivacy: () -> Unit, onOnboarding: () -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(tr("אודות BlueShield"), color = Palette.Text, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
         Text(tr("גרסה {0}", ltr(BuildInfo.version)), color = Palette.Ink300, fontSize = 13.sp)
         val context = androidx.compose.ui.platform.LocalContext.current
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -262,6 +284,13 @@ fun AboutScreen(onWhatsNew: () -> Unit, onFaq: () -> Unit, onPrivacy: () -> Unit
 /** A picked photo: preview, settings summary, and the start button. */
 @Composable
 fun PhotoHome(preview: Bitmap, name: String, settings: CensorSettings, busy: Boolean, onEditSettings: () -> Unit, onClear: () -> Unit, onStart: () -> Unit) {
+    if (busy) {
+        ProcessingView(
+            percent = null, paused = false, title = tr("מעבד את התמונה שלך..."), sub = tr("מאתר אנשים, מגדר ועור"), stats = emptyList(),
+            preview = preview, onPause = null, onCancel = null,
+        )
+        return
+    }
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Image(
@@ -282,32 +311,21 @@ fun PhotoHome(preview: Bitmap, name: String, settings: CensorSettings, busy: Boo
             SettingsSummary(settings, onEditSettings)
         }
         BottomBar {
-            if (busy) CircularProgressIndicator(color = Palette.Shield400)
-            else PrimaryButton(tr("צנזור התמונה"), Icons.Filled.PlayArrow, onClick = onStart)
+            PrimaryButton(tr("צנזור התמונה"), null, trailingArrow = true, onClick = onStart)
         }
     }
 }
 
-/** The censored photo: compare, people list with overrides, save / share. */
+/** The censored photo: the design's done step (compare, save, more editing, share), then the people and more. */
 @Composable
 fun PhotoResultScreen(
     result: Processor.PhotoResult, draft: Map<Int, Override>, thumbnail: (Int) -> Bitmap?, busy: Boolean,
     onOverride: (Int, Override) -> Unit, onApply: () -> Unit, onSave: () -> Unit, onShare: () -> Unit, onAdjust: () -> Unit, onNew: () -> Unit,
-    saved: Boolean, settings: CensorSettings, extra: ExtraActions? = null,
+    saved: Boolean, settings: CensorSettings, extra: ExtraActions? = null, onProjects: () -> Unit = onNew,
 ) {
     var view by remember { mutableStateOf("compare") }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(Palette.Emerald.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
-                Icon(Icons.Filled.CheckCircle, null, tint = Palette.Emerald)
-            }
-            Spacer(Modifier.width(12.dp))
-            Column {
-                Text(tr("התמונה צונזרה."), color = Palette.Text, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
-                Text(tr("בדקו את התוצאה, ואז שמרו או שתפו."), color = Palette.Ink300, fontSize = 12.5.sp)
-            }
-        }
-        Segmented(listOf("compare" to tr("השוואה"), "censored" to tr("מצונזר"), "original" to tr("מקור")), view, { view = it })
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        DoneHeader()
         if (view == "compare") CompareImage(result.original, result.censored)
         else {
             val bmp = if (view == "original") result.original else result.censored
@@ -316,20 +334,16 @@ fun PhotoResultScreen(
                 modifier = Modifier.fillMaxWidth().aspectRatio(bmp.width.toFloat() / bmp.height).clip(RoundedCornerShape(16.dp)),
             )
         }
+        Segmented(listOf("compare" to tr("השוואה"), "censored" to tr("מצונזר"), "original" to tr("מקור")), view, { view = it })
         if (busy) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Palette.Shield400) }
-        PrimaryButton(if (saved) tr("נשמרה בגלריה") else tr("שמירה בגלריה"), Icons.Filled.Download, enabled = !saved, onClick = onSave)
-        GlassOutlined(onClick = onShare, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(16.dp)) {
-            Icon(Icons.Filled.Share, null)
-            Spacer(Modifier.width(8.dp))
-            Text(tr("שיתוף"))
-        }
+        ResultButtons(saved, onSave, onEdit = extra?.onBrush ?: onAdjust, onShare = onShare, onProjects = onProjects)
+        SectionHeading(tr("עוד אפשרויות"))
         extra?.let { MoreActionsRow(it) }
         PeoplePanel(result.people, draft, thumbnail, onOverride, onApply, settings)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             GlassOutlined(onClick = onAdjust, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) { Icon(Icons.Filled.Refresh, null); Spacer(Modifier.width(6.dp)); Text(tr("כוונון")) }
             GlassOutlined(onClick = onNew, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) { Icon(Icons.Filled.Image, null); Spacer(Modifier.width(6.dp)); Text(tr("תמונה חדשה")) }
         }
-        PrivacyPill()
     }
 }
 

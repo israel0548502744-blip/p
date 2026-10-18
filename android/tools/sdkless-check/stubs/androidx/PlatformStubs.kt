@@ -6,3 +6,4 @@ import androidx.compose.runtime.ProvidableCompositionLocal
 import androidx.compose.runtime.staticCompositionLocalOf
 
 val LocalContext: ProvidableCompositionLocal<Context> = staticCompositionLocalOf { error("stub") }
+val LocalConfiguration: ProvidableCompositionLocal<android.content.res.Configuration> = staticCompositionLocalOf { error("stub") }

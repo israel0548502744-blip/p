@@ -58,6 +58,14 @@ import com.blueshield.app.engine.History
 import com.blueshield.app.engine.JobState
 import com.blueshield.app.service.ProcessingService
 import com.blueshield.app.ui.AboutScreen
+import com.blueshield.app.ui.ActiveWork
+import com.blueshield.app.ui.FlowHeader
+import com.blueshield.app.ui.PlusMenu
+import com.blueshield.app.ui.ProScreen
+import com.blueshield.app.ui.ProfileDialog
+import com.blueshield.app.ui.Stepper
+import com.blueshield.app.ui.ToolActions
+import com.blueshield.app.ui.ToolsScreen
 import com.blueshield.app.ui.BatchScreen
 import com.blueshield.app.ui.BlueShieldTheme
 import com.blueshield.app.ui.BottomNav
@@ -138,6 +146,7 @@ class MainActivity : ComponentActivity() {
             }
             ACTION_PICK_PHOTO, ACTION_PICK_VIDEO -> pendingPick.value = intent.action
         }
+        intent?.getStringExtra(EXTRA_SCREEN)?.let { screen.value = it }
     }
 
     companion object {
@@ -147,6 +156,9 @@ class MainActivity : ComponentActivity() {
         const val ACTION_PICK_VIDEO = "com.blueshield.app.PICK_VIDEO"
         /** A picker the widget or tile asked for, opened once the screen is up. */
         val pendingPick = MutableStateFlow<String?>(null)
+        /** A screen to open at start ("drawer", "tools", "projects", "settings", "pro", "plus"): the UI screenshots use it. */
+        const val EXTRA_SCREEN = "com.blueshield.app.SCREEN"
+        val screen = MutableStateFlow<String?>(null)
     }
 }
 
@@ -196,10 +208,18 @@ private fun Main(vm: AppViewModel, ui: UiPrefs) {
     val presets by vm.presets.collectAsStateWithLifecycle()
     val trim by vm.trim.collectAsStateWithLifecycle()
     val queue by vm.queue.collectAsStateWithLifecycle()
+    val overview by vm.overview.collectAsStateWithLifecycle()
     val pendingPick by MainActivity.pendingPick.collectAsStateWithLifecycle()
+    val shotScreen by MainActivity.screen.collectAsStateWithLifecycle()
 
     var tab by remember { mutableStateOf(Tab.HOME) }
     var page by remember { mutableStateOf<Page?>(null) }
+    /** The projects tab showing only what is in the gallery ("הקבצים שלי"). */
+    var filesOnly by remember { mutableStateOf(false) }
+    /** The work in progress was put aside (back during processing): the home screen shows a card back to it. */
+    var minimized by remember { mutableStateOf(false) }
+    var plusOpen by remember { mutableStateOf(false) }
+    var profileOpen by remember { mutableStateOf(false) }
     var reportOpen by remember { mutableStateOf(false) }
     var whatsNew by remember { mutableStateOf(ui.seenVersion != BuildInfo.version) }
     var appliedRanges by remember { mutableStateOf(ranges) }
@@ -216,7 +236,7 @@ private fun Main(vm: AppViewModel, ui: UiPrefs) {
             (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("BlueShield crash report", report))
         }, onClose = { crashReport = null })
     }
-    if (whatsNew && crashReport == null) WhatsNewDialog {
+    if (whatsNew && crashReport == null && shotScreen == null) WhatsNewDialog {
         whatsNew = false
         vm.updateUi { it.copy(seenVersion = BuildInfo.version) }
     }
@@ -231,8 +251,8 @@ private fun Main(vm: AppViewModel, ui: UiPrefs) {
     // one picker for photos (one or several) and one for videos (one, or several in a queue)
     val pickPhotos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(100)) { vm.onPickedMany(it) }
     val pickVideos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(20)) { vm.onPickedMany(it) }
-    val choosePhotos = { tab = Tab.HOME; page = null; pickPhotos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
-    val chooseVideos = { tab = Tab.HOME; page = null; pickVideos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)) }
+    val choosePhotos = { tab = Tab.HOME; page = null; plusOpen = false; pickPhotos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+    val chooseVideos = { tab = Tab.HOME; page = null; plusOpen = false; pickVideos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)) }
     LaunchedEffect(pendingPick) {
         when (pendingPick) {
             MainActivity.ACTION_PICK_PHOTO -> choosePhotos()
@@ -269,6 +289,7 @@ private fun Main(vm: AppViewModel, ui: UiPrefs) {
         whatsApp = { e -> vm.whatsAppEntry(e)?.let(start) },
         delete = vm::deleteEntry,
     )
+    val toProjects = { tab = Tab.PROJECTS; filesOnly = false; page = null }
 
     val flow = when {
         job.running -> Flow.PROCESSING
@@ -283,30 +304,52 @@ private fun Main(vm: AppViewModel, ui: UiPrefs) {
         else -> Flow.START
     }
     // anything new to work on (picked, shared, finished) brings the home tab forward
-    LaunchedEffect(flow) { if (flow != Flow.START) { tab = Tab.HOME; page = null } }
+    LaunchedEffect(flow) {
+        minimized = false
+        if (flow != Flow.START) { tab = Tab.HOME; page = null }
+    }
     LaunchedEffect(viewer) { if (viewer != null) page = null }
+    // the screenshots of the instrumented test open a tab, a page or the side menu directly
+    LaunchedEffect(shotScreen) {
+        when (shotScreen) {
+            "drawer" -> drawer.open()
+            "tools" -> tab = Tab.TOOLS
+            "projects" -> tab = Tab.PROJECTS
+            "settings" -> tab = Tab.SETTINGS
+            "pro" -> page = Page.PRO
+            "plus" -> plusOpen = true
+        }
+    }
 
-    BackHandler(enabled = drawer.isOpen) { scope.launch { drawer.close() } }
-    BackHandler(enabled = viewer != null) { vm.closeViewer() }
-    BackHandler(enabled = viewer == null && page != null) { page = null }
-    BackHandler(enabled = viewer == null && page == null && tab != Tab.HOME) { tab = Tab.HOME }
-    BackHandler(enabled = viewer == null && page == null && tab == Tab.HOME) {
+    /** One step back inside a photo / video: what the arrow at the top and the phone's back button do. */
+    val flowBack: () -> Unit = {
         when (flow) {
             Flow.RESULT -> vm.adjust()
             Flow.PHOTO_RESULT, Flow.CHOOSE_PHOTO -> vm.adjustPhoto()
             Flow.BATCH -> vm.closeBatch()
-            Flow.PHOTO -> vm.clearPhoto()
+            Flow.PHOTO -> if (!photoBusy) vm.clearPhoto() else minimized = true
             Flow.VIDEO, Flow.CHOOSE_VIDEO -> vm.clearVideo()
             Flow.QUEUE -> vm.clearQueue()
-            else -> activity.finish()
+            Flow.PROCESSING -> minimized = true
+            Flow.START -> Unit
         }
+    }
+    val inFlow = viewer == null && page == null && tab == Tab.HOME && flow != Flow.START && !minimized
+
+    BackHandler(enabled = drawer.isOpen) { scope.launch { drawer.close() } }
+    BackHandler(enabled = plusOpen) { plusOpen = false }
+    BackHandler(enabled = viewer != null) { vm.closeViewer() }
+    BackHandler(enabled = viewer == null && page != null) { page = null }
+    BackHandler(enabled = viewer == null && page == null && tab != Tab.HOME) { tab = Tab.HOME }
+    BackHandler(enabled = viewer == null && page == null && tab == Tab.HOME) {
+        if (inFlow) flowBack() else activity.finish()
     }
 
     val drawerSelected = when {
         page == Page.PRESETS -> DrawerItem.PRESETS
         page == Page.PRIVACY -> DrawerItem.PRIVACY
         page == Page.FAQ -> DrawerItem.FAQ
-        tab == Tab.ACTIVITY -> DrawerItem.FILES
+        tab == Tab.PROJECTS -> if (filesOnly) DrawerItem.FILES else DrawerItem.PROJECTS
         tab == Tab.SETTINGS -> DrawerItem.SETTINGS
         tab == Tab.HOME && page == null -> DrawerItem.HOME
         else -> null
@@ -317,12 +360,13 @@ private fun Main(vm: AppViewModel, ui: UiPrefs) {
         gesturesEnabled = drawer.isOpen,
         drawerContent = {
             ModalDrawerSheet(drawerContainerColor = Palette.Ink900, drawerShape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp)) {
-                DrawerContent(drawerSelected) { item ->
+                DrawerContent(drawerSelected, ui.name, ui.email, onClose = { scope.launch { drawer.close() } }) { item ->
                     scope.launch { drawer.close() }
                     vm.closeViewer()
                     when (item) {
-                        DrawerItem.HOME -> { tab = Tab.HOME; page = null }
-                        DrawerItem.FILES -> { tab = Tab.ACTIVITY; page = null }
+                        DrawerItem.HOME -> { tab = Tab.HOME; page = null; minimized = false }
+                        DrawerItem.FILES -> { tab = Tab.PROJECTS; filesOnly = true; page = null }
+                        DrawerItem.PROJECTS -> toProjects()
                         DrawerItem.BATCH -> choosePhotos()
                         DrawerItem.PRESETS -> page = Page.PRESETS
                         DrawerItem.SETTINGS -> { tab = Tab.SETTINGS; page = null }
@@ -330,6 +374,7 @@ private fun Main(vm: AppViewModel, ui: UiPrefs) {
                         DrawerItem.FAQ -> page = Page.FAQ
                         DrawerItem.CONTACT -> runCatching { start(vm.contactIntent()) }
                         DrawerItem.SHARE -> runCatching { start(vm.appShareIntent()) }
+                        DrawerItem.PROFILE -> profileOpen = true
                     }
                 }
             }
@@ -337,17 +382,29 @@ private fun Main(vm: AppViewModel, ui: UiPrefs) {
     ) {
         GlassBackground {
             Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-                val back: (() -> Unit)? = when {
-                    viewer != null -> vm::closeViewer
-                    page != null -> { { page = null } }
-                    else -> null
+                when {
+                    viewer != null -> FlowHeader(if (batch != null) tr("עריכה קבוצתית") else tr("הקבצים שלי"), vm::closeViewer)
+                    page != null -> FlowHeader(pageTitle(page!!)) { page = null }
+                    inFlow -> {
+                        FlowHeader(flowTitle(flow), flowBack)
+                        val (step, running) = when (flow) {
+                            Flow.VIDEO, Flow.QUEUE -> 0 to false
+                            Flow.PHOTO -> if (photoBusy) 1 to true else 0 to false
+                            Flow.PROCESSING -> (if (job.passIndex == 2) 3 else 1) to !job.paused
+                            Flow.CHOOSE_VIDEO, Flow.CHOOSE_PHOTO -> 2 to false
+                            Flow.BATCH -> if (batch?.finished == true) 4 to false else 1 to true
+                            else -> 4 to false
+                        }
+                        Stepper(step, running, Modifier.padding(bottom = 6.dp))
+                    }
+                    else -> TopBar(onMenu = { scope.launch { drawer.open() } }, onPro = { page = Page.PRO })
                 }
-                TopBar(onMenu = { scope.launch { drawer.open() } }, onBack = back)
                 error?.let { ErrorBanner(it, vm::dismissError) }
                 val screenKey: Any = when {
                     viewer != null -> "viewer"
                     page != null -> page!!
                     tab != Tab.HOME -> tab
+                    minimized -> Flow.START
                     else -> flow
                 }
                 Box(Modifier.weight(1f)) {
@@ -366,25 +423,47 @@ private fun Main(vm: AppViewModel, ui: UiPrefs) {
                             }
                             Page.PRIVACY -> PrivacyScreen()
                             Page.FAQ -> FaqScreen()
+                            Page.PRO -> ProScreen()
+                            Page.ABOUT -> AboutScreen(
+                                onWhatsNew = { whatsNew = true }, onFaq = { page = Page.FAQ }, onPrivacy = { page = Page.PRIVACY },
+                                onOnboarding = { vm.updateUi { it.copy(onboarded = false) } },
+                            )
                             Page.PRESETS -> PresetsScreen(presets, settings, vm::applyPreset, vm::savePreset, vm::deletePreset)
                             Page.BRUSH -> photoResult?.let { r ->
-                                BrushScreen(
+                                if (photoBusy) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    androidx.compose.material3.CircularProgressIndicator(color = Palette.Shield400)
+                                } else BrushScreen(
                                     r.censored, Color(com.blueshield.core.CensorSettings.parseColor(settings.color) or -0x1000000), strokes,
                                     onApply = { vm.setStrokes(it); page = null }, onCancel = { page = null },
                                 )
                             }
-                            Tab.ACTIVITY -> HistoryScreen(history, ui.autoSave, { v -> vm.updateUi { it.copy(autoSave = v) } }, onOpen = { i -> vm.openViewer(history.map { it.id }, i) })
-                            Tab.ABOUT -> AboutScreen(
-                                onWhatsNew = { whatsNew = true }, onFaq = { page = Page.FAQ }, onPrivacy = { page = Page.PRIVACY },
-                                onOnboarding = { vm.updateUi { it.copy(onboarded = false) } },
+                            Tab.PROJECTS -> HistoryScreen(
+                                history, ui.autoSave, { v -> vm.updateUi { it.copy(autoSave = v) } },
+                                actions = entryActions, onOpen = vm::openViewer, galleryOnly = filesOnly,
+                            )
+                            Tab.TOOLS -> ToolsScreen(
+                                settings, ui, vm::updateSettings, vm::updateUi,
+                                ToolActions(
+                                    photo = choosePhotos, video = chooseVideos, batch = choosePhotos, queue = chooseVideos,
+                                    presets = { page = Page.PRESETS }, privacy = { page = Page.PRIVACY },
+                                    guide = { vm.updateUi { it.copy(onboarded = false) } }, faq = { page = Page.FAQ },
+                                    report = { reportOpen = true }, about = { page = Page.ABOUT },
+                                ),
                             )
                             Tab.SETTINGS -> SettingsScreen(
                                 settings, enabled = !job.running && !photoBusy, onChange = vm::updateSettings,
                                 ui = ui, onUi = vm::updateUi, onPresets = { page = Page.PRESETS },
+                                onProfile = { profileOpen = true }, onAbout = { page = Page.ABOUT },
                             )
                             Flow.START -> StartScreen(
-                                loading, history, settings, ui, onPhoto = choosePhotos, onVideo = chooseVideos, onAll = { tab = Tab.ACTIVITY },
-                                actions = entryActions, onSettings = vm::updateSettings, onUi = vm::updateUi, onPrivacy = { page = Page.PRIVACY },
+                                loading, history, ui.name, onPhoto = choosePhotos, onVideo = chooseVideos, onAll = toProjects,
+                                actions = entryActions,
+                                onGuide = { vm.updateUi { it.copy(onboarded = false) } }, onSettings = { tab = Tab.SETTINGS },
+                                onPrivacy = { page = Page.PRIVACY }, onPresets = { page = Page.PRESETS },
+                                active = if (flow != Flow.START) ActiveWork(
+                                    if (flow == Flow.PROCESSING) tr("עיבוד הסרטון ממשיך ברקע") else tr("חזרה לעבודה שהתחלת"),
+                                    if (flow == Flow.PROCESSING) job.percent.toInt() else null,
+                                ) { minimized = false } else null,
                             )
                             Flow.VIDEO -> video?.let { v ->
                                 VideoHome(
@@ -395,15 +474,20 @@ private fun Main(vm: AppViewModel, ui: UiPrefs) {
                             Flow.QUEUE -> QueueScreen(queue, settings, vm::removeFromQueue, onStart = { withNotifications(vm::startQueue) }, onClear = vm::clearQueue,
                                 onEditSettings = { tab = Tab.SETTINGS })
                             Flow.PROCESSING -> ProcessingScreen(job, vm::pause, vm::resume, vm::cancel)
-                            Flow.CHOOSE_VIDEO -> ChooseScreen(job.people, vm::thumbnail, busy = false, onConfirm = vm::confirmWho, onCancel = vm::clearVideo, video = true)
+                            Flow.CHOOSE_VIDEO -> ChooseScreen(
+                                job.people, vm::thumbnail, busy = false, onConfirm = vm::confirmWho, onCancel = vm::clearVideo, video = true, overview = overview,
+                            )
                             Flow.CHOOSE_PHOTO -> photoResult?.let { r ->
-                                ChooseScreen(r.people, vm::thumbnail, photoBusy, onConfirm = vm::confirmWho, onCancel = vm::adjustPhoto, video = false)
+                                ChooseScreen(
+                                    r.people, vm::thumbnail, photoBusy, onConfirm = vm::confirmWho, onCancel = vm::adjustPhoto, video = false, overview = overview,
+                                    onAddArea = { pick -> vm.confirmWho(pick); page = Page.BRUSH },
+                                )
                             }
                             Flow.RESULT -> {
                                 LaunchedEffect(job.version) { appliedRanges = ranges }
                                 ResultScreen(
                                     video!!, job, job.output!!.toUri(), draft, vm::thumbnail, vm::setOverride, vm::applyOverrides, vm::save,
-                                    onShare = { vm.shareIntent()?.let(start) }, onAdjust = vm::adjust, onNew = vm::clearVideo,
+                                    onShare = { vm.shareIntent()?.let(start) }, onAdjust = vm::adjust, onNew = { vm.clearVideo(); chooseVideos() },
                                     saved = saved, settings = settings,
                                     ranges = ranges, onRange = vm::setRange, rangesChanged = ranges != appliedRanges,
                                     extra = ExtraActions(
@@ -411,6 +495,7 @@ private fun Main(vm: AppViewModel, ui: UiPrefs) {
                                         onReport = { reportOpen = true },
                                         onDeleteOriginal = { askDeleteOriginal(vm.currentVideoEntry()) },
                                     ),
+                                    onProjects = { vm.clearVideo(); toProjects() },
                                 )
                             }
                             Flow.PHOTO -> photo?.let { p ->
@@ -428,6 +513,7 @@ private fun Main(vm: AppViewModel, ui: UiPrefs) {
                                         onDeleteOriginal = { askDeleteOriginal(vm.currentPhotoEntry()) },
                                         onBrush = { page = Page.BRUSH },
                                     ),
+                                    onProjects = { vm.clearPhoto(); toProjects() },
                                 )
                             }
                             Flow.BATCH -> batch?.let { b ->
@@ -447,18 +533,38 @@ private fun Main(vm: AppViewModel, ui: UiPrefs) {
                     }
                     SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(12.dp))
                 }
-                if (viewer == null && page != Page.BRUSH) {
-                    BottomNav(tab, onTab = { t -> tab = t; page = null })
+                if (!inFlow && viewer == null && page != Page.BRUSH) {
+                    BottomNav(tab, onTab = { t -> tab = t; page = null; if (t == Tab.PROJECTS) filesOnly = false }, onPlus = { plusOpen = true })
                 }
             }
+            if (plusOpen) PlusMenu(onPhoto = choosePhotos, onVideo = chooseVideos, onDismiss = { plusOpen = false })
         }
     }
 
+    if (profileOpen) ProfileDialog(ui.name, ui.email, onSave = { n, e -> profileOpen = false; vm.updateUi { it.copy(name = n, email = e) } }, onDismiss = { profileOpen = false })
     if (reportOpen) ReportDialog(
         hasResult = photoResult != null || job.output != null,
         onSend = { note, c, o, d -> reportOpen = false; runCatching { start(vm.reportIntent(note, c, o, d)) } },
         onDismiss = { reportOpen = false },
     )
+}
+
+private fun pageTitle(p: Page) = when (p) {
+    Page.PRIVACY -> tr("פרטיות ואבטחה")
+    Page.FAQ -> tr("שאלות נפוצות")
+    Page.PRESETS -> tr("תבניות שמירה")
+    Page.BRUSH -> tr("תיקון במכחול")
+    Page.ABOUT -> tr("אודות")
+    Page.PRO -> "BlueShield Pro"
+}
+
+private fun flowTitle(f: Flow) = when (f) {
+    Flow.VIDEO, Flow.CHOOSE_VIDEO -> tr("צנזור סרטון")
+    Flow.PHOTO, Flow.CHOOSE_PHOTO -> tr("צנזור תמונה")
+    Flow.QUEUE -> tr("תור סרטונים")
+    Flow.PROCESSING -> tr("עיבוד הסרטון")
+    Flow.BATCH -> tr("עריכה קבוצתית")
+    Flow.RESULT, Flow.PHOTO_RESULT, Flow.START -> ""
 }
 
 /** Shown on the launch after a crash: the report can be copied or shared so the cause can be fixed. */

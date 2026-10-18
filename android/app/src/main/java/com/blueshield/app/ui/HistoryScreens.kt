@@ -59,6 +59,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -125,34 +127,49 @@ fun RecentStrip(entries: List<History.Entry>, onOpen: (Int) -> Unit, onAll: () -
     }
 }
 
-/** All recent results: the last 20 photos and the last 5 videos. */
+/** The "פרויקטים" tab: every recent result (the last 20 photos and 5 videos), filtered by kind or by "in the gallery". */
 @Composable
-fun HistoryScreen(entries: List<History.Entry>, autoSave: Boolean, onAutoSave: (Boolean) -> Unit, onOpen: (Int) -> Unit) {
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-        Text(tr("האחרונים"), color = Palette.Text, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
+fun HistoryScreen(
+    entries: List<History.Entry>, autoSave: Boolean, onAutoSave: (Boolean) -> Unit,
+    actions: EntryActions, onOpen: (List<Long>, Int) -> Unit, galleryOnly: Boolean = false,
+) {
+    var filter by remember(galleryOnly) { mutableStateOf(if (galleryOnly) "gallery" else "all") }
+    val shown = when (filter) {
+        "photos" -> entries.filter { !it.video }
+        "videos" -> entries.filter { it.video }
+        "gallery" -> entries.filter { it.gallery != null }
+        else -> entries
+    }
+    val rowActions = EntryActions({ i -> onOpen(shown.map { it.id }, i) }, actions.save, actions.share, actions.whatsApp, actions.delete)
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(top = 6.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(if (galleryOnly) tr("הקבצים שלי") else tr("פרויקטים"), color = Palette.Text, fontSize = 24.sp, fontWeight = FontWeight.Bold)
         Text(
             tr("{0} התמונות האחרונות ו-{1} הסרטונים האחרונים נשמרים כאן, גם אחרי סגירת האפליקציה. לחיצה פותחת, ואפשר לדפדף ביניהם.", History.MAX_PHOTOS, History.MAX_VIDEOS),
-            color = Palette.Ink300, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(vertical = 6.dp),
+            color = Palette.Ink300, fontSize = 13.sp, lineHeight = 18.sp,
         )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            for ((k, label) in listOf("all" to tr("הכול"), "photos" to tr("תמונות"), "videos" to tr("סרטונים"), "gallery" to tr("בגלריה"))) {
+                val on = filter == k
+                Text(
+                    label, color = if (on) Color.White else Palette.Ink200, fontSize = 13.sp, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
+                    modifier = Modifier.clip(RoundedCornerShape(50)).background(if (on) Palette.Shield500 else Palette.Ink850)
+                        .border(1.dp, if (on) Palette.Shield400 else Palette.Border, RoundedCornerShape(50))
+                        .clickable { filter = k }.padding(horizontal = 14.dp, vertical = 7.dp),
+                )
+            }
+        }
+        Panel(Modifier.fillMaxWidth()) {
+            if (shown.isEmpty()) Text(tr("עדיין אין כאן כלום. תמונות וסרטונים שתצנזרו יופיעו כאן."), color = Palette.Ink300, fontSize = 14.sp, modifier = Modifier.padding(20.dp))
+            shown.forEachIndexed { i, e ->
+                if (i > 0) androidx.compose.material3.HorizontalDivider(color = Palette.Border, modifier = Modifier.padding(horizontal = 14.dp))
+                RecentRow(e, i, rowActions)
+            }
+        }
         ToggleRow(
             Icons.Filled.Download, tr("שמירה אוטומטית בגלריה"),
             tr("כל תמונה וסרטון שמסיימים לצנזר נשמרים מיד בגלריה של הטלפון (תיקייה BlueShield)."),
             autoSave, onAutoSave,
         )
-        Spacer(Modifier.height(10.dp))
-        if (entries.isEmpty()) {
-            Panel(Modifier.fillMaxWidth()) {
-                Text(tr("עדיין אין כאן כלום. תמונות וסרטונים שתצנזרו יופיעו כאן."), color = Palette.Ink300, fontSize = 14.sp, modifier = Modifier.padding(20.dp))
-            }
-        } else {
-            LazyVerticalGrid(
-                GridCells.Adaptive(104.dp), Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(bottom = 16.dp),
-            ) {
-                itemsIndexed(entries, key = { _, e -> e.id }) { i, e -> Thumb(e, Modifier.aspectRatio(1f).clickable { onOpen(i) }) }
-            }
-        }
     }
 }
 
@@ -210,7 +227,7 @@ fun ViewerScreen(
             Box(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
                 if (e.video) {
                     if (page == pager.currentPage) {
-                        SinglePlayer(Uri.fromFile(java.io.File(e.file)), e.width.toFloat() / e.height.coerceAtLeast(1), Modifier.fillMaxWidth())
+                        SinglePlayer(Uri.fromFile(java.io.File(e.file)), e.width.toFloat() / e.height.coerceAtLeast(1), Modifier.fillMaxSize())
                     } else {
                         Thumb(e, Modifier.fillMaxWidth().aspectRatio(e.width.toFloat() / e.height.coerceAtLeast(1)))
                     }

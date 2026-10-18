@@ -32,6 +32,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCut
@@ -81,21 +85,30 @@ import com.blueshield.core.gender.Override
 import com.blueshield.core.pipeline.PersonSummary
 
 @Composable
-fun PrimaryButton(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector, enabled: Boolean = true, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(18.dp)
+fun PrimaryButton(
+    text: String, icon: androidx.compose.ui.graphics.vector.ImageVector?, enabled: Boolean = true, trailingArrow: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(16.dp)
     Box(
         Modifier.fillMaxWidth().height(56.dp).clip(shape)
-            .background(if (enabled) Glass.Accent else Brush.linearGradient(listOf(Palette.VeilStrong, Palette.Veil)))
-            .background(Brush.verticalGradient(listOf(Color(0x2EFFFFFF), Color.Transparent)))
-            .border(1.dp, Brush.verticalGradient(listOf(Color(0x66FFFFFF), Color(0x0FFFFFFF))), shape)
+            .background(if (enabled) Brush.horizontalGradient(listOf(Palette.Shield400, Palette.Shield500, Palette.Shield600)) else Brush.linearGradient(listOf(Palette.VeilStrong, Palette.Veil)))
+            .background(Brush.verticalGradient(listOf(Color(0x26FFFFFF), Color.Transparent)))
+            .border(1.dp, Brush.verticalGradient(listOf(Color(0x55FFFFFF), Color(0x0FFFFFFF))), shape)
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             val tint = if (enabled) Color.White else Palette.Ink300
-            Icon(icon, null, tint = tint)
-            Spacer(Modifier.width(8.dp))
+            if (icon != null) {
+                Icon(icon, null, tint = tint)
+                Spacer(Modifier.width(8.dp))
+            }
             Text(text, color = tint, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            if (trailingArrow) {
+                Spacer(Modifier.width(10.dp))
+                DesignArrow(tint)
+            }
         }
     }
 }
@@ -220,108 +233,146 @@ private val STEPS get() = listOf(
 @Composable
 fun ProcessingScreen(job: JobState, onPause: () -> Unit, onResume: () -> Unit, onCancel: () -> Unit) {
     val active = STEPS.indexOfFirst { it.first == job.stage }.let { if (it < 0) 0 else it }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Box(Modifier.fillMaxWidth().aspectRatio(16f / 10f).clip(RoundedCornerShape(16.dp)).background(Color.Black), contentAlignment = Alignment.Center) {
-            val p: Bitmap? = job.preview
-            if (p != null) Image(p.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
-            else CircularProgressIndicator(color = Palette.Shield300)
-            if (!job.paused) {
-                val scan = rememberInfiniteTransition(label = "scan")
-                val y by scan.animateFloat(0f, 1f, infiniteRepeatable(tween(2400, easing = LinearEasing), RepeatMode.Reverse), label = "y")
-                Canvas(Modifier.fillMaxSize()) {
-                    drawRect(
-                        Brush.verticalGradient(listOf(Color.Transparent, Palette.Shield400.copy(alpha = 0.25f), Color.Transparent), startY = size.height * y - 40f, endY = size.height * y + 40f),
-                        topLeft = Offset(0f, size.height * y - 40f), size = Size(size.width, 80f),
-                    )
-                }
+    ProcessingView(
+        percent = job.percent, paused = job.paused,
+        title = if (job.paused) tr("מושהה") else tr("מעבד את הסרטון שלך..."),
+        sub = STEPS[active].second,
+        stats = listOf(
+            (if (job.passIndex == 2) tr("רינדור") else tr("ניתוח")) + " " + ltr("${job.frame} / ${job.totalFrames}"),
+            if (job.paused) tr("מושהה") else formatEta(job.etaSeconds),
+            if (job.fps > 0) ltr("%.1f fps".format(job.fps)) else "",
+        ).filter { it.isNotEmpty() },
+        preview = job.preview,
+        onPause = if (job.paused) onResume else onPause, onCancel = onCancel,
+    )
+}
+
+/**
+ * The design's processing step: a large ring with the percentage, what is happening now, the three privacy
+ * promises, the live preview, and the way to pause or cancel. [percent] null: no measure (a photo).
+ */
+@Composable
+fun ProcessingView(
+    percent: Float?, paused: Boolean, title: String, sub: String, stats: List<String>, preview: Bitmap?,
+    onPause: (() -> Unit)?, onCancel: (() -> Unit)?,
+) {
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        BigRing(percent, paused)
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(title, color = Palette.Text, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(2.dp))
+            Text(tr("זה יכול לקחת מספר דקות"), color = Palette.Ink300, fontSize = 13.5.sp)
+            Spacer(Modifier.height(6.dp))
+            Text(sub, color = Palette.Shield300, fontSize = 13.sp)
+            if (stats.isNotEmpty()) Text(stats.joinToString("  ·  "), color = Palette.Ink400, fontSize = 12.sp)
+        }
+        Panel(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                PromiseRow(Icons.Filled.Check, tr("הצנזור מתבצע מקומית במכשיר"), Palette.Teal)
+                PromiseRow(Icons.Filled.Lock, tr("הקבצים לא עולים לשום שרת ולא נשלחים"), Palette.Ink200)
+                PromiseRow(Icons.Filled.Shield, tr("הפרטיות שלך נשמרת"), Palette.Ink200)
             }
+        }
+        if (preview != null) Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color.Black), contentAlignment = Alignment.Center) {
+            Image(preview.asImageBitmap(), null, Modifier.fillMaxWidth().aspectRatio(preview.width.toFloat() / preview.height.coerceAtLeast(1)), contentScale = ContentScale.Fit)
             Row(
                 Modifier.align(Alignment.TopStart).padding(10.dp).clip(RoundedCornerShape(50)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                StatusDot(if (job.paused) Palette.Amber else Color(0xFFEF4444))
+                StatusDot(if (paused) Palette.Amber else Color(0xFFEF4444))
                 Spacer(Modifier.width(6.dp))
-                Text(if (job.paused) tr("מושהה") else if (job.passIndex == 2) tr("תצוגה חיה של התוצאה") else tr("תצוגה חיה של הזיהוי"), color = Palette.Ink100, fontSize = 11.5.sp)
+                Text(tr("תצוגה חיה"), color = Color.White, fontSize = 11.5.sp)
             }
         }
-        Panel(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Ring(job.percent)
-                    Spacer(Modifier.width(16.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(if (job.paused) tr("מושהה") else STEPS[active].second, color = Palette.Text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                        Spacer(Modifier.height(8.dp))
-                        LinearProgressIndicator(
-                            progress = { job.percent / 100f }, modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(50)),
-                            color = Palette.Shield500, trackColor = Palette.Ink700, strokeCap = StrokeCap.Round,
-                        )
-                    }
-                }
-                Spacer(Modifier.height(14.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Chip(if (job.passIndex == 2) tr("רינדור פריים") else tr("ניתוח פריים"), ltr("${job.frame} / ${job.totalFrames}"), Modifier.weight(1f))
-                    Chip(tr("זמן שנותר"), if (job.paused) tr("מושהה") else formatEta(job.etaSeconds), Modifier.weight(1f))
-                }
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Chip(tr("מהירות"), if (job.fps > 0) "%.1f fps".format(job.fps) else "—", Modifier.weight(1f))
-                    Chip(tr("זמן שעבר"), formatDuration(job.elapsed), Modifier.weight(1f))
-                }
-                Spacer(Modifier.height(14.dp))
-                for ((i, step) in STEPS.withIndex()) StepRow(i, step.second, step.third, done = i < active, now = i == active, paused = job.paused)
-                Spacer(Modifier.height(14.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    GlassOutlined(onClick = if (job.paused) onResume else onPause, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) {
-                        Icon(if (job.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, null)
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (job.paused) tr("המשך") else tr("השהיה"))
-                    }
-                    GlassOutlined(onClick = onCancel, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) {
-                        Icon(Icons.Filled.Stop, null, tint = Palette.Danger)
-                        Spacer(Modifier.width(6.dp))
-                        Text(tr("ביטול"), color = Palette.DangerText)
-                    }
-                }
-            }
+        if (onPause != null) GlassOutlined(onClick = onPause, modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(16.dp)) {
+            Icon(if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, null)
+            Spacer(Modifier.width(6.dp))
+            Text(if (paused) tr("המשך") else tr("השהיה"))
         }
-        PrivacyPill()
+        if (onCancel != null) Box(
+            Modifier.fillMaxWidth().height(52.dp).glass(RoundedCornerShape(16.dp)).clickable(onClick = onCancel),
+            contentAlignment = Alignment.Center,
+        ) { Text(tr("ביטול עיבוד"), color = Palette.Danger, fontSize = 16.sp, fontWeight = FontWeight.SemiBold) }
     }
 }
 
 @Composable
-private fun Ring(percent: Float) {
-    val animated by animateFloatAsState(percent / 100f, tween(450), label = "ring")
-    Box(Modifier.size(84.dp), contentAlignment = Alignment.Center) {
+private fun PromiseRow(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String, tint: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(28.dp).clip(RoundedCornerShape(9.dp)).background(Palette.Ink800), contentAlignment = Alignment.Center) {
+            Icon(icon, null, tint = tint, modifier = Modifier.size(17.dp))
+        }
+        Spacer(Modifier.width(12.dp))
+        Text(text, color = Palette.Ink100, fontSize = 14.sp)
+    }
+}
+
+/** The ring of the design: violet into teal, the number large with a small "%" beside it. */
+@Composable
+private fun BigRing(percent: Float?, paused: Boolean) {
+    val animated by animateFloatAsState((percent ?: 0f) / 100f, tween(450), label = "ring")
+    val spin by rememberInfiniteTransition(label = "busy").animateFloat(
+        0f, 360f, infiniteRepeatable(tween(1600, easing = LinearEasing), RepeatMode.Restart), label = "spin",
+    )
+    Box(Modifier.size(196.dp), contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) {
-            drawArc(Palette.Ink700, 0f, 360f, false, style = Stroke(9.dp.toPx()))
-            drawArc(Brush.sweepGradient(listOf(Palette.Shield300, Palette.Shield600, Palette.Shield300)), -90f, 360f * animated, false, style = Stroke(9.dp.toPx(), cap = StrokeCap.Round))
+            val stroke = 14.dp.toPx()
+            val inset = stroke / 2 + 6.dp.toPx()
+            val arcSize = Size(size.width - 2 * inset, size.height - 2 * inset)
+            val tl = Offset(inset, inset)
+            drawCircle(Brush.radialGradient(listOf(Palette.Shield500.copy(alpha = 0.18f), Color.Transparent)), size.minDimension / 2)
+            drawArc(Palette.Ink800, 0f, 360f, false, tl, arcSize, style = Stroke(stroke))
+            val brush = Brush.sweepGradient(listOf(Palette.Teal, Palette.Shield400, Palette.Shield500, Palette.Teal))
+            if (percent == null) drawArc(brush, spin - 90f, 110f, false, tl, arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
+            else if (animated > 0f) drawArc(brush, -90f, 360f * animated, false, tl, arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
         }
-        Text("${percent.toInt()}%", color = Palette.Text, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+        if (percent != null) Row(verticalAlignment = Alignment.Bottom) {
+            Text("${percent.toInt()}", color = Palette.Text, fontSize = 50.sp, fontWeight = FontWeight.Bold, lineHeight = 52.sp)
+            Text("%", color = Palette.Ink200, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(bottom = 8.dp, start = 2.dp))
+        } else Icon(if (paused) Icons.Filled.Pause else Icons.Filled.Shield, null, tint = Palette.Shield300, modifier = Modifier.size(48.dp))
     }
 }
 
+/** The design's last step: the round tick, "העיבוד הושלם בהצלחה", and the line under it. */
 @Composable
-private fun StepRow(i: Int, label: String, sub: String, done: Boolean, now: Boolean, paused: Boolean) {
-    Row(
-        Modifier.fillMaxWidth().padding(vertical = 3.dp).clip(RoundedCornerShape(12.dp))
-            .background(if (now) Palette.Shield500.copy(alpha = 0.10f) else Palette.Veil).padding(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+fun DoneHeader(sub: String? = null) {
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
-            Modifier.size(26.dp).clip(CircleShape).background(if (done) Palette.Emerald else if (now) Palette.Shield500 else Palette.Ink700),
+            Modifier.size(64.dp).clip(CircleShape).background(Palette.Teal.copy(alpha = 0.08f)).border(2.dp, Palette.Teal, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) { Icon(Icons.Filled.Check, null, tint = Palette.Teal, modifier = Modifier.size(34.dp)) }
+        Spacer(Modifier.height(10.dp))
+        Text(tr("העיבוד הושלם בהצלחה"), color = Palette.Text, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+        if (sub != null) Text(sub, color = Palette.Ink300, fontSize = 13.sp)
+    }
+}
+
+/** Save, then "more editing" and share side by side, then back to the projects: the design's result buttons. */
+@Composable
+fun ResultButtons(saved: Boolean, onSave: () -> Unit, onEdit: () -> Unit, onShare: () -> Unit, onProjects: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        PrimaryButton(if (saved) tr("נשמר במכשיר") else tr("שמירה למכשיר"), if (saved) Icons.Filled.CheckCircle else Icons.Filled.Download, enabled = !saved, onClick = onSave)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            GlassOutlined(onClick = onEdit, modifier = Modifier.weight(1f).height(52.dp), shape = RoundedCornerShape(16.dp)) {
+                Icon(Icons.Filled.Edit, null); Spacer(Modifier.width(8.dp)); Text(tr("עריכה נוספת"))
+            }
+            GlassOutlined(onClick = onShare, modifier = Modifier.weight(1f).height(52.dp), shape = RoundedCornerShape(16.dp)) {
+                Icon(Icons.Filled.Share, null); Spacer(Modifier.width(8.dp)); Text(tr("שיתוף"))
+            }
+        }
+        Box(
+            Modifier.fillMaxWidth().height(52.dp).clip(RoundedCornerShape(16.dp)).border(1.dp, Palette.Shield500.copy(alpha = 0.45f), RoundedCornerShape(16.dp))
+                .clickable(onClick = onProjects),
             contentAlignment = Alignment.Center,
         ) {
-            when {
-                done -> Icon(Icons.Filled.CheckCircle, null, tint = Color.White, modifier = Modifier.size(18.dp))
-                now && !paused -> CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(15.dp))
-                else -> Text("${i + 1}", color = Palette.Ink300, fontSize = 11.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(tr("חזרה לפרויקטים"), color = Palette.Shield300, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.width(8.dp))
+                DesignArrow(Palette.Shield300)
             }
-        }
-        Spacer(Modifier.width(10.dp))
-        Column {
-            Text(label, color = if (done || now) Palette.Text else Palette.Ink400, fontSize = 13.5.sp, fontWeight = FontWeight.Medium)
-            Text(sub, color = Palette.Ink400, fontSize = 11.sp)
         }
     }
 }
@@ -334,30 +385,17 @@ fun ResultScreen(
     onOverride: (Int, Override) -> Unit, onApply: () -> Unit, onSave: () -> Unit, onShare: () -> Unit, onAdjust: () -> Unit, onNew: () -> Unit,
     saved: Boolean, settings: CensorSettings,
     ranges: Map<Int, ClosedFloatingPointRange<Double>> = emptyMap(), onRange: ((Int, ClosedFloatingPointRange<Double>?) -> Unit)? = null,
-    rangesChanged: Boolean = false, extra: ExtraActions? = null,
+    rangesChanged: Boolean = false, extra: ExtraActions? = null, onProjects: () -> Unit = onNew,
 ) {
-    var mode by remember { mutableStateOf(CompareMode.WIPE) }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(Palette.Emerald.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
-                Icon(Icons.Filled.CheckCircle, null, tint = Palette.Emerald)
-            }
-            Spacer(Modifier.width(12.dp))
-            Column {
-                Text(tr("הצנזור הושלם."), color = Palette.Text, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
-                Text(tr("בדקו את התוצאה, ואז שמרו או שתפו."), color = Palette.Ink300, fontSize = 12.5.sp)
-            }
-        }
-        Segmented(listOf(CompareMode.WIPE to tr("השוואה"), CompareMode.SPLIT to tr("מקור / מצונזר"), CompareMode.CENSORED to tr("מצונזר")), mode, { mode = it })
+    var mode by remember { mutableStateOf(CompareMode.CENSORED) }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        DoneHeader()
         key(job.version) {
             ComparePlayer(video.uri, censoredUri, video.width.toFloat() / video.height, mode, null, Modifier.fillMaxWidth())
         }
-        PrimaryButton(if (saved) tr("נשמר בגלריה") else tr("שמירה בגלריה"), Icons.Filled.Download, enabled = !saved, onClick = onSave)
-        GlassOutlined(onClick = onShare, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(16.dp)) {
-            Icon(Icons.Filled.Share, null)
-            Spacer(Modifier.width(8.dp))
-            Text(tr("שיתוף"))
-        }
+        Segmented(listOf(CompareMode.CENSORED to tr("מצונזר"), CompareMode.WIPE to tr("השוואה"), CompareMode.SPLIT to tr("מקור / מצונזר")), mode, { mode = it })
+        ResultButtons(saved, onSave, onEdit = onAdjust, onShare = onShare, onProjects = onProjects)
+        SectionHeading(tr("עוד אפשרויות"))
         extra?.let { MoreActionsRow(it) }
         PeoplePanel(job.people, draftOverrides, thumbnail, onOverride, onApply, settings, ranges, onRange, rangesChanged)
         Panel(Modifier.fillMaxWidth()) {
@@ -369,11 +407,9 @@ fun ResultScreen(
                 InfoRow(tr("פריימים שצונזרו"), ltr("${job.censoredFrames} / ${job.totalFrames}"))
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            GlassOutlined(onClick = onAdjust, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) { Icon(Icons.Filled.Refresh, null); Spacer(Modifier.width(6.dp)); Text(tr("כוונון")) }
-            GlassOutlined(onClick = onNew, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) { Icon(Icons.Filled.Movie, null); Spacer(Modifier.width(6.dp)); Text(tr("סרטון חדש")) }
+        GlassOutlined(onClick = onNew, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(16.dp)) {
+            Icon(Icons.Filled.Movie, null); Spacer(Modifier.width(6.dp)); Text(tr("סרטון חדש"))
         }
-        PrivacyPill()
     }
 }
 

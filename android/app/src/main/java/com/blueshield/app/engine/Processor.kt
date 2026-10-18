@@ -449,6 +449,61 @@ class Processor(private val context: Context) {
     /** People summaries for a new set of overrides (no re-render). */
     fun summaries(overrides: Map<Int, Override>): List<PersonSummary> = analysis?.summaries(settings, overrides) ?: emptyList()
 
+    /** One picture with the people found on it ([boxes]: fractions of the picture), for marking whom to censor. */
+    class Overview(val image: Bitmap, val timeSec: Double, val durationSec: Double, val boxes: Map<Int, android.graphics.RectF>)
+
+    private fun boxesOf(a: Analysis, frame: Int, aw: Int, ah: Int): Map<Int, android.graphics.RectF> {
+        val r = a.records.getOrNull(frame) ?: return emptyMap()
+        val out = LinkedHashMap<Int, android.graphics.RectF>()
+        for (k in 0 until r.personCount) {
+            val raw = r.persons[k * 5].toInt()
+            val id = a.aliases[raw] ?: raw
+            if (id !in a.people) continue
+            out[id] = android.graphics.RectF(
+                (r.persons[k * 5 + 1] / aw).coerceIn(0f, 1f), (r.persons[k * 5 + 2] / ah).coerceIn(0f, 1f),
+                (r.persons[k * 5 + 3] / aw).coerceIn(0f, 1f), (r.persons[k * 5 + 4] / ah).coerceIn(0f, 1f),
+            )
+        }
+        return out
+    }
+
+    /** The analysed photo with its people. */
+    fun photoOverview(): Overview? {
+        val a = photo ?: return null
+        val img = photoOriginal ?: return null
+        val (aw, ah) = Analyzer.scaledSize(img.width, img.height, spec.analysisMaxSide)
+        return Overview(img, 0.0, 0.0, boxesOf(a, 0, aw, ah))
+    }
+
+    /** The analysed frame where the most people are on screen (nearest the middle on a tie), read again from the video. */
+    fun videoOverview(): Overview? {
+        val a = analysis ?: return null
+        val m = meta ?: return null
+        if (a.records.isEmpty()) return null
+        val mid = a.records.size / 2
+        val best = a.records.indices.maxWithOrNull(compareBy<Int>({ i -> a.records[i].personCount }, { i -> -kotlin.math.abs(i - mid) })) ?: return null
+        val (aw, ah) = Analyzer.scaledSize(m.width, m.height, spec.analysisMaxSide)
+        val us = analysedPts.getOrNull(best) ?: (best * 1e6 / m.fps).toLong()
+        val mmr = android.media.MediaMetadataRetriever()
+        val frame = try {
+            mmr.setDataSource(context, m.uri)
+            mmr.getFrameAtTime(us, android.media.MediaMetadataRetriever.OPTION_CLOSEST)
+        } catch (_: Exception) {
+            null
+        } finally {
+            runCatching { mmr.release() }
+        } ?: return null
+        // some phones hand the frame over as stored, not turned upright
+        var img = frame
+        if ((img.width > img.height) != (m.width > m.height) && m.rotation % 180 != 0) {
+            val mx = android.graphics.Matrix().apply { postRotate(m.rotation.toFloat()) }
+            img = Bitmap.createBitmap(img, 0, 0, img.width, img.height, mx, true)
+        }
+        val side = maxOf(img.width, img.height)
+        if (side > 1280) img = Bitmap.createScaledBitmap(img, img.width * 1280 / side, img.height * 1280 / side, true)
+        return Overview(img, us / 1e6, m.durationUs / 1e6, boxesOf(a, best, aw, ah))
+    }
+
     fun personThumbnail(id: Int): Bitmap? = (analysis?.people?.get(id) ?: photo?.people?.get(id))?.thumbnail?.let { toBitmap(it) }
 
     private fun analysisPreview(frame: RgbImage, analyzer: Analyzer): Bitmap {

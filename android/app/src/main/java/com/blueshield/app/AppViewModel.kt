@@ -76,6 +76,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _choosingPhoto = MutableStateFlow(false)
     val choosingPhoto: StateFlow<Boolean> = _choosingPhoto.asStateFlow()
     /** Strokes painted by hand on the censored photo (kept across re-renders of the same photo). */
+    private val _overview = MutableStateFlow<Processor.Overview?>(null)
+    /** "Whom to censor": a picture with the people found marked on it. */
+    val overview: StateFlow<Processor.Overview?> = _overview
     private val _strokes = MutableStateFlow<List<BrushStroke>>(emptyList())
     val strokes: StateFlow<List<BrushStroke>> = _strokes.asStateFlow()
     private val thumbs = HashMap<Int, Bitmap?>()
@@ -140,7 +143,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             }
                         }
                     }
-                    JobState.Stage.CHOOSING -> thumbs.clear()
+                    JobState.Stage.CHOOSING -> {
+                        thumbs.clear()
+                        _overview.value = null
+                        launch(Dispatchers.IO) { _overview.value = runCatching { ProcessingRepository.processor?.videoOverview() }.getOrNull() }
+                    }
                     JobState.Stage.ERROR -> _error.value = tr("העיבוד נכשל: {0}", s.error?.lines()?.take(4)?.joinToString("\n"))
                     JobState.Stage.CANCELLED -> _error.value = tr("העיבוד בוטל.")
                     else -> Unit
@@ -509,6 +516,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _draft.value = emptyMap()
                 thumbs.clear()
                 if (_ui.value.askWho && r.people.isNotEmpty()) {
+                    _overview.value = withContext(Dispatchers.Default) { runCatching { processor().photoOverview() }.getOrNull() }
                     _photoResult.value = r
                     _choosingPhoto.value = true
                 } else {

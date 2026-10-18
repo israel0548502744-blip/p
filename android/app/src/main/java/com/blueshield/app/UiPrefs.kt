@@ -26,11 +26,15 @@ data class UiPrefs(
     val onboarded: Boolean = false,
     /** The version whose "what's new" was last shown. */
     val seenVersion: String = "",
+    /** The user's name (the greeting, the side menu) and an e-mail shown under it; both stay on the phone. */
+    val name: String = "",
+    val email: String = "",
 ) {
     fun save(p: SharedPreferences) = p.edit()
         .putString("ui.theme", theme).putLong("ui.accent", accent).putString("ui.language", language).putFloat("ui.textScale", textScale)
         .putString("ui.photoFormat", photoFormat).putBoolean("ui.askWho", askWho).putBoolean("autoSave", autoSave)
-        .putBoolean("ui.onboarded", onboarded).putString("ui.seenVersion", seenVersion).apply()
+        .putBoolean("ui.onboarded", onboarded).putString("ui.seenVersion", seenVersion)
+        .putString("ui.name", name).putString("ui.email", email).apply()
 
     companion object {
         fun load(p: SharedPreferences) = UiPrefs(
@@ -43,6 +47,8 @@ data class UiPrefs(
             autoSave = p.getBoolean("autoSave", true),
             onboarded = p.getBoolean("ui.onboarded", false),
             seenVersion = p.getString("ui.seenVersion", "") ?: "",
+            name = p.getString("ui.name", "") ?: "",
+            email = p.getString("ui.email", "") ?: "",
         )
     }
 }
