@@ -44,6 +44,11 @@ MALE_MIN_CONFIDENCE = 0.8  # calling someone male needs at least this, whatever 
 # Older girls are therefore treated as adults (the safe side) — one tap on "Don't" in the people list keeps them.
 CHILD_MAX_AGE = 7.0
 MIN_AGE_VOTES = 6  # age observations needed before anyone can be called a child; until then: adult
+# The second model (face-api AgeGenderNet) calls girls and young-looking women male: on a face it estimates at
+# SECOND_MODEL_MIN_AGE or younger its gender vote doesn't count, fully from SECOND_MODEL_FULL_AGE (linear between).
+# (A smiling 20-year-old with her hair tied back: age 13.6, P(male) 0.96, which outvoted FaceRes's unsure 0.68.)
+SECOND_MODEL_MIN_AGE = 14.0
+SECOND_MODEL_FULL_AGE = 18.0
 FACE_INPUT = 128
 GENDER_INPUT = 224
 AGE_INPUT = 112
@@ -281,7 +286,8 @@ class GenderClassifier:
         """Return (P(male), vote weight, age, face box in the frame) for the person in ``box``, or None if no usable face.
 
         P(male) averages the log-odds of both face models: their mistakes are largely independent (e.g. older
-        women, whom FaceRes alone often calls male), so the ensemble is much steadier than either.
+        women, whom FaceRes alone often calls male), so the ensemble is much steadier than either. The second
+        model's vote fades out on faces it takes for a child or young teen (``second_weight``).
         """
         found = found if found is not None else self.find_face(frame, box, face_map, others, min_px=14)
         if found is None:
@@ -294,7 +300,7 @@ class GenderClassifier:
         aligned = self.aligned_face(crop, face)
         p2, age = self.age_gender(aligned)
         fb = tuple(float(v) for v in (ox + face.box[0] * scale, oy + face.box[1] * scale, ox + face.box[2] * scale, oy + face.box[3] * scale))
-        return ensemble(self.p_male(aligned), p2), weight, age, fb
+        return ensemble(self.p_male(aligned), p2, second_weight(age)), weight, age, fb
 
 
 def head_score(face, box) -> float:
@@ -312,12 +318,19 @@ def owns_face(face, own, others) -> bool:
     return not any(o[0] <= fcx <= o[2] and o[1] <= fcy <= o[3] and head_score(face, o) + 0.08 < mine for o in others)
 
 
-def ensemble(a: float, b: float) -> float:
-    """Mean of two P(male) log-odds, back to a probability."""
+def ensemble(a: float, b: float, wb: float = 1.0) -> float:
+    """Mean of two P(male) log-odds (``b``'s counting ``wb``, 0..1), back to a probability."""
     def logit(p: float) -> float:
         p = min(max(p, 0.02), 0.98)
         return math.log(p / (1 - p))
-    return 1.0 / (1.0 + math.exp(-(logit(a) + logit(b)) / 2))
+    return 1.0 / (1.0 + math.exp(-(logit(a) + wb * logit(b)) / (1 + wb)))
+
+
+def second_weight(age: float, min_age: float = SECOND_MODEL_MIN_AGE, full_age: float = SECOND_MODEL_FULL_AGE) -> float:
+    """Weight of the second model's gender vote at its own age estimate: 0 up to ``min_age``, 1 from ``full_age``."""
+    if not math.isfinite(age):
+        return 1.0
+    return min(1.0, max(0.0, (age - min_age) / max(1e-3, full_age - min_age)))
 
 
 def top_crop(frame: np.ndarray, box, size: int = 256):

@@ -40,7 +40,9 @@
     "reclassify_seconds": 1.0,
     "male_min_confidence": 0.8,
     "child_max_age": 7,
-    "min_age_votes": 6
+    "min_age_votes": 6,
+    "second_model_min_age": 14,
+    "second_model_full_age": 18
   },
   "tracking": {
     "fuser_memory": 0.4,

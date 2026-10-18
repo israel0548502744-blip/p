@@ -235,6 +235,7 @@ class Analyzer(
     private val outlines = HashMap<Int, FloatMask>()
     private val classifier = GenderClassifier(
         FaceDetector(models), GenderModel(models), spec.thresholds.faceMinScore, spec.thresholds.minFacePx, AgeGenderModel(models),
+        spec.gender.secondModelMinAge, spec.gender.secondModelFullAge,
     )
 
     private val flow = OpticalFlow(width, height)

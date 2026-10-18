@@ -286,6 +286,17 @@ class CoreTest {
         assertTrue(com.blueshield.core.gender.GenderClassifier.ensemble(0.6f, 0.05f) < 0.3f)
     }
 
+    @Test fun secondModelVoteFadesOutOnYoungLookingFaces() {
+        val g = PipelineSpec.bundled.gender
+        fun w(age: Float) = com.blueshield.core.gender.GenderClassifier.secondWeight(age, g.secondModelMinAge, g.secondModelFullAge)
+        assertEquals(0f, w(13.6f))
+        assertTrue(abs(w((g.secondModelMinAge + g.secondModelFullAge) / 2) - 0.5f) < 1e-4)
+        assertEquals(1f, w(30f))
+        assertEquals(1f, w(Float.NaN))
+        // a young woman the second model puts at 13.6 and calls male (0.96): FaceRes's unsure 0.68 alone decides
+        assertTrue(abs(com.blueshield.core.gender.GenderClassifier.ensemble(0.68f, 0.96f, w(13.6f)) - 0.68f) < 1e-4)
+    }
+
     @Test fun ownFaceIsTheTopmostNotTheBiggest() {
         fun face(x: Float, y: Float, s: Float) = com.blueshield.core.ml.FaceDetector.Face(Box(x, y, x + s, y + s), 0.9f, 0f to 0f, 0f to 0f)
         val adult = face(100f, 10f, 40f)

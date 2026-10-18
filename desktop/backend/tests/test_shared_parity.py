@@ -54,6 +54,10 @@ def test_gender_constants_match():
     assert gender.MAX_LOGIT == g["max_logit"] and gender.MIN_VOTES == g["min_votes"] and gender.MIN_WEIGHT == g["min_weight"]
     assert (gender.MALE_MIN_CONFIDENCE, gender.CHILD_MAX_AGE, gender.MIN_AGE_VOTES) == (
         g["male_min_confidence"], g["child_max_age"], g["min_age_votes"])
+    assert (gender.SECOND_MODEL_MIN_AGE, gender.SECOND_MODEL_FULL_AGE) == (g["second_model_min_age"], g["second_model_full_age"])
+    # the second model's vote: none on a face it takes for a young teen, half way at 16, full for adults
+    assert gender.second_weight(13.6) == 0.0 and abs(gender.second_weight(16.0) - 0.5) < 1e-9 and gender.second_weight(30.0) == 1.0
+    assert abs(gender.ensemble(0.68, 0.96, gender.second_weight(13.6)) - 0.68) < 1e-9
     from blueshield.detectors import FACE_EXCLUSION
     assert FACE_EXCLUSION == SPEC["thresholds"]["face_exclusion"]
     est = gender.GenderEstimate()

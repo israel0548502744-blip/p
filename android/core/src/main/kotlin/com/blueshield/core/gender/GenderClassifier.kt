@@ -22,6 +22,8 @@ import kotlin.math.roundToInt
 class GenderClassifier(
     private val faces: FaceDetector, private val model: GenderModel, private val minFaceScore: Float, private val minFacePx: Float,
     private val ageGender: AgeGenderModel? = null,
+    /** The second model's gender vote counts not at all on a face it puts at [secondMinAge] or younger, fully from [secondFullAge]. */
+    private val secondMinAge: Float = 14f, private val secondFullAge: Float = 18f,
 ) {
     /** One look at a face: combined P(male), vote weight, estimated age (NaN when unknown). */
     data class Observation(val pMale: Float, val weight: Float, val age: Float, val face: Box? = null)
@@ -29,7 +31,10 @@ class GenderClassifier(
     /**
      * Returns an [Observation] or null when there is no usable face. With the second model, P(male) is the
      * average of both models' log-odds: their mistakes are largely independent (e.g. older women, whom
-     * FaceRes alone often calls male), so the ensemble is much steadier than either.
+     * FaceRes alone often calls male), so the ensemble is much steadier than either. On a face the second model
+     * itself takes for a child or young teen its gender vote is faded out ([secondWeight]): it calls girls and
+     * young-looking women male (UTKFace children; a smiling 20-year-old with her hair tied back: age 13.6,
+     * P(male) 0.96, which outvoted FaceRes's unsure 0.68 and left her uncensored).
      */
     fun classify(frame: RgbImage, box: Box, faceMap: FloatMask?, others: List<Box> = emptyList()): Observation? {
         val (crop, face) = locate(frame, box, faceMap, others) ?: return null
@@ -39,7 +44,7 @@ class GenderClassifier(
         val aligned = model.align(crop.image, face)
         val p1 = model.pMale(aligned)
         val second = ageGender?.predict(aligned) ?: return Observation(p1, weight, Float.NaN, inFrame)
-        return Observation(ensemble(p1, second.pMale), weight, second.age, inFrame)
+        return Observation(ensemble(p1, second.pMale, secondWeight(second.age, secondMinAge, secondFullAge)), weight, second.age, inFrame)
     }
 
     /**
@@ -105,11 +110,15 @@ class GenderClassifier(
             else sized.minByOrNull { it.box.y1 }
         }
 
-        /** Mean of the two log-odds, back to a probability. */
-        fun ensemble(a: Float, b: Float): Float {
+        /** Mean of the two log-odds, [b]'s counting [wb] (0..1), back to a probability. */
+        fun ensemble(a: Float, b: Float, wb: Float = 1f): Float {
             fun logit(p: Float): Double = p.toDouble().coerceIn(0.02, 0.98).let { ln(it / (1 - it)) }
-            return (1.0 / (1.0 + exp(-(logit(a) + logit(b)) / 2))).toFloat()
+            return (1.0 / (1.0 + exp(-(logit(a) + wb * logit(b)) / (1 + wb)))).toFloat()
         }
+
+        /** Weight of the second model's gender vote at its own age estimate: 0 up to [minAge], 1 from [fullAge]. */
+        fun secondWeight(age: Float, minAge: Float, fullAge: Float): Float =
+            if (!age.isFinite()) 1f else ((age - minAge) / max(1e-3f, fullAge - minAge)).coerceIn(0f, 1f)
 
         /** Square crop around the largest facial-skin blob in the top 60 % of the person box. */
         fun headCrop(frame: RgbImage, box: Box, faceMap: FloatMask, others: List<Box> = emptyList()): Crop? {

@@ -152,6 +152,10 @@ data class PipelineSpec(
         /** Median estimated age below which someone is a (clearly small) child — see GenderEstimate. */
         @SerialName("child_max_age") val childMaxAge: Double,
         @SerialName("min_age_votes") val minAgeVotes: Int,
+        /** The second face model's gender vote fades out on faces it estimates this young or younger… */
+        @SerialName("second_model_min_age") val secondModelMinAge: Float,
+        /** …and counts fully from this estimated age (see GenderClassifier.secondWeight). */
+        @SerialName("second_model_full_age") val secondModelFullAge: Float,
     )
 
     @Serializable
