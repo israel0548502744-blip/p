@@ -408,12 +408,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val app = getApplication<Application>()
-                val uri = withContext(Dispatchers.IO) { Exporter.saveOrReplace(app, File(e.file), Results.galleryName(e), e.video, e.gallery) }
-                withContext(Dispatchers.IO) { History.setGallery(app, e.id, uri.toString()) }
+                // already in the gallery: one more copy (the phone names it "… (1)"), the first one stays as it is
+                val again = e.gallery != null
+                val uri = withContext(Dispatchers.IO) { Exporter.saveOrReplace(app, File(e.file), Results.galleryName(e), e.video, null) }
+                if (!again) withContext(Dispatchers.IO) { History.setGallery(app, e.id, uri.toString()) }
                 refreshHistory()
-                _batch.value = _batch.value?.let { b -> if (e.id in b.ids && e.gallery == null) b.copy(saved = b.saved + 1) else b }
+                _batch.value = _batch.value?.let { b -> if (e.id in b.ids && !again) b.copy(saved = b.saved + 1) else b }
                 if (e.id == photoEntry || e.id == videoEntry) _saved.value = true
-                _toast.value = tr("נשמר בגלריה").also { Growth.recordSuccess(getApplication()) }
+                _toast.value = (if (again) tr("נשמר עותק נוסף בגלריה") else tr("נשמר בגלריה")).also { Growth.recordSuccess(getApplication()) }
             } catch (t: Throwable) {
                 _error.value = tr("השמירה נכשלה: {0}", t.message)
             }
@@ -657,7 +659,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun appShareIntent(): Intent = Intent.createChooser(
         Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
-            putExtra(Intent.EXTRA_TEXT, tr("BlueShield: צנזור אוטומטי ופרטי לתמונות ולסרטונים, הכול במכשיר.") + "\n" + BuildInfo.LATEST_APK)
+            putExtra(
+                Intent.EXTRA_TEXT,
+                tr("היי! מצאתי אפליקציה שמצנזרת אוטומטית תמונות וסרטונים: מכסה עור חשוף של נשים בצבע, והפנים נשארות גלויות. הכול נעשה בטלפון עצמו, בלי אינטרנט ובלי להעלות כלום לשום מקום.") +
+                    "\n\n" + tr("להורדה (אנדרואיד):") + "\n" + BuildInfo.LATEST_APK +
+                    "\n\n" + tr("אחרי ההורדה: פותחים את הקובץ ומאשרים התקנה ממקור זה."),
+            )
         },
         null,
     )

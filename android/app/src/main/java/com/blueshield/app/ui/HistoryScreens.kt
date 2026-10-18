@@ -245,8 +245,8 @@ fun ViewerScreen(
         }
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             PrimaryButton(
-                if (current.gallery != null) tr("נשמר בגלריה") else tr("הורדה לגלריה (גודל מלא)"), Icons.Filled.Download,
-                enabled = current.gallery == null, onClick = { onSave(current) },
+                if (current.gallery != null) tr("נשמר ✓ · שמירה נוספת") else tr("הורדה לגלריה (גודל מלא)"), Icons.Filled.Download,
+                onClick = { onSave(current) },
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 GlassOutlined(onClick = { onShare(current) }, modifier = Modifier.weight(1f)) { Icon(Icons.Filled.Share, null); Spacer(Modifier.width(4.dp)); Text(tr("שיתוף")) }

@@ -494,5 +494,10 @@
  "העלאת וידאו וצנזור": "Pick a video and censor",
  "שמור למכשיר": "Save to device",
  "קבצים": "Files",
- "צנזור חדש": "New"
+ "צנזור חדש": "New",
+ "נשמר עותק נוסף בגלריה": "Another copy saved to the gallery",
+ "היי! מצאתי אפליקציה שמצנזרת אוטומטית תמונות וסרטונים: מכסה עור חשוף של נשים בצבע, והפנים נשארות גלויות. הכול נעשה בטלפון עצמו, בלי אינטרנט ובלי להעלות כלום לשום מקום.": "Hi! I found an app that censors photos and videos automatically: it covers women's exposed skin with a colour and keeps faces visible. Everything happens on the phone itself, with no internet and nothing uploaded anywhere.",
+ "להורדה (אנדרואיד):": "Download (Android):",
+ "אחרי ההורדה: פותחים את הקובץ ומאשרים התקנה ממקור זה.": "After downloading: open the file and allow installing from this source.",
+ "נשמר ✓ · שמירה נוספת": "Saved ✓ · Save again"
 }

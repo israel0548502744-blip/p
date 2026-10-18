@@ -356,7 +356,8 @@ fun DoneHeader(sub: String? = null) {
 @Composable
 fun ResultButtons(saved: Boolean, onSave: () -> Unit, onEdit: () -> Unit, onShare: () -> Unit, onProjects: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        PrimaryButton(if (saved) tr("נשמר במכשיר") else tr("שמור למכשיר"), if (saved) Icons.Filled.CheckCircle else Icons.Filled.Download, enabled = !saved, onClick = onSave)
+        // saved already (by hand or automatically): the same button saves one more copy
+        PrimaryButton(if (saved) tr("נשמר ✓ · שמירה נוספת") else tr("שמור למכשיר"), Icons.Filled.Download, onClick = onSave)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             GlassOutlined(onClick = onEdit, modifier = Modifier.weight(1f).height(52.dp), shape = RoundedCornerShape(16.dp)) {
                 Icon(Icons.Filled.Edit, null); Spacer(Modifier.width(8.dp)); Text(tr("עריכה נוספת"))

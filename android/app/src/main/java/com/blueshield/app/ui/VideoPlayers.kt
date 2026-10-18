@@ -6,6 +6,8 @@ import android.view.TextureView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -298,25 +300,46 @@ private fun androidx.compose.foundation.layout.BoxScope.Controls(player: ExoPlay
     }
 }
 
-/** A thin seek bar with a small round handle (the Material slider is too large to sit on a picture). */
+/**
+ * A thin seek bar with a small round handle (the Material slider is too large to sit on a picture). It takes the
+ * finger as soon as it touches, so a page that swipes sideways (the recent-files viewer) never gets the drag:
+ * the handle stays under the finger, all the way to both ends.
+ */
 @Composable
 private fun SeekBar(value: Float, modifier: Modifier, onSeek: (Float) -> Unit, onDone: () -> Unit) {
     var width by remember { mutableFloatStateOf(1f) }
+    val inset = with(LocalDensity.current) { 6.dp.toPx() }
+    val onSeekNow by androidx.compose.runtime.rememberUpdatedState(onSeek)
+    // where the finger is along the track (the same inset as the drawing below)
+    fun seek(x: Float) = onSeekNow(((x - inset) / (width - 2 * inset).coerceAtLeast(1f)).coerceIn(0f, 1f))
+    val done by androidx.compose.runtime.rememberUpdatedState(onDone)
     androidx.compose.foundation.Canvas(
-        modifier.height(28.dp)
+        modifier.height(32.dp)
             .onSizeChanged { width = it.width.coerceAtLeast(1).toFloat() }
-            .pointerInput(Unit) { detectTapGestures { onSeek((it.x / width).coerceIn(0f, 1f)); onDone() } }
             .pointerInput(Unit) {
-                detectHorizontalDragGestures(
-                    onDragEnd = onDone, onDragCancel = onDone,
-                    onHorizontalDrag = { change, _ -> change.consume(); onSeek((change.position.x / width).coerceIn(0f, 1f)) },
-                )
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    down.consume()
+                    seek(down.position.x)
+                    var id = down.id
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == id } ?: event.changes.firstOrNull() ?: break
+                        id = change.id
+                        if (!change.pressed) { change.consume(); break }
+                        seek(change.position.x)
+                        change.consume()
+                    }
+                    done()
+                }
             },
     ) {
         val y = size.height / 2
-        val x = size.width * value.coerceIn(0f, 1f)
-        drawLine(Color(0x55FFFFFF), Offset(0f, y), Offset(size.width, y), strokeWidth = 4.dp.toPx(), cap = StrokeCap.Round)
-        drawLine(Palette.Shield400, Offset(0f, y), Offset(x, y), strokeWidth = 4.dp.toPx(), cap = StrokeCap.Round)
-        drawCircle(Color.White, 6.dp.toPx(), Offset(x, y))
+        val r = 6.dp.toPx()
+        // the track is inset by the handle's radius, so the handle reaches both ends without leaving the bar
+        val x = r + (size.width - 2 * r) * value.coerceIn(0f, 1f)
+        drawLine(Color(0x55FFFFFF), Offset(r, y), Offset(size.width - r, y), strokeWidth = 4.dp.toPx(), cap = StrokeCap.Round)
+        drawLine(Palette.Shield400, Offset(r, y), Offset(x, y), strokeWidth = 4.dp.toPx(), cap = StrokeCap.Round)
+        drawCircle(Color.White, r, Offset(x, y))
     }
 }

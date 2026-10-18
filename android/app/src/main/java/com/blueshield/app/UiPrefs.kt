@@ -21,7 +21,8 @@ data class UiPrefs(
     val photoFormat: String = "original",
     /** Ask whom to censor once the people are found, before the censoring is drawn (the render is skipped until then). */
     val askWho: Boolean = false,
-    val autoSave: Boolean = true,
+    /** Off unless switched on: results stay in the app's recent files until saved. */
+    val autoSave: Boolean = false,
     /** The welcome pages were shown. */
     val onboarded: Boolean = false,
     /** The version whose "what's new" was last shown. */
@@ -44,7 +45,9 @@ data class UiPrefs(
             textScale = p.getFloat("ui.textScale", 1f),
             photoFormat = p.getString("ui.photoFormat", "original") ?: "original",
             askWho = p.getBoolean("ui.askWho", false),
-            autoSave = p.getBoolean("autoSave", true),
+            // once: auto-save becomes off by default, also where the old default (on) was stored
+            autoSave = if (p.getBoolean("ui.autoSaveOffByDefault", false)) p.getBoolean("autoSave", false)
+            else false.also { p.edit().putBoolean("ui.autoSaveOffByDefault", true).putBoolean("autoSave", false).apply() },
             onboarded = p.getBoolean("ui.onboarded", false),
             seenVersion = p.getString("ui.seenVersion", "") ?: "",
             name = p.getString("ui.name", "") ?: "",
