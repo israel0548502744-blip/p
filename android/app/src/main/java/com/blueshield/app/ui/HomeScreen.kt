@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -114,7 +116,7 @@ fun StartScreen(
         }
         active?.let { ActiveCard(it) }
         if (loading) Box(Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Palette.Shield400) }
-        else Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        else Row(Modifier.height(androidx.compose.foundation.layout.IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             KindTile(Scene.TEAL, Icons.Outlined.Image, Color(0xFFB5F5E8), tr("צנזור תמונה"), tr("העלאת תמונה לצנזור"), Modifier.weight(1f), onPhoto)
             KindTile(Scene.VIOLET, Icons.Filled.MovieCreation, Color(0xFFE2D8FF), tr("צנזור סרטון"), tr("העלאת וידאו לצנזור"), Modifier.weight(1f), onVideo)
         }
@@ -176,18 +178,18 @@ fun qualityLabel(q: String) = when (q) {
 private fun KindTile(scene: Scene, icon: ImageVector, iconTint: Color, title: String, sub: String, modifier: Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(22.dp)
     Box(
-        modifier.height(218.dp).clip(shape).border(1.dp, Brush.verticalGradient(listOf(Color(0x55FFFFFF), Color(0x14FFFFFF))), shape)
+        modifier.fillMaxHeight().heightIn(min = 218.dp).clip(shape).border(1.dp, Brush.verticalGradient(listOf(Color(0x55FFFFFF), Color(0x14FFFFFF))), shape)
             .clickable(onClick = onClick),
     ) {
-        Landscape(scene, Modifier.fillMaxSize())
-        Column(Modifier.fillMaxSize().padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Landscape(scene, Modifier.matchParentSize())
+        Column(Modifier.fillMaxWidth().padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Spacer(Modifier.height(10.dp))
             Icon(icon, null, tint = iconTint, modifier = Modifier.size(64.dp))
             Spacer(Modifier.height(10.dp))
             Text(title, color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
             Spacer(Modifier.height(2.dp))
-            Text(sub, color = Color.White.copy(alpha = 0.8f), fontSize = 12.5.sp, textAlign = TextAlign.Center)
-            Spacer(Modifier.weight(1f))
+            Text(sub, color = Color.White.copy(alpha = 0.8f), fontSize = 12.5.sp, lineHeight = 16.sp, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(14.dp))
             Box(
                 Modifier.size(38.dp).clip(CircleShape).background(Color(0x40FFFFFF)).border(1.dp, Color(0x55FFFFFF), CircleShape),
                 contentAlignment = Alignment.Center,
@@ -230,15 +232,18 @@ fun RecentRow(e: History.Entry, index: Int, actions: EntryActions) {
             if (e.video) Box(Modifier.size(24.dp).clip(CircleShape).background(Color(0x99000000)), contentAlignment = Alignment.Center) {
                 Icon(Icons.Filled.PlayArrow, null, tint = Color.White, modifier = Modifier.size(16.dp))
             }
+            if (e.gallery != null) Icon(
+                Icons.Outlined.CheckCircle, tr("בגלריה"), tint = Palette.Teal,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(3.dp).size(15.dp).clip(CircleShape).background(Color(0xAA000000)),
+            )
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(ltr(e.name), color = Palette.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             Text(
-                ltr(SimpleDateFormat("dd.MM.yy", Locale.US).format(Date(e.time)) + "  •  " + formatBytes(File(e.file).length())) +
-                    if (e.gallery != null) " • " + tr("בגלריה") else "",
-                color = Palette.Ink400, fontSize = 12.sp,
+                ltr(SimpleDateFormat("dd.MM.yy", Locale.US).format(Date(e.time)) + "  •  " + formatBytes(File(e.file).length())),
+                color = Palette.Ink400, fontSize = 12.sp, maxLines = 1,
             )
         }
         Box {

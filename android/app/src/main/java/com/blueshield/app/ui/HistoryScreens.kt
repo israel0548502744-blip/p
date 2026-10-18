@@ -61,6 +61,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -147,11 +148,11 @@ fun HistoryScreen(
             tr("{0} התמונות האחרונות ו-{1} הסרטונים האחרונים נשמרים כאן, גם אחרי סגירת האפליקציה. לחיצה פותחת, ואפשר לדפדף ביניהם.", History.MAX_PHOTOS, History.MAX_VIDEOS),
             color = Palette.Ink300, fontSize = 13.sp, lineHeight = 18.sp,
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for ((k, label) in listOf("all" to tr("הכול"), "photos" to tr("תמונות"), "videos" to tr("סרטונים"), "gallery" to tr("בגלריה"))) {
                 val on = filter == k
                 Text(
-                    label, color = if (on) Color.White else Palette.Ink200, fontSize = 13.sp, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
+                    label, color = if (on) Color.White else Palette.Ink200, fontSize = 13.sp, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, softWrap = false,
                     modifier = Modifier.clip(RoundedCornerShape(50)).background(if (on) Palette.Shield500 else Palette.Ink850)
                         .border(1.dp, if (on) Palette.Shield400 else Palette.Border, RoundedCornerShape(50))
                         .clickable { filter = k }.padding(horizontal = 14.dp, vertical = 7.dp),
