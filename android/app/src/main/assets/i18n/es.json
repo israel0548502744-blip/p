@@ -486,5 +486,13 @@
  "ארבעה שלבים ברורים לכל תמונה וסרטון: בחירה, עיבוד, צנזור ושמירה.": "Cuatro pasos claros para cada foto y vídeo: elegir, procesar, censurar y guardar.",
  "\"את מי לצנזר\" עכשיו על התמונה עצמה: מסגרת סגולה סביב כל מי שיצונזר.": "\"A quién censurar\" ahora está sobre la imagen: un marco violeta alrededor de cada persona que se censurará.",
  "נגן וידאו חדש: תמיד נכנס במסך, עם כפתור הפעלה גדול.": "Un nuevo reproductor de vídeo: siempre cabe en la pantalla, con un gran botón de reproducir.",
- "עיבוד סרטונים מהיר עד פי 1.8, באותה איכות בדיוק.": "Procesamiento de vídeo hasta 1,8 veces más rápido, con exactamente la misma calidad."
+ "עיבוד סרטונים מהיר עד פי 1.8, באותה איכות בדיוק.": "Procesamiento de vídeo hasta 1,8 veces más rápido, con exactamente la misma calidad.",
+ "העיבוד הושלם": "Listo",
+ "הוסף אזור": "Añadir zona",
+ "בחירה אוטומטית": "Selección automática",
+ "העלאת תמונה וצנזור": "Elige una foto",
+ "העלאת וידאו וצנזור": "Elige un vídeo",
+ "שמור למכשיר": "Guardar en el dispositivo",
+ "קבצים": "Archivos",
+ "צנזור חדש": "Nuevo"
 }

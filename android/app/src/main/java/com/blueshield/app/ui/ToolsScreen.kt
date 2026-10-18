@@ -279,7 +279,8 @@ fun PlusMenu(onPhoto: () -> Unit, onVideo: () -> Unit, onDismiss: () -> Unit) {
                     Modifier.weight(1f).height(96.dp).clip(RoundedCornerShape(18.dp)).clickable(onClick = if (scene == Scene.TEAL) onPhoto else onVideo),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Landscape(scene, Modifier.fillMaxSize())
+                    CensorPreview(scene == Scene.VIOLET, Modifier.fillMaxSize())
+                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0x33000000), Color(0xAA000000)))))
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(icon, null, tint = Color.White, modifier = Modifier.size(30.dp))
                         Spacer(Modifier.height(4.dp))

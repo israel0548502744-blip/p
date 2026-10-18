@@ -214,8 +214,6 @@ private fun Main(vm: AppViewModel, ui: UiPrefs) {
 
     var tab by remember { mutableStateOf(Tab.HOME) }
     var page by remember { mutableStateOf<Page?>(null) }
-    /** The projects tab showing only what is in the gallery ("הקבצים שלי"). */
-    var filesOnly by remember { mutableStateOf(false) }
     /** The work in progress was put aside (back during processing): the home screen shows a card back to it. */
     var minimized by remember { mutableStateOf(false) }
     var plusOpen by remember { mutableStateOf(false) }
@@ -289,7 +287,7 @@ private fun Main(vm: AppViewModel, ui: UiPrefs) {
         whatsApp = { e -> vm.whatsAppEntry(e)?.let(start) },
         delete = vm::deleteEntry,
     )
-    val toProjects = { tab = Tab.PROJECTS; filesOnly = false; page = null }
+    val toProjects = { tab = Tab.PROJECTS; page = null }
 
     val flow = when {
         job.running -> Flow.PROCESSING
@@ -349,7 +347,9 @@ private fun Main(vm: AppViewModel, ui: UiPrefs) {
         page == Page.PRESETS -> DrawerItem.PRESETS
         page == Page.PRIVACY -> DrawerItem.PRIVACY
         page == Page.FAQ -> DrawerItem.FAQ
-        tab == Tab.PROJECTS -> if (filesOnly) DrawerItem.FILES else DrawerItem.PROJECTS
+        tab == Tab.FILES -> DrawerItem.FILES
+        tab == Tab.PROJECTS -> DrawerItem.PROJECTS
+        tab == Tab.TOOLS -> DrawerItem.TOOLS
         tab == Tab.SETTINGS -> DrawerItem.SETTINGS
         tab == Tab.HOME && page == null -> DrawerItem.HOME
         else -> null
@@ -365,7 +365,8 @@ private fun Main(vm: AppViewModel, ui: UiPrefs) {
                     vm.closeViewer()
                     when (item) {
                         DrawerItem.HOME -> { tab = Tab.HOME; page = null; minimized = false }
-                        DrawerItem.FILES -> { tab = Tab.PROJECTS; filesOnly = true; page = null }
+                        DrawerItem.FILES -> { tab = Tab.FILES; page = null }
+                        DrawerItem.TOOLS -> { tab = Tab.TOOLS; page = null }
                         DrawerItem.PROJECTS -> toProjects()
                         DrawerItem.BATCH -> choosePhotos()
                         DrawerItem.PRESETS -> page = Page.PRESETS
@@ -437,9 +438,9 @@ private fun Main(vm: AppViewModel, ui: UiPrefs) {
                                     onApply = { vm.setStrokes(it); page = null }, onCancel = { page = null },
                                 )
                             }
-                            Tab.PROJECTS -> HistoryScreen(
+                            Tab.PROJECTS, Tab.FILES -> HistoryScreen(
                                 history, ui.autoSave, { v -> vm.updateUi { it.copy(autoSave = v) } },
-                                actions = entryActions, onOpen = vm::openViewer, galleryOnly = filesOnly,
+                                actions = entryActions, onOpen = vm::openViewer, galleryOnly = key == Tab.FILES,
                             )
                             Tab.TOOLS -> ToolsScreen(
                                 settings, ui, vm::updateSettings, vm::updateUi,
@@ -534,7 +535,7 @@ private fun Main(vm: AppViewModel, ui: UiPrefs) {
                     SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(12.dp))
                 }
                 if (!inFlow && viewer == null && page != Page.BRUSH) {
-                    BottomNav(tab, onTab = { t -> tab = t; page = null; if (t == Tab.PROJECTS) filesOnly = false }, onPlus = { plusOpen = true })
+                    BottomNav(tab, onTab = { t -> tab = t; page = null }, onPlus = { plusOpen = true })
                 }
             }
             if (plusOpen) PlusMenu(onPhoto = choosePhotos, onVideo = chooseVideos, onDismiss = { plusOpen = false })
@@ -564,7 +565,8 @@ private fun flowTitle(f: Flow) = when (f) {
     Flow.QUEUE -> tr("תור סרטונים")
     Flow.PROCESSING -> tr("עיבוד הסרטון")
     Flow.BATCH -> tr("עריכה קבוצתית")
-    Flow.RESULT, Flow.PHOTO_RESULT, Flow.START -> ""
+    Flow.RESULT, Flow.PHOTO_RESULT -> tr("העיבוד הושלם")
+    Flow.START -> ""
 }
 
 /** Shown on the launch after a crash: the report can be copied or shared so the cause can be fixed. */

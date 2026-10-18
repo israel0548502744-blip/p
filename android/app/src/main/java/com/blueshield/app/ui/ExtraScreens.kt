@@ -41,7 +41,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Flag
-import androidx.compose.material.icons.filled.HighlightAlt
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Movie
@@ -198,14 +198,17 @@ fun ChooseScreen(
                     onClick = { if (onAddArea != null) onAddArea(pick.toMap()) else people.forEach { pick[it.id] = true } },
                     modifier = Modifier.weight(1f).height(52.dp), shape = RoundedCornerShape(16.dp),
                 ) {
-                    Icon(if (onAddArea != null) Icons.Filled.HighlightAlt else Icons.Filled.Check, null, tint = Palette.Ink100)
+                    Icon(if (onAddArea != null) Icons.Filled.Add else Icons.Filled.Check, null, tint = Palette.Ink100)
                     Spacer(Modifier.width(8.dp))
-                    Text(if (onAddArea != null) tr("הוסף אזור צנזור") else tr("סמן את כולם"), color = Palette.Ink100)
+                    Text(if (onAddArea != null) tr("הוסף אזור") else tr("סמן את כולם"), color = Palette.Ink100, maxLines = 1)
                 }
-                Box(
-                    Modifier.size(52.dp).glass(RoundedCornerShape(16.dp)).clickable { pick.clear(); pick.putAll(auto) },
-                    contentAlignment = Alignment.Center,
-                ) { Icon(Icons.Filled.Replay, tr("חזרה לבחירה האוטומטית"), tint = Palette.Ink100) }
+                GlassOutlined(
+                    onClick = { pick.clear(); pick.putAll(auto) }, modifier = Modifier.weight(1f).height(52.dp), shape = RoundedCornerShape(16.dp),
+                ) {
+                    Icon(Icons.Filled.Replay, null, tint = Palette.Ink100)
+                    Spacer(Modifier.width(8.dp))
+                    Text(tr("בחירה אוטומטית"), color = Palette.Ink100, maxLines = 1)
+                }
             }
             SectionHeading(tr("אנשים ({0})", people.size))
             if (people.isEmpty()) Text(tr("לא זוהו אנשים."), color = Palette.Ink300, fontSize = 14.sp)

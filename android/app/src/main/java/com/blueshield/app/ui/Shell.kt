@@ -41,7 +41,6 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.HomeRepairService
 import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Home
@@ -51,7 +50,8 @@ import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Shield
-import androidx.compose.material.icons.outlined.SmartDisplay
+import androidx.compose.material.icons.outlined.Collections
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -82,8 +82,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.blueshield.app.BuildInfo
 
-/** The four tabs of the bottom bar (the "+" in the middle opens a new photo or video). */
-enum class Tab { HOME, PROJECTS, TOOLS, SETTINGS }
+/** The tabs: four in the bottom bar (the "+" in the middle starts a new photo or video); the tools open from the side menu. */
+enum class Tab { HOME, FILES, PROJECTS, SETTINGS, TOOLS }
 
 /** Pages opened from the side menu or from a screen, shown over the tabs. */
 enum class Page { PRIVACY, FAQ, PRESETS, BRUSH, ABOUT, PRO }
@@ -162,8 +162,8 @@ fun FlowHeader(title: String, onBack: (() -> Unit)?) {
     }
 }
 
-/** The four steps of every photo and video: choose, process, censor, save. */
-val STEP_LABELS get() = listOf(tr("בחירה"), tr("עיבוד"), tr("צנזור"), tr("שמירה"))
+/** The four steps of every photo and video: choose, process, edit (whom / what to cover), save. */
+val STEP_LABELS get() = listOf(tr("בחירה"), tr("עיבוד"), tr("עריכה"), tr("שמירה"))
 
 /**
  * The step bar: finished steps are teal with a tick, the current one is violet (with a turning ring while
@@ -238,10 +238,10 @@ fun Stepper(current: Int, running: Boolean, modifier: Modifier = Modifier) {
 @Composable
 fun BottomNav(tab: Tab, onTab: (Tab) -> Unit, onPlus: () -> Unit, settingsDot: Boolean = false) {
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
-    Box(Modifier.fillMaxWidth().height(94.dp)) {
+    Box(Modifier.fillMaxWidth().height(92.dp)) {
         val shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp)
         Row(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(72.dp).clip(shape).background(Glass.Bar)
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(74.dp).clip(shape).background(Glass.Bar)
                 .border(1.dp, Brush.verticalGradient(listOf(Glass.RimTop, Color.Transparent)), shape),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -249,7 +249,7 @@ fun BottomNav(tab: Tab, onTab: (Tab) -> Unit, onPlus: () -> Unit, settingsDot: B
             fun item(t: Tab, label: String, on: ImageVector, off: ImageVector) {
                 val active = t == tab
                 Column(
-                    Modifier.weight(1f).fillMaxHeight().clickable { onTab(t) }.padding(top = 10.dp),
+                    Modifier.weight(1f).fillMaxHeight().clickable { onTab(t) }.padding(top = 12.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Box {
@@ -261,31 +261,34 @@ fun BottomNav(tab: Tab, onTab: (Tab) -> Unit, onPlus: () -> Unit, settingsDot: B
                 }
             }
             item(Tab.HOME, tr("בית"), Icons.Filled.Home, Icons.Outlined.Home)
-            item(Tab.PROJECTS, tr("פרויקטים"), Icons.Filled.Folder, Icons.Outlined.Folder)
-            Spacer(Modifier.weight(1f))
-            item(Tab.TOOLS, tr("כלים"), Icons.Filled.HomeRepairService, Icons.Outlined.HomeRepairService)
+            item(Tab.FILES, tr("קבצים"), Icons.Filled.Folder, Icons.Outlined.Folder)
+            // under the "+", its name
+            Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.BottomCenter) {
+                Text(tr("צנזור חדש"), color = Palette.Ink100, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1, modifier = Modifier.padding(bottom = 9.dp))
+            }
+            item(Tab.PROJECTS, tr("פרויקטים"), Icons.Filled.Layers, Icons.Outlined.Layers)
             item(Tab.SETTINGS, tr("הגדרות"), Icons.Filled.Settings, Icons.Outlined.Settings)
         }
-        // the "+": a glowing violet circle standing out of the bar
+        // the "+": a violet circle standing out of the bar, "צנזור חדש" under it
         Box(
-            Modifier.align(Alignment.TopCenter).offset(y = 0.dp).size(64.dp)
+            Modifier.align(Alignment.TopCenter).offset(y = 4.dp).size(58.dp)
                 .drawBehind {
-                    drawCircle(Brush.radialGradient(listOf(Palette.Shield500.copy(alpha = 0.55f), Color.Transparent)), size.minDimension * 0.85f)
+                    drawCircle(Brush.radialGradient(listOf(Palette.Shield500.copy(alpha = 0.45f), Color.Transparent)), size.minDimension * 0.8f)
                 }
                 .clip(CircleShape)
-                .background(Brush.linearGradient(listOf(Color(0xFFC59BFF), Palette.Shield500, Palette.Shield600)))
-                .border(1.dp, Brush.verticalGradient(listOf(Color(0x88FFFFFF), Color(0x11FFFFFF))), CircleShape)
-                .clickable(onClickLabel = tr("חדש")) {
+                .background(Brush.linearGradient(listOf(Palette.Shield400, Palette.Shield500, Palette.Shield600)))
+                .border(1.dp, Brush.verticalGradient(listOf(Color(0x77FFFFFF), Color(0x11FFFFFF))), CircleShape)
+                .clickable(onClickLabel = tr("צנזור חדש")) {
                     haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                     onPlus()
                 },
             contentAlignment = Alignment.Center,
-        ) { Icon(Icons.Filled.Add, tr("חדש"), tint = Color.White, modifier = Modifier.size(32.dp)) }
+        ) { Icon(Icons.Filled.Add, tr("צנזור חדש"), tint = Color.White, modifier = Modifier.size(30.dp)) }
     }
 }
 
 /** What the side menu can open. */
-enum class DrawerItem { HOME, FILES, PROJECTS, BATCH, PRESETS, SETTINGS, PRIVACY, FAQ, CONTACT, SHARE, PROFILE }
+enum class DrawerItem { HOME, FILES, PROJECTS, BATCH, TOOLS, PRESETS, SETTINGS, PRIVACY, FAQ, CONTACT, SHARE, PROFILE }
 
 /**
  * The side menu: the name and version, the user's card (name, e-mail, "Pro"), every place in the app, and the
@@ -357,8 +360,9 @@ fun DrawerContent(selected: DrawerItem?, name: String, email: String, onClose: (
                 fun divider() = HorizontalDivider(color = Palette.Border, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
                 item(DrawerItem.HOME, Icons.Outlined.Home, tr("בית"))
                 item(DrawerItem.FILES, Icons.Outlined.Folder, tr("הקבצים שלי"))
-                item(DrawerItem.PROJECTS, Icons.Outlined.SmartDisplay, tr("פרויקטים"))
-                item(DrawerItem.BATCH, Icons.Outlined.Layers, tr("עריכה קבוצתית"))
+                item(DrawerItem.PROJECTS, Icons.Outlined.Layers, tr("פרויקטים"))
+                item(DrawerItem.BATCH, Icons.Outlined.Collections, tr("עריכה קבוצתית"))
+                item(DrawerItem.TOOLS, Icons.Outlined.HomeRepairService, tr("כלים"))
                 item(DrawerItem.PRESETS, Icons.Outlined.Shield, tr("תבניות שמירה"))
                 divider()
                 item(DrawerItem.SETTINGS, Icons.Outlined.Settings, tr("הגדרות"))

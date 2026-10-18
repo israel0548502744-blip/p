@@ -7,6 +7,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -117,20 +118,15 @@ fun StartScreen(
         active?.let { ActiveCard(it) }
         if (loading) Box(Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Palette.Shield400) }
         else Row(Modifier.height(androidx.compose.foundation.layout.IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            KindTile(Scene.TEAL, Icons.Outlined.Image, Color(0xFFB5F5E8), tr("צנזור תמונה"), tr("העלאת תמונה לצנזור"), Modifier.weight(1f), onPhoto)
-            KindTile(Scene.VIOLET, Icons.Filled.MovieCreation, Color(0xFFE2D8FF), tr("צנזור סרטון"), tr("העלאת וידאו לצנזור"), Modifier.weight(1f), onVideo)
+            KindTile(false, tr("צנזור תמונה"), tr("העלאת תמונה וצנזור"), Modifier.weight(1f), onPhoto)
+            KindTile(true, tr("צנזור סרטון"), tr("העלאת וידאו וצנזור"), Modifier.weight(1f), onVideo)
         }
 
         SectionHeading(tr("קבצים אחרונים"), if (history.isNotEmpty()) tr("הצג הכל") else null, onAll)
-        Panel(Modifier.fillMaxWidth()) {
-            if (history.isEmpty()) Text(
-                tr("עוד אין כאן קבצים. תמונות וסרטונים שתצנזרו יופיעו כאן."), color = Palette.Ink300, fontSize = 13.5.sp,
-                modifier = Modifier.padding(18.dp),
-            )
-            history.take(3).forEachIndexed { i, e ->
-                if (i > 0) HorizontalDivider(color = Palette.Border, modifier = Modifier.padding(horizontal = 14.dp))
-                RecentRow(e, i, actions)
-            }
+        if (history.isEmpty()) Panel(Modifier.fillMaxWidth()) {
+            Text(tr("עוד אין כאן קבצים. תמונות וסרטונים שתצנזרו יופיעו כאן."), color = Palette.Ink300, fontSize = 13.5.sp, modifier = Modifier.padding(18.dp))
+        } else Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            history.take(3).forEachIndexed { i, e -> RecentRow(e, i, actions) }
         }
 
         SectionHeading(tr("כלים מהירים"))
@@ -173,28 +169,38 @@ fun qualityLabel(q: String) = when (q) {
     else -> tr("רגילה")
 }
 
-/** One of the two big start tiles: a painted landscape, the icon, the name, and the round arrow. */
+/**
+ * One of the two big start tiles: its name, a preview of what the censoring looks like (people with the
+ * see-through cover box), the line under it, and the round arrow. Violet for video, teal for photos.
+ */
 @Composable
-private fun KindTile(scene: Scene, icon: ImageVector, iconTint: Color, title: String, sub: String, modifier: Modifier, onClick: () -> Unit) {
+private fun KindTile(video: Boolean, title: String, sub: String, modifier: Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(22.dp)
-    Box(
-        modifier.fillMaxHeight().heightIn(min = 218.dp).clip(shape).border(1.dp, Brush.verticalGradient(listOf(Color(0x55FFFFFF), Color(0x14FFFFFF))), shape)
-            .clickable(onClick = onClick),
+    val bg = if (video) listOf(Color(0xFF3F2E99), Color(0xFF261B66)) else listOf(Color(0xFF1E625E), Color(0xFF113B3E))
+    val rim = if (video) Color(0xFF8C74F0) else Color(0xFF4FD1C0)
+    Column(
+        modifier.fillMaxHeight().clip(shape).background(Brush.verticalGradient(bg))
+            .border(1.dp, Brush.verticalGradient(listOf(rim.copy(alpha = 0.55f), rim.copy(alpha = 0.12f))), shape)
+            .clickable(onClick = onClick).padding(12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Landscape(scene, Modifier.matchParentSize())
-        Column(Modifier.fillMaxWidth().padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Spacer(Modifier.height(10.dp))
-            Icon(icon, null, tint = iconTint, modifier = Modifier.size(64.dp))
-            Spacer(Modifier.height(10.dp))
-            Text(title, color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-            Spacer(Modifier.height(2.dp))
-            Text(sub, color = Color.White.copy(alpha = 0.8f), fontSize = 12.5.sp, lineHeight = 16.sp, textAlign = TextAlign.Center)
-            Spacer(Modifier.height(14.dp))
-            Box(
-                Modifier.size(38.dp).clip(CircleShape).background(Color(0x40FFFFFF)).border(1.dp, Color(0x55FFFFFF), CircleShape),
-                contentAlignment = Alignment.Center,
-            ) { DesignArrow(Color.White) }
+        Text(title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, maxLines = 2)
+        Spacer(Modifier.height(10.dp))
+        Box(Modifier.fillMaxWidth().aspectRatio(1.55f).clip(RoundedCornerShape(14.dp))) {
+            CensorPreview(video, Modifier.fillMaxSize())
+            if (video) Icon(
+                Icons.Filled.PlayArrow, null, tint = Color.White,
+                modifier = Modifier.align(Alignment.BottomStart).padding(6.dp).size(20.dp).clip(RoundedCornerShape(6.dp)).background(Color(0x99000000)).padding(2.dp),
+            )
         }
+        Spacer(Modifier.height(10.dp))
+        Text(sub, color = Color.White.copy(alpha = 0.82f), fontSize = 12.5.sp, lineHeight = 16.sp, textAlign = TextAlign.Center)
+        Spacer(Modifier.weight(1f, fill = false))
+        Spacer(Modifier.height(10.dp))
+        Box(
+            Modifier.size(38.dp).clip(CircleShape).background(Color(0x33FFFFFF)).border(1.dp, Color(0x44FFFFFF), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) { DesignArrow(Color.White) }
     }
 }
 
@@ -223,11 +229,12 @@ private fun QuickTool(icon: ImageVector, label: String, modifier: Modifier, badg
 fun RecentRow(e: History.Entry, index: Int, actions: EntryActions) {
     var menu by remember { mutableStateOf(false) }
     Row(
-        Modifier.fillMaxWidth().clickable { actions.open(index) }.padding(horizontal = 12.dp, vertical = 10.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Palette.Ink850).border(1.dp, Palette.Border, RoundedCornerShape(16.dp))
+            .clickable { actions.open(index) }.padding(start = 10.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         val bmp by produceState<Bitmap?>(null, e.thumb) { value = withContext(Dispatchers.IO) { History.decode(e.thumb, 300) } }
-        Box(Modifier.width(76.dp).height(54.dp).clip(RoundedCornerShape(10.dp)).background(Palette.Ink700), contentAlignment = Alignment.Center) {
+        Box(Modifier.width(72.dp).height(50.dp).clip(RoundedCornerShape(10.dp)).background(Palette.Ink700), contentAlignment = Alignment.Center) {
             bmp?.let { Image(it.asImageBitmap(), null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
             if (e.video) Box(Modifier.size(24.dp).clip(CircleShape).background(Color(0x99000000)), contentAlignment = Alignment.Center) {
                 Icon(Icons.Filled.PlayArrow, null, tint = Color.White, modifier = Modifier.size(16.dp))
@@ -239,10 +246,11 @@ fun RecentRow(e: History.Entry, index: Int, actions: EntryActions) {
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(ltr(e.name), color = Palette.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1,
+            Text(isolate(e.name), color = Palette.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            val length by produceState<Double?>(null, e.file) { if (e.video) value = withContext(Dispatchers.IO) { videoSeconds(e.file) } }
             Text(
-                ltr(SimpleDateFormat("dd.MM.yy", Locale.US).format(Date(e.time)) + "  •  " + formatBytes(File(e.file).length())),
+                ltr(listOfNotNull(SimpleDateFormat("dd.MM.yy", Locale.US).format(Date(e.time)), formatBytes(File(e.file).length()), length?.let(::formatDuration)).joinToString("  •  ")),
                 color = Palette.Ink400, fontSize = 12.sp, maxLines = 1,
             )
         }
@@ -258,5 +266,18 @@ fun RecentRow(e: History.Entry, index: Int, actions: EntryActions) {
                 DropdownMenuItem(text = { Text(tr("מחיקה")) }, leadingIcon = { Icon(Icons.Filled.Delete, null) }, onClick = { menu = false; actions.delete(e) })
             }
         }
+    }
+}
+
+/** A video file's length in seconds (null when it can't be read). */
+private fun videoSeconds(path: String): Double? {
+    val m = android.media.MediaMetadataRetriever()
+    return try {
+        m.setDataSource(path)
+        m.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let { it / 1000.0 }
+    } catch (_: Exception) {
+        null
+    } finally {
+        runCatching { m.release() }
     }
 }

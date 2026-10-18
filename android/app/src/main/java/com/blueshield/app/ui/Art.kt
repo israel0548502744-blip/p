@@ -114,3 +114,67 @@ private fun DrawScope.lake() {
     drawRect(trees, Offset(0f, horizon), Size(size.width * 0.12f, size.height * 0.03f))
     drawRect(trees, Offset(size.width * 0.78f, horizon), Size(size.width * 0.22f, size.height * 0.03f))
 }
+
+/**
+ * The start tiles' preview: a drawn scene with people and the see-through cover box with its handles, as the
+ * censoring itself looks (no photo of real people ships with the app). [video]: a sunset over the sea in violet,
+ * otherwise a beach by day in teal.
+ */
+@Composable
+fun CensorPreview(video: Boolean, modifier: Modifier = Modifier) = Canvas(modifier) {
+    val w = size.width
+    val h = size.height
+    val horizon = h * 0.56f
+    if (video) {
+        drawRect(Brush.verticalGradient(listOf(Color(0xFF5A4E8C), Color(0xFFC77D6B), Color(0xFFF2B27A)), endY = horizon))
+        drawCircle(Color(0xFFFFE0A8).copy(alpha = 0.9f), h * 0.07f, Offset(w * 0.28f, horizon - h * 0.04f))
+        drawRect(Brush.verticalGradient(listOf(Color(0xFF7A6C8F), Color(0xFF2E2A45)), startY = horizon), Offset(0f, horizon), Size(w, h - horizon))
+        for (k in 0 until 4) drawLine(Color(0xFFFFD9A0).copy(alpha = 0.35f - k * 0.07f), Offset(w * 0.2f, horizon + h * (0.05f + k * 0.07f)), Offset(w * 0.36f, horizon + h * (0.05f + k * 0.07f)), 2f)
+    } else {
+        drawRect(Brush.verticalGradient(listOf(Color(0xFF9DB8CC), Color(0xFFE6D9C7)), endY = horizon))
+        val cliff = Path().apply {
+            moveTo(w * 0.62f, horizon); lineTo(w * 0.74f, h * 0.3f); lineTo(w * 0.86f, h * 0.22f); lineTo(w, h * 0.26f); lineTo(w, horizon); close()
+        }
+        drawPath(cliff, Color(0xFF5C5146))
+        drawRect(Brush.verticalGradient(listOf(Color(0xFF5E8FA6), Color(0xFF7FA9B5)), startY = horizon), Offset(0f, horizon), Size(w, h * 0.16f))
+        drawRect(Brush.verticalGradient(listOf(Color(0xFFD9C4A3), Color(0xFFBFA684)), startY = horizon + h * 0.16f), Offset(0f, horizon + h * 0.16f), Size(w, h))
+    }
+    // people, seen against the light
+    fun person(x: Float, foot: Float, ph: Float, c: Color) {
+        drawCircle(c, ph * 0.1f, Offset(x, foot - ph + ph * 0.1f))
+        drawRoundRect(c, Offset(x - ph * 0.15f, foot - ph * 0.78f), Size(ph * 0.3f, ph * 0.44f), androidx.compose.ui.geometry.CornerRadius(ph * 0.1f))
+        drawRect(c, Offset(x - ph * 0.12f, foot - ph * 0.38f), Size(ph * 0.1f, ph * 0.38f))
+        drawRect(c, Offset(x + ph * 0.02f, foot - ph * 0.38f), Size(ph * 0.1f, ph * 0.38f))
+    }
+    val ink = if (video) Color(0xFF1C1828) else Color(0xFF3A3340)
+    val foot = h * 0.98f
+    person(w * 0.36f, foot, h * 0.62f, ink)
+    person(w * 0.6f, foot, h * 0.7f, ink)
+    if (video) person(w * 0.8f, foot, h * 0.55f, ink)
+    // the cover over the woman, with the handles of the "whom to censor" step
+    val accent = if (video) Color(0xFF7C5CFF) else Color(0xFF2DD4BF)
+    val tl = Offset(w * 0.25f, h * 0.24f)
+    val box = Size(w * 0.24f, h * 0.62f)
+    drawRect(accent.copy(alpha = 0.5f), tl, box)
+    drawRect(Color.White.copy(alpha = 0.85f), tl, box, style = androidx.compose.ui.graphics.drawscope.Stroke(1.2f * density))
+    for (c in listOf(tl, tl + Offset(box.width, 0f), tl + Offset(0f, box.height), tl + Offset(box.width, box.height))) {
+        drawCircle(Color.White, 3.2f * density, c)
+        drawCircle(accent, 3.2f * density, c, style = androidx.compose.ui.graphics.drawscope.Stroke(1.2f * density))
+    }
+}
+
+/** A few bright confetti dashes around the tick of the done screen. */
+@Composable
+fun Confetti(modifier: Modifier = Modifier) = Canvas(modifier) {
+    val colours = listOf(Color(0xFF2DD4BF), Color(0xFFF472B6), Color(0xFFFBBF24), Color(0xFF9F8BFF), Color(0xFFF87171))
+    val spots = listOf(
+        0.10f to 0.30f, 0.22f to 0.12f, 0.30f to 0.62f, 0.16f to 0.85f, 0.38f to 0.05f,
+        0.62f to 0.06f, 0.74f to 0.20f, 0.88f to 0.36f, 0.70f to 0.70f, 0.84f to 0.86f, 0.93f to 0.12f, 0.06f to 0.58f,
+    )
+    for ((i, p) in spots.withIndex()) {
+        val c = Offset(p.first * size.width, p.second * size.height)
+        val a = (i * 47 % 180).toDouble() * Math.PI / 180
+        val d = Offset((kotlin.math.cos(a) * 5 * density).toFloat(), (kotlin.math.sin(a) * 5 * density).toFloat())
+        drawLine(colours[i % colours.size], c - d, c + d, strokeWidth = 2.2f * density, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+    }
+}

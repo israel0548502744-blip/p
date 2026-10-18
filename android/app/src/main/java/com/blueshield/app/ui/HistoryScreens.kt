@@ -159,12 +159,10 @@ fun HistoryScreen(
                 )
             }
         }
-        Panel(Modifier.fillMaxWidth()) {
-            if (shown.isEmpty()) Text(tr("עדיין אין כאן כלום. תמונות וסרטונים שתצנזרו יופיעו כאן."), color = Palette.Ink300, fontSize = 14.sp, modifier = Modifier.padding(20.dp))
-            shown.forEachIndexed { i, e ->
-                if (i > 0) androidx.compose.material3.HorizontalDivider(color = Palette.Border, modifier = Modifier.padding(horizontal = 14.dp))
-                RecentRow(e, i, rowActions)
-            }
+        if (shown.isEmpty()) Panel(Modifier.fillMaxWidth()) {
+            Text(tr("עדיין אין כאן כלום. תמונות וסרטונים שתצנזרו יופיעו כאן."), color = Palette.Ink300, fontSize = 14.sp, modifier = Modifier.padding(20.dp))
+        } else Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            shown.forEachIndexed { i, e -> RecentRow(e, i, rowActions) }
         }
         ToggleRow(
             Icons.Filled.Download, tr("שמירה אוטומטית בגלריה"),

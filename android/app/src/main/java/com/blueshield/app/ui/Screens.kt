@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -340,12 +341,13 @@ private fun BigRing(percent: Float?, paused: Boolean) {
 @Composable
 fun DoneHeader(sub: String? = null) {
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(
-            Modifier.size(64.dp).clip(CircleShape).background(Palette.Teal.copy(alpha = 0.08f)).border(2.dp, Palette.Teal, CircleShape),
-            contentAlignment = Alignment.Center,
-        ) { Icon(Icons.Filled.Check, null, tint = Palette.Teal, modifier = Modifier.size(34.dp)) }
-        Spacer(Modifier.height(10.dp))
-        Text(tr("העיבוד הושלם בהצלחה"), color = Palette.Text, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+        Box(Modifier.fillMaxWidth().height(96.dp), contentAlignment = Alignment.Center) {
+            Confetti(Modifier.width(220.dp).fillMaxHeight())
+            Box(
+                Modifier.size(64.dp).clip(CircleShape).background(Palette.Teal.copy(alpha = 0.08f)).border(2.dp, Palette.Teal, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.Filled.Check, tr("העיבוד הושלם בהצלחה"), tint = Palette.Teal, modifier = Modifier.size(34.dp)) }
+        }
         if (sub != null) Text(sub, color = Palette.Ink300, fontSize = 13.sp)
     }
 }
@@ -354,7 +356,7 @@ fun DoneHeader(sub: String? = null) {
 @Composable
 fun ResultButtons(saved: Boolean, onSave: () -> Unit, onEdit: () -> Unit, onShare: () -> Unit, onProjects: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        PrimaryButton(if (saved) tr("נשמר במכשיר") else tr("שמירה למכשיר"), if (saved) Icons.Filled.CheckCircle else Icons.Filled.Download, enabled = !saved, onClick = onSave)
+        PrimaryButton(if (saved) tr("נשמר במכשיר") else tr("שמור למכשיר"), if (saved) Icons.Filled.CheckCircle else Icons.Filled.Download, enabled = !saved, onClick = onSave)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             GlassOutlined(onClick = onEdit, modifier = Modifier.weight(1f).height(52.dp), shape = RoundedCornerShape(16.dp)) {
                 Icon(Icons.Filled.Edit, null); Spacer(Modifier.width(8.dp)); Text(tr("עריכה נוספת"))

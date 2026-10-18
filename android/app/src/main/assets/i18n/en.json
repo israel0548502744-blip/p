@@ -486,5 +486,13 @@
  "ארבעה שלבים ברורים לכל תמונה וסרטון: בחירה, עיבוד, צנזור ושמירה.": "Four clear steps for every photo and video: choose, process, censor and save.",
  "\"את מי לצנזר\" עכשיו על התמונה עצמה: מסגרת סגולה סביב כל מי שיצונזר.": "\"Whom to censor\" is now on the picture itself: a violet box around everyone who will be censored.",
  "נגן וידאו חדש: תמיד נכנס במסך, עם כפתור הפעלה גדול.": "A new video player: always fits the screen, with a big play button.",
- "עיבוד סרטונים מהיר עד פי 1.8, באותה איכות בדיוק.": "Video processing up to 1.8× faster, with exactly the same quality."
+ "עיבוד סרטונים מהיר עד פי 1.8, באותה איכות בדיוק.": "Video processing up to 1.8× faster, with exactly the same quality.",
+ "העיבוד הושלם": "Done",
+ "הוסף אזור": "Add area",
+ "בחירה אוטומטית": "Automatic choice",
+ "העלאת תמונה וצנזור": "Pick a photo and censor",
+ "העלאת וידאו וצנזור": "Pick a video and censor",
+ "שמור למכשיר": "Save to device",
+ "קבצים": "Files",
+ "צנזור חדש": "New"
 }

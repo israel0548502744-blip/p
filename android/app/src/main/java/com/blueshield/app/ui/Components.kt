@@ -166,6 +166,9 @@ fun Chip(label: String, value: String, modifier: Modifier = Modifier) {
  */
 fun ltr(s: String): String = "\u2066$s\u2069"
 
+/** Text that takes its own direction from its first letter (a Hebrew file name stays right to left, "IMG_12.jpg" left to right). */
+fun isolate(s: String): String = "\u2068$s\u2069"
+
 fun formatDuration(sec: Double): String {
     val s = sec.coerceAtLeast(0.0).toInt()
     val h = s / 3600
