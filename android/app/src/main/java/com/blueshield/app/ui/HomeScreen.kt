@@ -250,8 +250,8 @@ fun RecentRow(e: History.Entry, index: Int, actions: EntryActions) {
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             val length by produceState<Double?>(null, e.file) { if (e.video) value = withContext(Dispatchers.IO) { videoSeconds(e.file) } }
             Text(
-                ltr(listOfNotNull(SimpleDateFormat("dd.MM.yy", Locale.US).format(Date(e.time)), formatBytes(File(e.file).length()), length?.let(::formatDuration)).joinToString("  •  ")),
-                color = Palette.Ink400, fontSize = 12.sp, maxLines = 1,
+                ltr(listOfNotNull(SimpleDateFormat("dd.MM.yy", Locale.US).format(Date(e.time)), formatBytes(File(e.file).length()), length?.let(::formatDuration)).joinToString(" • ")),
+                color = Palette.Ink400, fontSize = 12.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
             )
         }
         Box {
