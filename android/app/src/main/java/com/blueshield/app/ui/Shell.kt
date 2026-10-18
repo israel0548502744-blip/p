@@ -237,6 +237,7 @@ fun Stepper(current: Int, running: Boolean, modifier: Modifier = Modifier) {
 /** The bottom bar: home and projects, the round "+" in the middle, tools and settings. */
 @Composable
 fun BottomNav(tab: Tab, onTab: (Tab) -> Unit, onPlus: () -> Unit, settingsDot: Boolean = false) {
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     Box(Modifier.fillMaxWidth().height(94.dp)) {
         val shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp)
         Row(
@@ -274,7 +275,10 @@ fun BottomNav(tab: Tab, onTab: (Tab) -> Unit, onPlus: () -> Unit, settingsDot: B
                 .clip(CircleShape)
                 .background(Brush.linearGradient(listOf(Color(0xFFC59BFF), Palette.Shield500, Palette.Shield600)))
                 .border(1.dp, Brush.verticalGradient(listOf(Color(0x88FFFFFF), Color(0x11FFFFFF))), CircleShape)
-                .clickable(onClickLabel = tr("חדש"), onClick = onPlus),
+                .clickable(onClickLabel = tr("חדש")) {
+                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                    onPlus()
+                },
             contentAlignment = Alignment.Center,
         ) { Icon(Icons.Filled.Add, tr("חדש"), tint = Color.White, modifier = Modifier.size(32.dp)) }
     }

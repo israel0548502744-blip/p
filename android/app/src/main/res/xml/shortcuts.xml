@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Long-press on the app icon: start a photo or a video straight away (the same as the widget's buttons). -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="photo"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_photo"
+        android:shortcutShortLabel="@string/shortcut_photo">
+        <intent
+            android:action="com.blueshield.app.PICK_PHOTO"
+            android:targetPackage="com.blueshield.app"
+            android:targetClass="com.blueshield.app.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="video"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_video"
+        android:shortcutShortLabel="@string/shortcut_video">
+        <intent
+            android:action="com.blueshield.app.PICK_VIDEO"
+            android:targetPackage="com.blueshield.app"
+            android:targetClass="com.blueshield.app.MainActivity" />
+    </shortcut>
+</shortcuts>

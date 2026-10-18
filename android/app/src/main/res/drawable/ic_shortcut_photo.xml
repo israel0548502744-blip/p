@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Teal circle with a picture frame (the photo tile of the home screen). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp" android:height="48dp" android:viewportWidth="48" android:viewportHeight="48">
+    <path android:fillColor="#1F6F6C" android:pathData="M24,0a24,24 0,1 1,0 48a24,24 0,1 1,0 -48z" />
+    <path android:fillColor="#B5F5E8"
+        android:pathData="M15,14h18a2,2 0,0 1,2 2v16a2,2 0,0 1,-2 2h-18a2,2 0,0 1,-2 -2v-16a2,2 0,0 1,2 -2zM15,31h18l-6,-8l-4.5,6l-3,-4z" />
+</vector>

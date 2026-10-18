@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">BlueShield</string>
+    <!-- the long-press shortcuts of the app icon (the launcher shows them in the phone's language) -->
+    <string name="shortcut_photo">צנזור תמונה</string>
+    <string name="shortcut_video">צנזור סרטון</string>
 </resources>

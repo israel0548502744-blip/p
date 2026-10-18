@@ -27,6 +27,7 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
             <!-- "Share" from the gallery, WhatsApp, the file manager…: one or several photos / videos -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
