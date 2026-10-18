@@ -80,6 +80,8 @@ object Exporter {
                 context.contentResolver.openOutputStream(uri, "wt")?.use { out -> file.inputStream().use { it.copyTo(out, 1 shl 20) } } != null
             }.getOrDefault(false)
             if (replaced) return uri
+            // can't write over it: the new copy takes its place (not one more copy next to it)
+            runCatching { context.contentResolver.delete(uri, null, null) }
         }
         return if (video) saveToGallery(context, file, displayName) else savePhotoToGallery(context, file, displayName)
     }

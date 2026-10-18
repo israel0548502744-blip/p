@@ -509,6 +509,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Censor the picked photo; with "ask whom to censor" on, the result waits for the choice. */
     fun startPhoto() {
         val p = _photo.value ?: return
+        if (_photoBusy.value) return // a second tap before the busy screen shows
         _error.value = null
         _photoBusy.value = true
         viewModelScope.launch {
@@ -539,12 +540,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val e = keep(r.file, false, p?.name ?: "photo.jpg", p?.uri?.toString(), photoEntry)
         photoEntry = e.id
         _saved.value = e.gallery != null
+        // (gallery is set only when auto-save wrote this very version: see Results.keep)
         if (_saved.value) _toast.value = tr("נשמר בגלריה").also { Growth.recordSuccess(getApplication()) }
     }
 
     /** Re-paint the photo with the manual per-person choices and the hand-painted strokes. */
     fun applyPhotoOverrides() {
         val overrides = _draft.value.filterValues { it != Override.AUTO }
+        if (_photoBusy.value) return
         _photoBusy.value = true
         viewModelScope.launch {
             try {
@@ -563,6 +566,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** The brush editor's strokes, applied at once. */
     fun setStrokes(list: List<BrushStroke>) {
         if (!allowed(Entitlements.Feature.BRUSH)) return
+        if (list == _strokes.value && _photoResult.value != null) return // nothing changed: no re-render, no new copy
         _strokes.value = list
         applyPhotoOverrides()
     }

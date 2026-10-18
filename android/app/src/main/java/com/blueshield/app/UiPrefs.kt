@@ -45,9 +45,9 @@ data class UiPrefs(
             textScale = p.getFloat("ui.textScale", 1f),
             photoFormat = p.getString("ui.photoFormat", "original") ?: "original",
             askWho = p.getBoolean("ui.askWho", false),
-            // once: auto-save becomes off by default, also where the old default (on) was stored
-            autoSave = if (p.getBoolean("ui.autoSaveOffByDefault", false)) p.getBoolean("autoSave", false)
-            else false.also { p.edit().putBoolean("ui.autoSaveOffByDefault", true).putBoolean("autoSave", false).apply() },
+            // once more (after reports of saves without a tap): auto-save off, whatever was stored
+            autoSave = if (p.getBoolean("ui.autoSaveOff2", false)) p.getBoolean("autoSave", false)
+            else false.also { p.edit().putBoolean("ui.autoSaveOff2", true).putBoolean("autoSave", false).apply() },
             onboarded = p.getBoolean("ui.onboarded", false),
             seenVersion = p.getString("ui.seenVersion", "") ?: "",
             name = p.getString("ui.name", "") ?: "",

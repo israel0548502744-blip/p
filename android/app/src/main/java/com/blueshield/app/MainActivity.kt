@@ -240,8 +240,9 @@ private fun Main(vm: AppViewModel, ui: UiPrefs) {
     }
     LaunchedEffect(toast) {
         toast?.let {
-            snackbar.showSnackbar(it)
+            // cleared before it shows: a recreated screen (rotation, theme) doesn't show it a second time
             vm.dismissToast()
+            snackbar.showSnackbar(it)
             if (Growth.shouldAskForRating(context)) Growth.askForRating(activity)
         }
     }
