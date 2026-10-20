@@ -2,6 +2,7 @@ package com.blueshield.core.pipeline
 
 import com.blueshield.core.CensorSettings
 import com.blueshield.core.PipelineSpec
+import com.blueshield.core.gender.FaceSource
 import com.blueshield.core.gender.GenderClassifier
 import com.blueshield.core.gender.GenderEstimate
 import com.blueshield.core.gender.Override
@@ -200,6 +201,8 @@ class Analyzer(
     personMaskSize: Int? = null,
     /** A single photo ([StillImage]) rather than a video. */
     private val still: Boolean = false,
+    /** The photo at its own resolution, for a closer look at faces (photos; null: the frames are all there is). */
+    private val faceSource: FaceSource? = null,
 ) {
     private val preset = spec.speedPresets.getValue(settings.speed)
     private val segStride = if (settings.aggressive) 1 else preset.segStride
@@ -421,7 +424,7 @@ class Analyzer(
                     if (!need) continue
                     t.lastClassified = idx
                     // other people's boxes: a face that is their head is never this person's
-                    timed("gender") { classifier.classify(frame, t.box, faceMap, seen.filter { it !== t }.map { it.box }) }?.let { o ->
+                    timed("gender") { classifier.classify(frame, t.box, faceMap, seen.filter { it !== t }.map { it.box }, faceSource) }?.let { o ->
                         t.gender.add(o.pMale, o.weight)
                         t.gender.addAge(o.age)
                     }
@@ -545,11 +548,11 @@ class Analyzer(
         // clipping only near people: skin far from every box is someone the detector missed
         val nearPeople = BooleanArray(n)
         for (b in vis.map { it.box }) {
-            val x0 = max(0, (b.x1 - 0.1f * b.w).toInt())
-            val x1 = minOf(width, (b.x2 + 0.1f * b.w).toInt() + 1)
-            val y0 = max(0, (b.y1 - 0.1f * b.h).toInt())
-            val y1 = minOf(height, (b.y2 + 0.1f * b.h).toInt() + 1)
-            for (y in y0 until y1) java.util.Arrays.fill(nearPeople, y * width + x0, y * width + max(x0, x1), true)
+            val x0 = (b.x1 - 0.1f * b.w).toInt().coerceIn(0, width)
+            val x1 = ((b.x2 + 0.1f * b.w).toInt() + 1).coerceIn(x0, width)
+            val y0 = (b.y1 - 0.1f * b.h).toInt().coerceIn(0, height)
+            val y1 = ((b.y2 + 0.1f * b.h).toInt() + 1).coerceIn(y0, height)
+            for (y in y0 until y1) java.util.Arrays.fill(nearPeople, y * width + x0, y * width + x1, true)
         }
         val own = IntArray(n)
         for (i in 0 until n) {

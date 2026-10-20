@@ -1,7 +1,10 @@
 # Committed model files
 
 ## `gender_faceres_fp16.tflite` (desktop)
-Face gender classifier: input 224×224 RGB (0–255), output P(male).
+Face gender classifier: input 224×224 in the network's own preprocessing — BGR channel order minus the ImageNet
+means (103.939, 116.779, 123.68), as in HSE_FaceRec_tf `facial_analysis.py` (Keras "caffe" mode); the file has no
+preprocessing inside — output P(male). (@vladmandic/human feeds it RGB 0–255; so did BlueShield until it measured
+the difference: on 1345 labelled face crops 7 % of women came out on the male side, 0 % with the right input.)
 "FaceRes" age/gender MobileNet by Andrey Savchenko — [HSE_FaceRec_tf](https://github.com/HSE-asavchenko/HSE_FaceRec_tf) —
 as packaged in the MIT-licensed npm package [`@vladmandic/human-models`](https://www.npmjs.com/package/@vladmandic/human-models)
 (`models/faceres.json`), converted to TFLite float16 with `shared/tools/convert_tfjs_to_tflite.py`.

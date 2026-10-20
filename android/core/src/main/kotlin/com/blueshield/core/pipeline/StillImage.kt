@@ -2,6 +2,7 @@ package com.blueshield.core.pipeline
 
 import com.blueshield.core.CensorSettings
 import com.blueshield.core.PipelineSpec
+import com.blueshield.core.gender.FaceSource
 import com.blueshield.core.image.ByteMask
 import com.blueshield.core.image.EdgeSnap
 import com.blueshield.core.image.MaskOps
@@ -22,13 +23,16 @@ import kotlin.math.roundToInt
 object StillImage {
     fun analyze(
         models: ModelStore, settings: CensorSettings, spec: PipelineSpec, img: RgbImage, maskW: Int, maskH: Int, store: File,
+        /** The photo at its own resolution ([img] is it scaled down): faces are classified from it. */
+        faceSource: FaceSource? = null,
         /** Called with the analyzer before the photo is analysed (debugging tools hook in their map dumps). */
         prepare: (Analyzer) -> Unit = {},
         /** Called with the analyzer once the photo is analysed (debugging tools read its skin probability). */
         inspect: (Analyzer) -> Unit = {},
     ): Analysis {
         val still = spec.copy(gender = spec.gender.copy(voteFactor = 1.0, minVotes = 1, minWeight = 0.3, minAgeVotes = 1))
-        val analyzer = Analyzer(models, settings.copy(speed = "quality"), still, img.width, img.height, 1.0, maskW, maskH, store, spec.personMasks.photoSize, still = true)
+        val analyzer = Analyzer(models, settings.copy(speed = "quality"), still, img.width, img.height, 1.0, maskW, maskH, store, spec.personMasks.photoSize, still = true,
+            faceSource = faceSource)
         prepare(analyzer)
         analyzer.process(listOf(img)) { inspect(analyzer) }
         return analyzer.finish()

@@ -297,6 +297,43 @@ class CoreTest {
         assertTrue(abs(com.blueshield.core.gender.GenderClassifier.ensemble(0.68f, 0.96f, w(13.6f)) - 0.68f) < 1e-4)
     }
 
+    @Test fun faceResGetsItsOwnPreprocessing() {
+        // HSE FaceRes: BGR order minus the ImageNet means, not RGB 0..255
+        val img = RgbImage(224, 224)
+        img.data[0] = 200.toByte(); img.data[1] = 100; img.data[2] = 50
+        val x = com.blueshield.core.ml.GenderModel.input(img)
+        assertEquals(50f - 103.939f, x[0], 1e-4f)
+        assertEquals(100f - 116.779f, x[1], 1e-4f)
+        assertEquals(200f - 123.68f, x[2], 1e-4f)
+        assertEquals(-123.68f, x[5], 1e-4f) // the next pixel is black: its R
+    }
+
+    @Test fun faceSourceCutsTheOriginal() {
+        // an original twice the analysis size, every pixel coding its own position
+        val w = 400
+        val h = 300
+        val src = com.blueshield.core.gender.FaceSource(w, h, 2f) { y, x, n, out -> for (i in 0 until n) out[i] = ((x + i) shl 8) or y }
+        // at the original's resolution: 20 analysis px = 40 original px
+        val sq = src.square(50f, 30f, 20f, 64)
+        assertEquals(40, sq.image.width)
+        assertEquals(2f, sq.scale)
+        assertEquals(50f, sq.x)
+        val px = sq.image.data
+        fun at(x: Int, y: Int) = Triple(px[(y * 40 + x) * 3].toInt() and 0xFF, px[(y * 40 + x) * 3 + 1].toInt() and 0xFF, px[(y * 40 + x) * 3 + 2].toInt() and 0xFF)
+        assertEquals(Triple(0, 100, 60), at(0, 0)) // original (100, 60)
+        assertEquals(Triple(0, 139, 99), at(39, 39))
+        // beyond the border: the edge pixel repeated
+        val edge = src.square(190f, -10f, 20f, 64)
+        val e = edge.image.data // its top right pixel: original (419, -20) -> (399, 0)
+        assertEquals(399 shr 8, e[39 * 3].toInt() and 0xFF)
+        assertEquals(399 and 0xFF, e[39 * 3 + 1].toInt() and 0xFF)
+        assertEquals(0, e[39 * 3 + 2].toInt() and 0xFF)
+        // larger than maxPx: shrunk, and the scale says so
+        val small = src.square(0f, 0f, 100f, 50)
+        assertEquals(50, small.image.width)
+        assertEquals(0.5f, small.scale, 1e-6f)
+    }
+
     @Test fun ownFaceIsTheTopmostNotTheBiggest() {
         fun face(x: Float, y: Float, s: Float) = com.blueshield.core.ml.FaceDetector.Face(Box(x, y, x + s, y + s), 0.9f, 0f to 0f, 0f to 0f)
         val adult = face(100f, 10f, 40f)

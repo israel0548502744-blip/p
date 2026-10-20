@@ -504,7 +504,6 @@ class FaceDetector(private val models: ModelStore) {
     }
 }
 
-/** Gender model (FaceRes MobileNet): eye-aligned 224×224 RGB face (0..255) -> P(male). */
 /**
  * Second face model (face-api.js AgeGenderNet, TinyXception, trained on UTKFace — which includes children):
  * P(male) and an age estimate from the same eye-aligned 224 px face crop the FaceRes model sees.
@@ -534,6 +533,7 @@ class AgeGenderModel(private val models: ModelStore) {
     }
 }
 
+/** Gender model (FaceRes MobileNet, HSE): eye-aligned 224 × 224 face -> P(male). */
 class GenderModel(private val models: ModelStore) {
     fun pMale(face: RgbImage): Float = models.session(ModelStore.GENDER).runFloat(models.env, input(face), SHAPE).first().second[0]
 
@@ -543,10 +543,23 @@ class GenderModel(private val models: ModelStore) {
         const val INPUT = 224
         val SHAPE = longArrayOf(1, INPUT.toLong(), INPUT.toLong(), 3)
 
-        /** The model's input: the aligned 224 px face, RGB 0..255. */
+        /** ImageNet channel means in B, G, R order (Keras "caffe" preprocessing). */
+        private val MEAN_BGR = floatArrayOf(103.939f, 116.779f, 123.68f)
+
+        /**
+         * The model's input: the aligned 224 px face the way the network was trained (HSE_FaceRec_tf
+         * `facial_analysis.py`): BGR channel order minus the ImageNet means. The converted file has no preprocessing
+         * inside. Fed plain RGB 0..255 (as @vladmandic/human does), it called women male far more often: of 1345
+         * labelled face crops, 7 % of the women came out on the male side and 69 % clearly female (P(male) < 0.2),
+         * against 0 % and 88 % now; men clearly male (> 0.8) went from 87 % to 94 %.
+         */
         fun input(face: RgbImage): FloatArray {
             require(face.width == INPUT && face.height == INPUT)
-            return FloatArray(INPUT * INPUT * 3) { (face.data[it].toInt() and 0xFF).toFloat() }
+            val out = FloatArray(INPUT * INPUT * 3)
+            for (i in 0 until INPUT * INPUT * 3 step 3) {
+                for (c in 0..2) out[i + c] = (face.data[i + 2 - c].toInt() and 0xFF) - MEAN_BGR[c]
+            }
+            return out
         }
 
         /** Rotate so the eyes are level, scale the face box (×1.4) to 224 px. Mirrors cv2.getRotationMatrix2D. */

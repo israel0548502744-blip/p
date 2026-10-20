@@ -394,8 +394,12 @@ class Processor(private val context: Context) {
         val m: ModelStore
         val analysis = try {
             m = photoModels()
+            // faces are classified from the photo itself, not from its analysis-size copy
+            val faces = com.blueshield.core.gender.FaceSource(bmp.width, bmp.height, (bmp.width.toFloat() / aw + bmp.height.toFloat() / ah) / 2) { y, x, n, out ->
+                bmp.getPixels(out, 0, n, x, y, n, 1)
+            }
             // (no Accelerators.saveReport: photos always run on the plain CPU; the settings screen keeps the video's engines)
-            com.blueshield.core.pipeline.StillImage.analyze(m, s, spec, PhotoLoader.toRgb(bmp, aw, ah), mw, mh, store)
+            com.blueshield.core.pipeline.StillImage.analyze(m, s, spec, PhotoLoader.toRgb(bmp, aw, ah), mw, mh, store, faces)
         } finally {
             // the 1024 px outline encoder holds a few hundred MB while loaded; the photo still has to be painted
             photoModels?.release(ModelStore.SAM_ENCODER_1024)

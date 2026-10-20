@@ -34,17 +34,40 @@ class GenderClassifier(
      * FaceRes alone often calls male), so the ensemble is much steadier than either. On a face the second model
      * itself takes for a child or young teen its gender vote is faded out ([secondWeight]): it calls girls and
      * young-looking women male (UTKFace children; a smiling 20-year-old with her hair tied back: age 13.6,
-     * P(male) 0.96, which outvoted FaceRes's unsure 0.68 and left her uncensored).
+     * P(male) 0.96, which outvoted FaceRes's unsure 0.68 and left her uncensored; with FaceRes's own preprocessing,
+     * see [GenderModel.input], FaceRes puts her at 0.40, and at 0.25 from the full-size photo).
+     *
+     * [source]: the photo at its own resolution (photos only). The face is still found in the analysis frame, but
+     * the models see it cut from the photo: a face 60 px wide in the frame may be twice that in the photo.
      */
-    fun classify(frame: RgbImage, box: Box, faceMap: FloatMask?, others: List<Box> = emptyList()): Observation? {
+    fun classify(frame: RgbImage, box: Box, faceMap: FloatMask?, others: List<Box> = emptyList(), source: FaceSource? = null): Observation? {
         val (crop, face) = locate(frame, box, faceMap, others) ?: return null
         val facePx = face.box.w * crop.scale
         val weight = face.score * min(1f, facePx / 48f)
         val inFrame = Box(crop.x + face.box.x1 * crop.scale, crop.y + face.box.y1 * crop.scale, crop.x + face.box.x2 * crop.scale, crop.y + face.box.y2 * crop.scale)
-        val aligned = model.align(crop.image, face)
+        val aligned = if (source == null) model.align(crop.image, face) else closer(source, crop, face).let { (img, f) -> model.align(img, f) }
         val p1 = model.pMale(aligned)
         val second = ageGender?.predict(aligned) ?: return Observation(p1, weight, Float.NaN, inFrame)
         return Observation(ensemble(p1, second.pMale, secondWeight(second.age, secondMinAge, secondFullAge)), weight, second.age, inFrame)
+    }
+
+    /**
+     * [face] (found in [crop]) cut from the original photo: a square of twice the face's size around it, at the
+     * photo's resolution but at most [CLOSE_PX] (what the aligned 224 px crop needs), with the face's box and eyes
+     * in its pixels.
+     */
+    private fun closer(source: FaceSource, crop: Crop, face: FaceDetector.Face): Pair<RgbImage, FaceDetector.Face> {
+        fun fx(v: Float) = crop.x + v * crop.scale
+        fun fy(v: Float) = crop.y + v * crop.scale
+        val b = face.box
+        val side = 2f * max(b.w, b.h) * crop.scale
+        val sq = source.square(fx(b.cx) - side / 2, fy(b.cy) - side / 2, side, CLOSE_PX)
+        fun ix(v: Float) = (fx(v) - sq.x) * sq.scale
+        fun iy(v: Float) = (fy(v) - sq.y) * sq.scale
+        return sq.image to FaceDetector.Face(
+            Box(ix(b.x1), iy(b.y1), ix(b.x2), iy(b.y2)), face.score,
+            ix(face.rightEye.first) to iy(face.rightEye.second), ix(face.leftEye.first) to iy(face.leftEye.second),
+        )
     }
 
     /**
@@ -82,6 +105,8 @@ class GenderClassifier(
 
     companion object {
         const val CROP = 256
+        /** [closer]: the square around a face, at most this wide (twice the 160 px the face spans in the aligned crop). */
+        const val CLOSE_PX = 320
 
         /**
          * How much [face] looks like the head of [box]: 0 at the top centre, growing downwards and sideways.

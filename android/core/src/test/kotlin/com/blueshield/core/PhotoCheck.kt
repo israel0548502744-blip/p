@@ -58,7 +58,14 @@ class PhotoCheck {
         var analyzer: Analyzer? = null
         // -Dblueshield.photoMaps=prefix: intermediate skin maps as 8-bit PNGs (prefix_<out>_selfie.png, _clothes, _vetoed, _refined)
         val maps = System.getProperty("blueshield.photoMaps")?.takeIf { it.isNotBlank() }
-        val a = StillImage.analyze(models, settings, spec, img, mw, mh, File.createTempFile("photo", ".bin"), prepare = { an ->
+        // faces are classified from the full-size photo, as the app does
+        val faceSource = com.blueshield.core.gender.FaceSource(w, h, (w.toFloat() / aw + h.toFloat() / ah) / 2) { y, x, n, out ->
+            for (i in 0 until n) {
+                val o = (y * w + x + i) * 3
+                out[i] = ((full.data[o].toInt() and 0xFF) shl 16) or ((full.data[o + 1].toInt() and 0xFF) shl 8) or (full.data[o + 2].toInt() and 0xFF)
+            }
+        }
+        val a = StillImage.analyze(models, settings, spec, img, mw, mh, File.createTempFile("photo", ".bin"), faceSource = faceSource, prepare = { an ->
             analyzer = an
             maps?.let { pre ->
                 val tag = File(parts[1]).nameWithoutExtension

@@ -53,6 +53,7 @@ FACE_INPUT = 128
 GENDER_INPUT = 224
 AGE_INPUT = 112
 AGE_TIGHT = 0.85
+FACERES_MEAN_BGR = np.array([103.939, 116.779, 123.68], np.float32)  # ImageNet means, B, G, R (Keras "caffe" mode)
 
 
 @dataclass
@@ -220,7 +221,9 @@ class GenderClassifier:
                               borderMode=cv2.BORDER_REPLICATE)
 
     def p_male(self, face_bgr: np.ndarray) -> float:
-        x = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2RGB).astype(np.float32)  # model expects 0..255 RGB
+        # the network's own preprocessing (HSE_FaceRec_tf): BGR minus the ImageNet means, not RGB 0..255
+        # (same as the Android GenderModel.input)
+        x = face_bgr.astype(np.float32) - FACERES_MEAN_BGR
         self._it.set_tensor(self._in, x[None])
         self._it.invoke()
         return float(self._it.get_tensor(self._out).ravel()[0])
