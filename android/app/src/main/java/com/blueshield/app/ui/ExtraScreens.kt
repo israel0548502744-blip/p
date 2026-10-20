@@ -1,5 +1,11 @@
 package com.blueshield.app.ui
 
+import androidx.compose.foundation.layout.absoluteOffset
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.runtime.CompositionLocalProvider
 import android.graphics.Bitmap
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -133,40 +139,63 @@ private fun SmallAction(icon: androidx.compose.ui.graphics.vector.ImageVector, l
     }
 }
 
-/** Original and censored photo in one frame, split by a handle that is dragged sideways. */
+/**
+ * Original and censored photo in one frame, split by a line that follows the finger: the line sits exactly where
+ * the finger is, from the first touch (no "catch up" from deltas). Laid out left to right whatever the app's
+ * language: in RTL the drawing (offsets, start alignment) was mirrored while the touch position was not, so the
+ * line ran to the opposite side of the finger.
+ */
 @Composable
 fun CompareImage(original: Bitmap, censored: Bitmap, modifier: Modifier = Modifier) {
     var split by remember { mutableFloatStateOf(0.5f) }
     var width by remember { mutableStateOf(1) }
-    Box(
-        modifier.fillMaxWidth().aspectRatio(censored.width.toFloat() / censored.height).clip(RoundedCornerShape(16.dp))
-            .onSizeChanged { width = it.width.coerceAtLeast(1) }
-            .pointerInput(Unit) {
-                detectTapGestures { split = (it.x / width).coerceIn(0f, 1f) }
-            }
-            .pointerInput(Unit) {
-                detectHorizontalDragGestures { change, drag -> change.consume(); split = (split + drag / width).coerceIn(0f, 1f) }
-            },
-    ) {
-        Image(censored.asImageBitmap(), null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
-        Image(
-            original.asImageBitmap(), null, contentScale = ContentScale.Fit,
-            modifier = Modifier.fillMaxSize().drawWithContent { clipRect(right = size.width * split) { this@drawWithContent.drawContent() } },
-        )
-        val density = LocalDensity.current
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
         Box(
-            Modifier.fillMaxHeight().width(3.dp).offset { IntOffset((width * split - with(density) { 1.5.dp.toPx() }).roundToInt(), 0) }
-                .background(Color.White),
-        )
-        Box(
-            Modifier.align(Alignment.CenterStart).offset { IntOffset((width * split - with(density) { 18.dp.toPx() }).roundToInt(), 0) }
-                .size(36.dp).clip(CircleShape).background(Color.White),
-            contentAlignment = Alignment.Center,
-        ) { Text("⇆", color = Color.Black, fontSize = 18.sp, fontWeight = FontWeight.Bold) }
-        Text(tr("מקור"), color = Color.White, fontSize = 11.sp, modifier = Modifier.align(Alignment.TopStart).padding(8.dp)
-            .clip(RoundedCornerShape(50)).background(Color(0x99000000)).padding(horizontal = 8.dp, vertical = 3.dp))
-        Text(tr("מצונזר"), color = Color.White, fontSize = 11.sp, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
-            .clip(RoundedCornerShape(50)).background(Color(0x99000000)).padding(horizontal = 8.dp, vertical = 3.dp))
+            modifier.fillMaxWidth().aspectRatio(censored.width.toFloat() / censored.height).clip(RoundedCornerShape(16.dp))
+                .onSizeChanged { width = it.width.coerceAtLeast(1) }
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        split = (down.position.x / width).coerceIn(0f, 1f)
+                        var id = down.id
+                        var horizontal = false
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == id } ?: event.changes.firstOrNull() ?: break
+                            id = change.id
+                            if (!change.pressed) break
+                            val d = change.position - change.previousPosition
+                            // a mostly sideways move is the slider's; a vertical one is left to the page's scrolling
+                            if (!horizontal && kotlin.math.abs(d.x) > kotlin.math.abs(d.y)) horizontal = true
+                            if (horizontal) {
+                                split = (change.position.x / width).coerceIn(0f, 1f)
+                                change.consume()
+                            }
+                        }
+                    }
+                },
+        ) {
+            Image(censored.asImageBitmap(), null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+            Image(
+                original.asImageBitmap(), null, contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize().drawWithContent { clipRect(right = size.width * split) { this@drawWithContent.drawContent() } },
+            )
+            val density = LocalDensity.current
+            Box(
+                Modifier.fillMaxHeight().width(3.dp).absoluteOffset { IntOffset((width * split - with(density) { 1.5.dp.toPx() }).roundToInt(), 0) }
+                    .background(Color.White),
+            )
+            Box(
+                Modifier.align(Alignment.CenterStart).absoluteOffset { IntOffset((width * split - with(density) { 18.dp.toPx() }).roundToInt(), 0) }
+                    .size(36.dp).clip(CircleShape).background(Color.White),
+                contentAlignment = Alignment.Center,
+            ) { Text("⇆", color = Color.Black, fontSize = 18.sp, fontWeight = FontWeight.Bold) }
+            // the original is on the left of the line, the censored photo on its right
+            Text(tr("מקור"), color = Color.White, fontSize = 11.sp, modifier = Modifier.align(Alignment.TopStart).padding(8.dp)
+                .clip(RoundedCornerShape(50)).background(Color(0x99000000)).padding(horizontal = 8.dp, vertical = 3.dp))
+            Text(tr("מצונזר"), color = Color.White, fontSize = 11.sp, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
+                .clip(RoundedCornerShape(50)).background(Color(0x99000000)).padding(horizontal = 8.dp, vertical = 3.dp))
+        }
     }
 }
 
