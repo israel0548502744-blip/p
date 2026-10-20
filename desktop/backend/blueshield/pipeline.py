@@ -72,7 +72,7 @@ class CensorSettings:
     gender_threshold: int = 70  # % confidence needed to call someone female / male
     uncertain_policy: str = "censor"  # what to do with people the classifier is unsure about
     # 'color' = solid colour | 'clothing' = continue the garment over the skin (Android; the desktop renders colour)
-    fill: str = "color"
+    fill: str = "clothing"
 
     def validate(self) -> "CensorSettings":
         hex_to_bgr(self.color)

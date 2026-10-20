@@ -116,7 +116,7 @@ class PipelineE2ETest {
     /** The brush: a stroke adds cover (the censor colour) on the full-size photo, an erase stroke brings the original back. */
     @Test fun brushStrokesOnPhoto() {
         val p = Processor(ctx)
-        val r = p.processPhoto(fixture("woman_and_man.jpg"), CensorSettings(color = "#FF0000"))
+        val r = p.processPhoto(fixture("woman_and_man.jpg"), CensorSettings(color = "#FF0000", fill = "color"))
         val w = r.original.width
         val h = r.original.height
         val add = com.blueshield.app.engine.BrushStroke(listOf(0.9f to 0.1f, 0.95f to 0.1f), 0.02f, erase = false)

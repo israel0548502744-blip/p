@@ -22,7 +22,7 @@ data class CensorSettings(
     /** "censor" (safe default) or "keep": what happens to people the classifier is unsure about. */
     @SerialName("uncertain_policy") val uncertainPolicy: String = "censor",
     /** "color" = a solid colour; "clothing" = the garment next to the skin continued over it (a sleeve, a collar). */
-    val fill: String = "color",
+    val fill: String = "clothing",
 ) {
     fun validated(): CensorSettings = copy(
         sensitivity = sensitivity.coerceIn(0, 100),

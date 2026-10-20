@@ -170,8 +170,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (u.language != old.language) I18n.load(getApplication(), u.language)
     }
 
-    private fun loadSettings(): CensorSettings = prefs.getString("settings", null)
-        ?.let { runCatching { json.decodeFromString(CensorSettings.serializer(), it).validated() }.getOrNull() } ?: CensorSettings()
+    private fun loadSettings(): CensorSettings {
+        val s = prefs.getString("settings", null)
+            ?.let { runCatching { json.decodeFromString(CensorSettings.serializer(), it).validated() }.getOrNull() } ?: CensorSettings()
+        // once: "continue the clothing" became the default fill, also where the old default (a colour) was stored
+        if (prefs.getBoolean("fillClothingDefault", false)) return s
+        val moved = s.copy(fill = "clothing")
+        prefs.edit().putBoolean("fillClothingDefault", true).putString("settings", json.encodeToString(CensorSettings.serializer(), moved)).apply()
+        return moved
+    }
 
     fun updateSettings(s: CensorSettings) {
         _settings.value = s

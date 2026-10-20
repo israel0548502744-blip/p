@@ -100,6 +100,7 @@ import com.blueshield.app.ui.ViewerScreen
 import com.blueshield.app.ui.WhatsNewDialog
 import com.blueshield.app.ui.tr
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -317,6 +318,8 @@ private fun Main(vm: AppViewModel, ui: UiPrefs) {
             "settings" -> tab = Tab.SETTINGS
             "pro" -> page = Page.PRO
             "plus" -> plusOpen = true
+            // a shared photo, censored at once with "ask whom to censor": the picker of people
+            "choose" -> { vm.photo.first { it != null }; vm.startPhoto() }
         }
     }
 

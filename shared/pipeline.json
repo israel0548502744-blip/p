@@ -12,7 +12,7 @@
     "target": "female",
     "gender_threshold": 70,
     "uncertain_policy": "censor",
-    "fill": "color"
+    "fill": "clothing"
   },
   "thresholds": {
     "skin_on": { "strict": 0.72, "sensitive": 0.30, "aggressive_bonus": 0.08 },
